@@ -1,54 +1,47 @@
 ---
 title: "How it works"
-description: "How the channel keeps your deployment current and inside your specification."
+description: "One artifact, signed once, admitted only if your policy says so."
 ---
 
-**A release is built once, signed once, and admitted only if your policy says so.**
+Your staging follows the channel pointer. Your production follows a pin only you move.
 
-Each release reaches you as one OCI artifact:
-
-- **`entry.json`** — signed record naming the version, source commit, image digests (`@sha256:…`) and the sha256 of every evidence file.
-- **`evidence/`** — digest map, delivery receipt from Vexa's own production run, SLSA provenance, and the Sigstore trust material to verify offline.
-- **`VERIFY.md`** — the commands with this release's file names filled in.
-- Beside it, the Helm chart as an OCI artifact, every digest baked into its values — including images the runtime spawns on demand.
-
-Two fields are contractual: **`evidence_absent`** names evidence this release lacks; **`break_glass`** names who authorised an incomplete chain, and why.
-
-Your **staging** follows the channel pointer. Your **production** follows a pin only you move.
-
-<img className="block dark:hidden" src="/images/release-flow-light.svg" alt="Four deployments pull from one release store, each admitting only what its evidence policy accepts." />
-<img className="hidden dark:block" src="/images/release-flow-dark.svg" alt="Four deployments pull from one release store, each admitting only what its evidence policy accepts." />
-
-Every node above is the same artifact. Each stage that validates it signs it; the bytes never change, and a candidate that fails simply stops accumulating evidence.
+<img src="/images/delivery-loop.svg" alt="The delivery loop: dev, contract validation, channel, pull, contract verify, staging, promote, production, and optional receipts back" style={{width:"100%",maxWidth:"940px"}} />
 
 ## The loop
 
-1. **Publish** — images freeze and are signed; Vexa staging and production add evidence.
-2. **Gate** — rendered with **your** values, against **your** contract. See [the station gate](station-gate).
-3. **Channel** — the gated entry lands; the `current` pointer moves.
-4. **Pull** — your Argo CD polls over your pull-only credential, or your mirror.
-5. **Admission** — Kyverno checks the signature, refuses anything not digest-pinned.
+1. **Publish** — images freeze and are signed.
+2. **Gate** — rendered with your values, against your contract. See [the station gate](station-gate).
+3. **Channel** — the gated entry lands; `current` moves.
+4. **Pull** — your Argo CD, over your pull-only credential or your mirror.
+5. **Admission** — Kyverno checks the signature and refuses anything not digest-pinned. See [verify](verify).
 6. **Smoke** — a human watches the bot capture a real meeting. Dated receipt.
-7. **Station bundle** — receipts, redacted values, profile, contract; sent back by hand.
-8. **Back to 2** — that bundle is the station the next release is gated against.
+7. **Station report** — verdicts, redacted values, profile, contract; sent back.
+8. **Back to 2** — that report is the station the next release is gated against.
 
 <Note>
-**Rung.** Step 6 is the intended procedure and the smoke tool implements it, but **no audio has reached the pipeline in any delivery run yet** — [what's proven, and where](tested#the-delivered-software).
+**Rung.** Step 6 is the intended procedure and the smoke tool implements it, but no audio has reached the pipeline in any delivery run yet — [what's proven, and where](tested#the-delivered-software).
 </Note>
 
-<img src="/images/delivery-loop.svg" alt="The delivery loop: publish, gate, channel, pull, admission, smoke, station bundle, and back to the gate" style={{width:"100%",maxWidth:"940px"}} />
+## What a release is
 
-Vexa and the machinery that receives it both run in your cluster; the machinery is one signed chart, pinned in the subscription `install.sh` applies, and a hand-edit to either pin is reverted visibly.
+One OCI artifact:
+
+- **`entry.json`** — version, source commit, image digests, and the sha256 of every evidence file.
+- **`evidence/`** — digest map, delivery receipt from our own production run, SLSA provenance, Sigstore trust material for offline verification.
+- **`VERIFY.md`** — the commands, with this release's filenames filled in.
+- Beside it, the Helm chart as an OCI artifact, every digest baked into its values — including the images the runtime spawns per meeting.
+
+Two fields are contractual: **`evidence_absent`** names what this release lacks, and **`break_glass`** names who authorised an incomplete chain, and why.
+
+Each stage that validates the artifact signs it. The bytes never change; a candidate that fails stops accumulating evidence.
 
 ## Channels — open or private
 
-Everything Vexa runs on is open source and publicly published — images on Docker Hub, charts and code in the open repositories.
+Everything Vexa runs on is open source and published — images on Docker Hub, code and charts in the open.
 
-- **The open channel** delivers those public releases exactly as published — digest-pinned, signed, pulled from Docker Hub — so a self-hosted deployment stays current automatically. Community support.
-- **Your private channel** is operated with us for your company: releases arrive attestation-complete with the full evidence set (gate reports, station verdicts from real environments), gated against your own specification before anything reaches you, with a support lane behind it.
+- **The open channel** carries those public releases exactly as published: digest-pinned, signed, pulled from Docker Hub. The way back is GitHub issues.
+- **Your private channel** is operated with us: releases arrive attestation-complete with the full evidence set, gated against your specification before anything reaches you. The way back is a ticket lane and the [telemetry rung you set](telemetry-ladder) — silent, receipts, health counters, never content.
 
-The channel is two-way, and the return path differs. On the open channel, the way back is GitHub issues — plus any station report you choose to share. On your private channel, the return path is part of the contract: a ticket lane with response commitments, and the [telemetry rung you set](telemetry-ladder) — from silent to receipts to health counters to diagnostics, never content. The more your side chooses to send back, the faster your deployment improves — that bandwidth is what your private channel is for.
+The software is identical on both, and switching is a subscription change, not a migration.
 
-The software is identical on both paths, and switching paths is a subscription change, not a migration.
-
-Next: [Upgrade](upgrade) · [Install](install) · [The channel](channel) · [Verify](verify)
+Next: [Install](install) · [Upgrade](upgrade) · [The channel](channel)
