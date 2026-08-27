@@ -61,7 +61,26 @@ The only test that matters: someone with no relationship to us follows the docs 
 | No credentials, keys or `.env` files beyond examples | pattern sweep for PEM blocks, `AKIA`, `ghp_`, `sk-` |
 | No editor or build state | `git ls-files` for `.obsidian`, caches, backups |
 
-## 6 · Gates
+## 6 · What we ask a subscriber for
+
+The report a subscriber sends is the only thing a bundle is built from, so its coverage is **argued, not assumed**.
+
+| Prove | How |
+|---|---|
+| Every input that determines a bundle is either supplied by the report, a customer secret, or a named gap | enumerate them from the values file, every provider profile, every preflight check, every installer flag, the chart's `.Values` references and the contract fields — and keep the table |
+| Nothing unreadable is silently missing | anything that cannot be read read-only appears in the report as a stated question, with its reason |
+| A gap found by one lens is not the end of the search | 2026-08-27: five gaps found against preflight, two more against the values surface an hour later, five more against a full sweep — including Argo CD in `openshift-gitops`, which would have been missed at the one OpenShift account |
+
+## 7 · Teardown
+
+| Prove | How |
+|---|---|
+| A throwaway environment leaves nothing running | list instances, volumes and load balancers **with a token that can see them** |
+| Nothing was verified inside too small a scope | 2026-08-27: an LKE cluster was deleted, its two node VMs kept running, and the check said clean — because the scoped token could not see them. They were only visible under the owner token |
+
+**Deleting the parent does not reap the children, and a check that cannot see a thing is not evidence the thing is absent.**
+
+## 8 · Gates
 
 All green, on CI's interpreter, in one run:
 
