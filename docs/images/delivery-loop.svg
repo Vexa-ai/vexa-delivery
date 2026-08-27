@@ -1,74 +1,77 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" width="900" height="470" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Publish, gate, channel. Your cluster pulls, admission verifies, staging deploys, smoke runs with a human in a real meeting, production deploys on your attestation. The station bundle your side chooses to send back returns to the gate.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1070 385" width="1070" height="385" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Vexa publishes and gates a release into the channel. Your cluster pulls from the channel, admits it, deploys to staging, a human smokes it, and you promote to production. A station report optionally returns to the channel.">
   <defs>
     <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" fill="#0D9373"/>
     </marker>
     <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#8a94a6"/>
+      <path d="M0 0 L10 5 L0 10 z" fill="#9aa3af"/>
     </marker>
     <style>
-      .box  { fill: #ffffff; stroke: #0D9373; stroke-width: 1.5; rx: 8; }
-      .key  { fill: #f0faf6; stroke: #0D9373; stroke-width: 2.5; rx: 8; }
-      .ttl  { fill: #111827; font-size: 14px; font-weight: 600; }
-      .sub  { fill: #4b5563; font-size: 11.5px; }
-      .lane { fill: #6b7280; font-size: 12px; font-weight: 700; letter-spacing: .06em; }
-      .lbl  { fill: #6b7280; font-size: 11.5px; font-style: italic; }
-      .flow { stroke: #0D9373; stroke-width: 1.6; fill: none; }
-      .back { stroke: #8a94a6; stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
-      .div  { stroke: #d1d5db; stroke-width: 1; stroke-dasharray: 3 5; }
+      .box  { fill:#ffffff; stroke:#0D9373; stroke-width:1.5; rx:8; }
+      .band { fill:#f0faf6; stroke:#0D9373; stroke-width:2.5; rx:8; }
+      .ttl  { fill:#111827; font-size:14.5px; font-weight:600; }
+      .sub  { fill:#4b5563; font-size:11.5px; }
+      .lane { fill:#9aa3af; font-size:11px; font-weight:700; letter-spacing:.09em; }
+      .lbl  { fill:#6b7280; font-size:11.5px; font-style:italic; }
+      .flow { stroke:#0D9373; stroke-width:1.7; fill:none; }
+      .back { stroke:#9aa3af; stroke-width:1.5; fill:none; stroke-dasharray:5 4; }
     </style>
   </defs>
 
-  <line class="div" x1="460" y1="14" x2="460" y2="452"/>
-  <text class="lane" x="30"  y="32">VEXA</text>
-  <text class="lane" x="560" y="32">YOUR CLUSTER</text>
+  <text class="lane" x="40" y="30">VEXA</text>
 
-  <rect class="box" x="30" y="55" width="260" height="64"/>
-  <text class="ttl" x="50" y="81">Publish</text>
-  <text class="sub" x="50" y="100">a release is built, images frozen</text>
-  <text class="sub" x="50" y="114">and signed</text>
+  <rect class="box" x="40" y="44" width="230" height="72"/>
+  <text class="ttl" x="60" y="72">Publish</text>
+  <text class="sub" x="60" y="92">a release is built, images</text>
+  <text class="sub" x="60" y="107">frozen and signed</text>
 
-  <rect class="box" x="30" y="155" width="260" height="64"/>
-  <text class="ttl" x="50" y="181">Gate</text>
-  <text class="sub" x="50" y="200">rendered with your values, checked</text>
-  <text class="sub" x="50" y="214">against your contract</text>
+  <rect class="box" x="330" y="44" width="230" height="72"/>
+  <text class="ttl" x="350" y="72">Gate</text>
+  <text class="sub" x="350" y="92">rendered with your values,</text>
+  <text class="sub" x="350" y="107">checked against your contract</text>
 
-  <rect class="key" x="30" y="255" width="260" height="64"/>
-  <text class="ttl" x="50" y="281">Channel</text>
-  <text class="sub" x="50" y="300">the validated entry lands</text>
+  <path class="flow" d="M270 80 H322" marker-end="url(#g)"/>
+  <path class="flow" d="M445 116 V146" marker-end="url(#g)"/>
 
-  <path class="flow" d="M160 119 V149" marker-end="url(#g)"/>
-  <path class="flow" d="M160 219 V249" marker-end="url(#g)"/>
+  <rect class="band" x="40" y="152" width="990" height="56"/>
+  <text class="ttl" x="60" y="177">Channel</text>
+  <text class="sub" x="60" y="196">the validated entry lands, and the <tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace">current</tspan> pointer moves</text>
 
-  <rect class="box" x="560" y="55" width="310" height="58"/>
-  <text class="ttl" x="580" y="79">Pull</text>
-  <text class="sub" x="580" y="98">your Argo CD polls, on your schedule</text>
+  <path class="flow" d="M132 208 V246" marker-end="url(#g)"/>
+  <text class="lbl" x="148" y="233">pull — your cluster initiates; nothing is pushed</text>
 
-  <rect class="box" x="560" y="135" width="310" height="58"/>
-  <text class="ttl" x="580" y="159">Admission</text>
-  <text class="sub" x="580" y="178">Kyverno checks the signature and digest pinning</text>
+  <text class="lane" x="892" y="240">YOUR CLUSTER</text>
 
-  <rect class="box" x="560" y="215" width="310" height="58"/>
-  <text class="ttl" x="580" y="239">Staging deploy</text>
-  <text class="sub" x="580" y="258">automatic</text>
+  <rect class="box" x="40"  y="252" width="185" height="80"/>
+  <text class="ttl" x="58" y="279">Pull</text>
+  <text class="sub" x="58" y="300">your Argo CD, on</text>
+  <text class="sub" x="58" y="315">your schedule</text>
 
-  <rect class="box" x="560" y="295" width="310" height="58"/>
-  <text class="ttl" x="580" y="319">Smoke</text>
-  <text class="sub" x="580" y="338">a human in a real meeting, then you promote</text>
+  <rect class="box" x="241" y="252" width="185" height="80"/>
+  <text class="ttl" x="259" y="279">Admission</text>
+  <text class="sub" x="259" y="300">Kyverno checks the</text>
+  <text class="sub" x="259" y="315">signature and digests</text>
 
-  <rect class="box" x="560" y="375" width="310" height="58"/>
-  <text class="ttl" x="580" y="399">Prod deploy</text>
-  <text class="sub" x="580" y="418">on your attestation</text>
+  <rect class="box" x="442" y="252" width="185" height="80"/>
+  <text class="ttl" x="460" y="279">Staging</text>
+  <text class="sub" x="460" y="300">deploys</text>
+  <text class="sub" x="460" y="315">automatically</text>
 
-  <path class="flow" d="M715 113 V131" marker-end="url(#g)"/>
-  <path class="flow" d="M715 193 V211" marker-end="url(#g)"/>
-  <path class="flow" d="M715 273 V291" marker-end="url(#g)"/>
-  <path class="flow" d="M715 353 V371" marker-end="url(#g)"/>
+  <rect class="box" x="643" y="252" width="185" height="80"/>
+  <text class="ttl" x="661" y="279">Smoke</text>
+  <text class="sub" x="661" y="300">a human in a real</text>
+  <text class="sub" x="661" y="315">meeting</text>
 
-  <path class="flow" d="M560 84 H505 V287 H296" marker-end="url(#g)"/>
-  <text class="lbl" x="305" y="279">pull — nothing is pushed</text>
+  <rect class="box" x="844" y="252" width="185" height="80"/>
+  <text class="ttl" x="862" y="279">Production</text>
+  <text class="sub" x="862" y="300">you promote, on</text>
+  <text class="sub" x="862" y="315">your attestation</text>
 
-  <path class="back" d="M560 404 H345 V340 H165 V325" marker-end="url(#s)"/>
-  <text class="lbl" x="352" y="384">station bundle —</text>
-  <text class="lbl" x="352" y="398">what your side chooses to send back</text>
+  <path class="flow" d="M225 292 H233" marker-end="url(#g)"/>
+  <path class="flow" d="M426 292 H434" marker-end="url(#g)"/>
+  <path class="flow" d="M627 292 H635" marker-end="url(#g)"/>
+  <path class="flow" d="M828 292 H836" marker-end="url(#g)"/>
+
+  <path class="back" d="M936 332 V364 H20 V180 H34" marker-end="url(#s)"/>
+  <text class="lbl" x="330" y="358">station report — what your side chooses to send back</text>
 </svg>
