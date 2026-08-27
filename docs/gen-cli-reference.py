@@ -62,7 +62,7 @@ HELP_ENV = {**os.environ, "COLUMNS": "100", "TERM": "dumb", "NO_COLOR": "1"}
 # produces bytes that differ from the committed pages and --check calls it
 # drift. CI runs GEN_PYTHON; generate on anything else and the diff you get is
 # the interpreter, not the code.
-GEN_PYTHON = (3, 12)
+GEN_PYTHON = (3, 13)
 
 PUBLISHER = "publisher"
 CUSTOMER = "customer"

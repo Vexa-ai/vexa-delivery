@@ -20,10 +20,10 @@ python3 kit/report/vexa_state_report.py --namespace vexa             # writes st
 
 It writes one file. Here is a real one, from a live cluster, whole and unedited — this is what you would be sending:
 
-<Accordion title="state-report.yaml — complete, 213 lines">
+<Accordion title="state-report.yaml — complete, 255 lines">
 
 ```yaml
-# vexa-state-report 0.4.0 — the shape of this deployment's environment.
+# vexa-state-report 0.5.0 — the shape of this deployment's environment.
 #
 # WHAT THIS IS. The output of one read-only `kubectl get` sweep of a single
 # namespace. No database connection, no pods/exec, no credentials of any kind,
@@ -43,12 +43,12 @@ It writes one file. Here is a real one, from a live cluster, whole and unedited 
 # do not.
 
 tool: vexa-state-report
-tool_version: '0.4.0'
-schema_version: 4
-generated_at: '2026-08-27T20:38:18Z'
+tool_version: '0.5.0'
+schema_version: 5
+generated_at: '2026-08-27T21:34:37Z'
 namespace: vexa-staging
 read_with: kubectl get -o json, read-only. Nothing else was contacted.
-kit: '553c848-dirty'
+kit: a735538-dirty
 
 
 # 1 · PLATFORM — what this runs on. Distribution and version, the cloud
@@ -63,12 +63,16 @@ platform:
     clusterversion.config.openshift.io was not readable, which is what plain
     Kubernetes and a missing ClusterRole both look like
   cloud: Linode
-  node_shapes_note: 'grouped by shape; node names are not collected'
+  node_shapes_note: >-
+    grouped by shape; node names are not collected. Every taint below needs a
+    matching toleration in the values we hand back, or the workload does not
+    fail — it stays Pending
   node_shapes:
     - count: 2
       instance_type: g6-standard-4
       region: us-sea
       capacity: cpu 4 · memory 7.8Gi · pods 110
+      taints: none
       gpu: null
       arch: amd64
       os: Debian GNU/Linux 13 (trixie)
@@ -202,6 +206,44 @@ registry:
     every image reference points at a public registry (docker.io). Whether the
     pull goes direct or through a transparent proxy is not observable from
     here.
+
+
+# 6 · ADMISSION — what this namespace will LET run: its Pod Security labels
+# and, on OpenShift, its SCC ranges. This decides whether what we deliver runs
+# non-root with a seccomp profile and all capabilities dropped — and, under
+# SCC restricted-v2, that it pins no UID of its own, since one outside the
+# range below is rejected rather than mutated. Unreadable is absent, never
+# permissive.
+admission:
+  pod_security: >-
+    no pod-security.kubernetes.io labels on this namespace — whatever the
+    cluster's own default is applies, and this read cannot see what that is
+  openshift_scc: 'no openshift.io/sa.scc.* annotations — what plain Kubernetes looks like'
+
+
+# 7 · NETWORK POLICY — whether anything here can reach a registry. A policy
+# that default-denies egress is why an install sits unable to resolve DNS or
+# pull an image, and it appears nowhere else in this document. Shape only:
+# rule bodies carry internal addresses and building a bundle does not need
+# them.
+network_policy:
+  policies: []
+  egress: no NetworkPolicies in this namespace — nothing here isolates it
+
+
+# 8 · THE INSTALL ALREADY HERE — the release name and what manages it, read
+# from the labels the workloads carry: no helm binary was run, no Secret was
+# read. An upgrade under a release name that matches nothing does not fail —
+# it installs a SECOND copy of the estate beside the running one, against the
+# same database, and reports success. Argo CD or Kyverno already here makes
+# this an adoption rather than a fresh install, which is a different
+# procedure.
+install:
+  release_names:
+    - vexa (3 workloads)
+  managed_by: Helm
+  argo_cd: present in namespace argocd · 6 deployments · version v3.5.1
+  kyverno: present in namespace kyverno · 4 deployments · version v1.19.0
 
 
 # WHAT COULD NOT BE READ. Recorded rather than defaulted to zero or to an

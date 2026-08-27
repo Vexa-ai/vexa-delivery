@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       # jsonschema: spec/validate.py. PyYAML: the station gate and kit/validate
       # parse the customer bundle's values files.
       - name: Install test dependencies
