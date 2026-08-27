@@ -20,10 +20,10 @@ python3 kit/report/vexa_state_report.py --namespace vexa             # writes st
 
 It writes one file. Here is a real one, from a live cluster, whole and unedited — this is what you would be sending:
 
-<Accordion title="state-report.yaml — complete, 255 lines">
+<Accordion title="state-report.yaml — complete, 270 lines">
 
 ```yaml
-# vexa-state-report 0.5.0 — the shape of this deployment's environment.
+# vexa-state-report 0.6.0 — the shape of this deployment's environment.
 #
 # WHAT THIS IS. The output of one read-only `kubectl get` sweep of a single
 # namespace. No database connection, no pods/exec, no credentials of any kind,
@@ -43,12 +43,12 @@ It writes one file. Here is a real one, from a live cluster, whole and unedited 
 # do not.
 
 tool: vexa-state-report
-tool_version: '0.5.0'
-schema_version: 5
-generated_at: '2026-08-27T21:34:37Z'
-namespace: vexa-staging
+tool_version: '0.6.0'
+schema_version: 6
+generated_at: '2026-08-27T22:47:21Z'
+namespace: vexa
 read_with: kubectl get -o json, read-only. Nothing else was contacted.
-kit: a735538-dirty
+kit: af1725a-dirty
 
 
 # 1 · PLATFORM — what this runs on. Distribution and version, the cloud
@@ -59,19 +59,14 @@ kit: a735538-dirty
 platform:
   kubernetes: v1.35.7
   distribution: Kubernetes
-  distribution_note: >-
-    clusterversion.config.openshift.io was not readable, which is what plain
-    Kubernetes and a missing ClusterRole both look like
+  distribution_note: clusterversion unreadable — plain Kubernetes and a missing ClusterRole look the same
   cloud: Linode
-  node_shapes_note: >-
-    grouped by shape; node names are not collected. Every taint below needs a
-    matching toleration in the values we hand back, or the workload does not
-    fail — it stays Pending
+  node_shapes_note: a taint needs a matching toleration in the values we hand back, or the pod stays Pending
   node_shapes:
-    - count: 2
-      instance_type: g6-standard-4
+    - count: 1
+      instance_type: g6-standard-2
       region: us-sea
-      capacity: cpu 4 · memory 7.8Gi · pods 110
+      capacity: cpu 2 (1930m allocatable) · memory 3.8Gi (2.7Gi allocatable) · pods 110
       taints: none
       gpu: null
       arch: amd64
@@ -95,12 +90,15 @@ platform:
 # password|token|secret|key|apikey is dropped, and so is anything not on the
 # allowlist, so what is here is the customisation and nothing else.
 # `provided_externally` names the settings that come from a Secret or
-# ConfigMap — the name only, never the value.
+# ConfigMap — the name only, never the value. `placement` is where a workload
+# is PINNED: the taints above say which nodes repel it, this says where it is
+# held. Shape only, and no line means it pins nothing.
 workloads:
   - kind: Deployment
     name: vexa-vexa-redis
     chart: vexa-0.12.35
     replicas: '1 ready of 1 desired'
+    placement: affinity podAntiAffinity
     containers:
       - name: redis
         image: >-
@@ -114,6 +112,7 @@ workloads:
     name: vexa-vexa-minio
     chart: vexa-0.12.35
     replicas: '1 ready of 1 desired'
+    placement: affinity podAntiAffinity
     containers:
       - name: minio
         image: >-
@@ -127,6 +126,7 @@ workloads:
     name: vexa-vexa-postgres
     chart: vexa-0.12.35
     replicas: '1 ready of 1 desired'
+    placement: affinity podAntiAffinity
     containers:
       - name: postgres
         image: >-
@@ -153,7 +153,10 @@ resources:
 # 4 · WIRING — which components exist and how they are connected. The database
 # and transcription especially: in-cluster or external, how each is ADDRESSED
 # (the setting's name, never its value), version, and GPU or CPU. Every fact
-# here was read from the cluster. Nothing connected to the database.
+# here was read from the cluster. Nothing connected to the database. Exposure
+# is read as Ingress AND as OpenShift `Route`, because an OpenShift estate has
+# no Ingress and reading one alone would say positively that nothing is
+# exposed.
 wiring:
   database:
     where: in-cluster
@@ -172,7 +175,7 @@ wiring:
     resources: cpu 100m · memory 256Mi
     addressed_by: null
   transcription: []
-  services_note: 'type and ports; addresses are not collected'
+  exposure_note: 'type, class, ports and TLS below; no address, host or DNS name'
   services:
     - vexa-vexa-admin-api · ClusterIP · 8001/TCP
     - vexa-vexa-agent-api · ClusterIP · 8100/TCP
@@ -183,29 +186,31 @@ wiring:
     - vexa-vexa-redis · ClusterIP · 6379/TCP
     - vexa-vexa-runtime · ClusterIP · 8090/TCP
     - vexa-vexa-terminal · ClusterIP · 3000/TCP
-  ingresses_note: 'class, TLS and backends; hostnames are not collected'
   ingresses: []
+  routes: 'absent — an OpenShift kind; not-present and not-granted are the same read here'
 
 
 # 5 · REGISTRY — where images actually come from, so an upgrade does not sit
 # in ImagePullBackOff behind a corporate mirror. Observed from image
-# references, pull secrets and any readable mirror configuration. Stated as
-# observed, never inferred.
+# references, pull credentials on the pod specs AND on the ServiceAccounts,
+# and any readable mirror configuration — never inferred. Whether a pull
+# SUCCEEDS is unreadable and is asked as a QUESTION at the end.
 registry:
   registries_referenced:
     - docker.io (3 containers)
-  image_pull_credentials: null
+  image_pull_credentials:
+    - vexa-channel-registry (on serviceaccount default)
+  image_pull_credentials_note: 'the NAMES of the imagePullSecrets referenced; nothing in them is read'
   cluster_mirror_config: null
   cluster_mirror_note: >-
-    ImageDigestMirrorSet is an OpenShift, cluster-scoped resource and was not
-    readable (kubectl get imagedigestmirrorsets.config.openshift.io exited 1)
-    — which is what a non-OpenShift cluster and a missing ClusterRole both
-    look like. A mirror configured at the container runtime would not be
-    visible to any kubectl read either.
+    ImageDigestMirrorSet is OpenShift and cluster-scoped, and was not readable
+    (kubectl get imagedigestmirrorsets.config.openshift.io exited 1) — what a
+    non-OpenShift cluster and a missing ClusterRole both look like. A
+    runtime-level mirror is invisible to every kubectl read anyway.
   reachability: >-
-    every image reference points at a public registry (docker.io). Whether the
-    pull goes direct or through a transparent proxy is not observable from
-    here.
+    every image reference points at a public registry (docker.io), with 1 pull
+    secret(s) attached. Whether the pull goes direct or through a transparent
+    proxy is not observable from here.
 
 
 # 6 · ADMISSION — what this namespace will LET run: its Pod Security labels
@@ -236,25 +241,35 @@ network_policy:
 # read. An upgrade under a release name that matches nothing does not fail —
 # it installs a SECOND copy of the estate beside the running one, against the
 # same database, and reports success. Argo CD or Kyverno already here makes
-# this an adoption rather than a fresh install, which is a different
-# procedure.
+# this an adoption; `openshift-gitops` is checked too, because on OpenShift
+# the supported Argo is the operator's and a second beside it is that same
+# footgun. `cluster_scope` is derived from what this run was ALLOWED to read.
 install:
   release_names:
     - vexa (3 workloads)
   managed_by: Helm
+  cluster_scope: nodes and storage classes readable — admission can ship cluster-wide
   argo_cd: present in namespace argocd · 6 deployments · version v3.5.1
+  openshift_gitops: absent — namespace openshift-gitops exists but runs no deployments
   kyverno: present in namespace kyverno · 4 deployments · version v1.19.0
 
 
-# WHAT COULD NOT BE READ. Recorded rather than defaulted to zero or to an
-# empty list: a fabricated zero in a document whose whole purpose is to say
-# what you already have is worse than a stated gap. An empty list here means
-# everything was readable.
+# WHAT COULD NOT BE READ, AND WHAT CANNOT BE. Recorded rather than defaulted
+# to zero or an empty list: a fabricated zero in a document whose whole
+# purpose is to say what you already have is worse than a stated gap. Most
+# rows are reads this run was not granted; a row marked QUESTION is one no
+# read-only call can answer at all, so the answer is a sentence from you.
 absent:
   - what: transcription
     reason: >-
       no workload matched 'whisper|transcri|asr|diariz|stt' — widen it with
       --transcription-match. ABSENT, not 'CPU'.
+  - what: routes
+    reason: kubectl get routes.route.openshift.io exited 1 — how an OpenShift estate is exposed
+  - what: 'QUESTION: can this cluster pull a release image by digest'
+    reason: proving it needs a probe pod, which is a write
+  - what: 'QUESTION: does the registry need a CA bundle, or plain HTTP'
+    reason: TLS trust is in no object readable from here
 
 
 # WHAT THE TOOL REFUSES, each enforced by code rather than intent. Read the

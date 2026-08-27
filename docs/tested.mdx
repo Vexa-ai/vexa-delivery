@@ -79,7 +79,7 @@ A fresh anonymous clone, on a throwaway Linode cluster provisioned for the purpo
 | `install.sh` — pinned Argo CD v3.5.1, pinned Kyverno v1.19.0, both ClusterPolicies, the ApplicationSet, both Applications | installed |
 | Staging synced chart `0.12.35`; production created and parked at `UNPINNED` | as documented |
 | Postgres, Redis and MinIO admitted and Running under the admission policy | Running |
-| **The state reporter against that live deployment** | one `state-report.yaml`, 255 lines, exit 0 — [the example on the upgrade page is that file](upgrade) |
+| **The state reporter against that live deployment** | one `state-report.yaml`, 270 lines, exit 0 — [the example on the upgrade page is that file](upgrade) |
 | Vexa's own images admitted | **denied** — see below |
 
 **Two defects the fixtures could not have found, both fixed the same day.** Node capacity printed as `8138636Ki`, and because the grouping key carried that exact figure, two identical machines appeared as two shapes — on a fifty-node cluster that is fifty rows instead of one. Capacities now round to `7.8Gi` and identical nodes group.
