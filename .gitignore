@@ -35,3 +35,6 @@ onboarding/*/
 !onboarding/TEMPLATE/
 station/profiles/*/
 !station/profiles/TEMPLATE/
+
+# editor state
+.obsidian/
