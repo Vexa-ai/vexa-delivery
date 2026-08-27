@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "kyverno-admission-controller",
+        "namespace": "kyverno",
+        "labels": {"app.kubernetes.io/name": "kyverno"}
+      },
+      "spec": {"replicas": 3, "template": {"spec": {"containers": [
+        {"name": "kyverno", "image": "ghcr.io/kyverno/kyverno:v1.12.5"}
+      ]}}},
+      "status": {"readyReplicas": 3}
+    }
+  ]
+}

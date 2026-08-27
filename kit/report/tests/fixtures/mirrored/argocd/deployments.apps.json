@@ -1,0 +1,23 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "argocd-server",
+        "namespace": "argocd",
+        "labels": {"app.kubernetes.io/name": "argocd-server",
+                   "app.kubernetes.io/version": "v2.11.3"}
+      },
+      "spec": {"replicas": 1, "template": {"spec": {"containers": [
+        {"name": "argocd-server", "image": "quay.io/argoproj/argocd:v2.11.3"}
+      ]}}},
+      "status": {"readyReplicas": 1}
+    },
+    {
+      "metadata": {"name": "argocd-repo-server", "namespace": "argocd"},
+      "spec": {"replicas": 1, "template": {"spec": {"containers": [
+        {"name": "argocd-repo-server", "image": "quay.io/argoproj/argocd:v2.11.3"}
+      ]}}},
+      "status": {"readyReplicas": 1}
+    }
+  ]
+}

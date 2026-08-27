@@ -1,0 +1,7 @@
+{
+  "metadata": {
+    "name": "vexa",
+    "labels": {"kubernetes.io/metadata.name": "vexa"},
+    "annotations": {}
+  }
+}

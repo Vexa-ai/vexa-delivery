@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "metadata": {"name": "default-deny-egress", "namespace": "vexa"},
+      "spec": {
+        "policyTypes": ["Egress"],
+        "podSelector": {}
+      }
+    },
+    {
+      "metadata": {"name": "allow-dns", "namespace": "vexa"},
+      "spec": {
+        "policyTypes": ["Egress"],
+        "podSelector": {},
+        "egress": [
+          {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}}],
+           "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]}
+        ]
+      }
+    }
+  ]
+}
