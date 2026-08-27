@@ -7,6 +7,18 @@ Each step is one command, and after them the software stays current on its own. 
 
 Your channel's onboarding mail carries three things: the channel **name** (`acme-stable` in the examples below), the channel public key **`channel.pub`**, and your pull-only **credential**, age-encrypted — see [the channel](channel). `channel.pub` is what every signature on this page is checked against; keep it, and pin it.
 
+## What you need
+
+| | |
+|---|---|
+| Kubernetes ≥ 1.29 or OpenShift, `kubectl` access to a namespace | [per-cloud deltas](environments/kubernetes) |
+| 2 nodes × 4 vCPU / 8 GB, plus ~1 vCPU / 2 GiB per concurrent meeting bot | measured, not estimated |
+| A default StorageClass | Postgres, MinIO, Redis volumes |
+| LoadBalancer Services or an ingress you manage | reaching the gateway |
+| Outbound reach to the channel registry, or your own mirror | your cluster pulls |
+
+[Preflight](preflight) checks all of it in step 2 and fails closed, so you find out now rather than at first sync.
+
 ## Step 1 — Get the kit
 
 ```bash
