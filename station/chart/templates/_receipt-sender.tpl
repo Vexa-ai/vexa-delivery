@@ -49,7 +49,7 @@ THE CONTRACT THE SENDER READS IS NOT THE CONTRACT THE GATE READS, and until
 1.0.6 this mount quietly assumed they were the same object.
 
 The sender passes `--contract /contract/contract.yaml` and the tool reads
-`report_scope` off it — tier, trigger, destination, allowed_files. That is the
+`report_scope` off it — tier, trigger, destination, allowed_sections. That is the
 station's own REPORT contract. `templates/contracts.yaml` renders a different
 document — publication mode, evidence kinds, attestations — under the key
 `policy.json`, into the ARGOCD namespace, for the PreSync verify gate. The

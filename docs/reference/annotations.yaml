@@ -85,10 +85,10 @@ vexa-channel attest: >-
   is later built from.
 
 vexa-station ingest: >-
-  Take the `station.tar.gz` a customer sent back and unpack it into
+  Take the `station-report.yaml` a customer sent back and record it under
   `stations/<name>/` after checking it is complete, self-consistent and free
   of plaintext secrets. Until a station is ingested we cannot gate a release
-  against it, so an un-ingested bundle is an un-represented customer.
+  against it, so an un-ingested report is an un-represented customer.
 
 vexa-station gate: >-
   Ask the other half of the publish question — not "may this release exist"
@@ -103,10 +103,10 @@ vexa-stations record-publish: >-
   entry that was published before the ledger existed.
 
 vexa-stations record-ingest: >-
-  Reduce an already-unpacked station directory into its `state.yaml` and store
+  Reduce an already-ingested station directory into its `state.yaml` and store
   its receipt. Also rarely typed directly — `vexa-station ingest --ledger` calls
   it — but it is how you backfill a station that was ingested before the ledger,
-  without asking the customer to send the bundle again.
+  without asking the customer to send the report again.
 
 vexa-stations pin: >-
   Move a station's pin: the promotion. This is the one write to `channel.yaml`
@@ -156,9 +156,10 @@ vexa-smoke: >-
 
 vexa-validate: >-
   The one command an operator runs end to end: preflight, optionally install,
-  smoke, then bundle it all into a secret-free `station.tar.gz`. Reach for it
-  at onboarding and at every upgrade you want a receipt for; reach for the
-  individual tools only when you are debugging one leg of it.
+  smoke, then write it all into one secret-free `station-report.yaml` you read
+  before you send it. Reach for it at onboarding and at every upgrade you want
+  a receipt for; reach for the individual tools only when you are debugging one
+  leg of it.
 
 vexa-state-report: >-
   Run it FIRST on a deployment that already exists. It is a read-only `kubectl

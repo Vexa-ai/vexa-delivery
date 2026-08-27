@@ -464,9 +464,10 @@ def station_doc(**kw):
                              "receipt": "smoke-receipt-20260825.md"}},
         "tiers": {"flows": False},
         "redaction": {"verified": True, "values_redacted": 4, "leaks": 0},
-        "contents": ["station.json", "contract.yaml"],
-        "files": [{"name": "contract.yaml", "sha256": "a" * 64},
-                  {"name": "profile.env", "sha256": "b" * 64}],
+        "contract_document": "contract_id: example-2026-01\nrequire: []\n",
+        "profile": "PROVIDER=lke\nPROFILE_TESTED=2026-08-24\n",
+        "sections": [{"name": "contract_document", "sha256": "a" * 64, "lines": 2},
+                     {"name": "profile", "sha256": "b" * 64, "lines": 2}],
     }
     doc.update(kw)
     return doc
@@ -493,8 +494,9 @@ class ReportV1(unittest.TestCase):
             ("phases.smoke", station_doc(phases={"smoke": {
                 "verdict": "FAIL", "output": "…the log said…"}})),
             ("redaction", station_doc(redaction={"verified": True, "values": ["hunter2"]})),
-            ("files[]", station_doc(files=[{"name": "a.txt", "sha256": "c" * 64,
-                                            "body": "…"}])),
+            ("sections[]", station_doc(sections=[{"name": "profile", "sha256": "c" * 64,
+                                                 "body": "…"}])),
+            ("a section nobody enumerated", station_doc(meeting_transcript="…")),
         ):
             with self.subTest(where=where):
                 with self.assertRaises(SystemExit):
@@ -516,34 +518,45 @@ class ReportV1(unittest.TestCase):
 class ReportScope(unittest.TestCase):
     SCOPE = {"schema": "report.v1", "trigger": "explicit-command-only",
              "destination": "channel.vexa.ai",
-             "allowed_files": ["station.json", "contract.yaml", "profile.env",
-                               "smoke-receipt-*.md"],
+             "allowed_sections": ["contract_document", "profile", "values",
+                                  "smoke_receipt"],
              "require_redaction_verified": True}
 
     def test_a_conforming_submission_passes(self):
         vv.check_report_scope(self.SCOPE,
-                              ["station.json", "contract.yaml", "smoke-receipt-x.md"],
+                              ["contract_document", "profile", "smoke_receipt"],
                               "channel.vexa.ai", station_doc())
+
+    def test_the_old_allowed_files_clause_is_refused_and_not_ignored(self):
+        """A customer who wrote down which FILES may leave wrote a bound. The
+        report is one file now, so that clause can no longer be satisfied —
+        and a bound we quietly stop reading is worse than one we cannot meet.
+        The refusal names the new spelling."""
+        scope = {k: v for k, v in self.SCOPE.items() if k != "allowed_sections"}
+        scope["allowed_files"] = ["station.json", "contract.yaml"]
+        with self.assertRaises(SystemExit):
+            vv.check_report_scope(scope, ["contract_document"], "channel.vexa.ai",
+                                  station_doc())
 
     def test_a_second_destination_is_refused(self):
         with self.assertRaises(SystemExit):
-            vv.check_report_scope(self.SCOPE, ["station.json"],
+            vv.check_report_scope(self.SCOPE, ["contract_document"],
                                   "telemetry.example.invalid", station_doc())
 
-    def test_a_file_outside_the_allowed_roles_is_refused(self):
+    def test_a_section_outside_the_allowed_roles_is_refused(self):
         with self.assertRaises(SystemExit):
-            vv.check_report_scope(self.SCOPE, ["station.json", "meeting-transcript.txt"],
+            vv.check_report_scope(self.SCOPE, ["contract_document", "meeting_transcript"],
                                   "channel.vexa.ai", station_doc())
 
     def test_an_unverified_redaction_blocks_the_send_when_the_contract_says_so(self):
         doc = station_doc(redaction={"verified": False, "values_redacted": 4, "leaks": 0})
         with self.assertRaises(SystemExit):
-            vv.check_report_scope(self.SCOPE, ["station.json"], "channel.vexa.ai", doc)
+            vv.check_report_scope(self.SCOPE, ["contract_document"], "channel.vexa.ai", doc)
 
     def test_a_trigger_this_tool_does_not_implement_is_refused_not_ignored(self):
         scope = dict(self.SCOPE, trigger="hourly")
         with self.assertRaises(SystemExit):
-            vv.check_report_scope(scope, ["station.json"], "channel.vexa.ai", station_doc())
+            vv.check_report_scope(scope, ["contract_document"], "channel.vexa.ai", station_doc())
 
     def test_a_contract_with_no_report_scope_at_all_now_refuses_the_send(self):
         """CHANGED 2026-08-25, with the telemetry ladder, and deliberately.
@@ -567,12 +580,12 @@ class ReportScope(unittest.TestCase):
         breaking those would be gratuitous.
         """
         with self.assertRaises(SystemExit):
-            vv.check_report_scope({}, ["anything.txt"], "channel.vexa.ai", station_doc())
+            vv.check_report_scope({}, ["contract_document"], "channel.vexa.ai", station_doc())
 
     def test_a_scope_without_a_tier_is_tier_one_not_a_refusal(self):
         scope = {k: v for k, v in self.SCOPE.items()}
         scope.pop("tier", None)
-        vv.check_report_scope(scope, ["station.json", "contract.yaml", "smoke-receipt-x.md"],
+        vv.check_report_scope(scope, ["contract_document", "profile", "smoke_receipt"],
                               "channel.vexa.ai", station_doc())
 
     def test_a_payload_above_the_declared_tier_is_refused(self):
@@ -580,7 +593,7 @@ class ReportScope(unittest.TestCase):
         doc = station_doc()
         doc["tier"] = 3
         with self.assertRaises(SystemExit):
-            vv.check_report_scope(scope, ["station.json"], "channel.vexa.ai", doc)
+            vv.check_report_scope(scope, ["contract_document"], "channel.vexa.ai", doc)
 
     def test_a_block_above_the_declared_tier_is_refused_whatever_the_label_says(self):
         """The block is the payload; the tier field is only a label, and a
@@ -590,21 +603,21 @@ class ReportScope(unittest.TestCase):
         doc["tier"] = 2
         doc["usage"] = {"activated_users": 7}
         with self.assertRaises(SystemExit):
-            vv.check_report_scope(scope, ["station.json"], "channel.vexa.ai", doc)
+            vv.check_report_scope(scope, ["contract_document"], "channel.vexa.ai", doc)
 
     def test_a_silent_station_sends_nothing(self):
         scope = dict(self.SCOPE, tier=0)
         with self.assertRaises(SystemExit):
-            vv.check_report_scope(scope, ["station.json"], "channel.vexa.ai", station_doc())
+            vv.check_report_scope(scope, ["contract_document"], "channel.vexa.ai", station_doc())
 
     def test_scheduled_is_an_accepted_trigger_and_hourly_still_is_not(self):
         """The timer is authorised by the customer's own file, or not at all."""
         vv.check_report_scope(dict(self.SCOPE, trigger="scheduled"),
-                              ["station.json", "contract.yaml", "smoke-receipt-x.md"],
+                              ["contract_document", "profile", "smoke_receipt"],
                               "channel.vexa.ai", station_doc())
         with self.assertRaises(SystemExit):
             vv.check_report_scope(dict(self.SCOPE, trigger="hourly"),
-                                  ["station.json"], "channel.vexa.ai", station_doc())
+                                  ["contract_document"], "channel.vexa.ai", station_doc())
 
 
 if __name__ == "__main__":

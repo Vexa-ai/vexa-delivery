@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vexa.ai/schemas/ee/report.v1.json",
   "title": "Vexa station report v1 — the inbound half of the contract",
-  "description": "What a customer's estate is permitted to send back to Vexa, stated as a closed schema rather than a promise. Every object in this document sets additionalProperties:false, so the permitted field set is the WHOLE field set: there is no place to put a transcript, a meeting title, a participant, a mail body, a log line or a free-text note, and a payload that carries one fails validation before it is sent rather than being caught in review afterwards. That is the design claim — not that we would not read content, but that the format cannot carry it.\n\nThree properties beyond the field list, all enforced by the submit tool (kit/validate/vexa_validate.py --submit) and all writable as contract clauses (report_scope in the verify policy):\n  * TRIGGER — an explicit operator command, never a timer, a hook, or a running process. Nothing in the delivered software originates a report.\n  * DESTINATION — the channel host the estate already pulls from, and only that host. No new firewall rule, no second vendor endpoint, no third party.\n  * PAYLOAD — the station bundle, whose file roles are enumerated in the contract. A bundle carrying a file outside those roles is refused locally.\n\nThe outbound half of the same contract is delivery_scope: what a release may do inside the customer's cluster. The two are deliberately symmetric — a subscription is a pair of bounded promises, and each is a file the customer can read and tighten.\n\nNo standards body has defined this document; nobody has standardised what telemetry may leave a perimeter. The vocabulary is OpenTelemetry-shaped where a match exists and is OURS where none does, which is stated rather than dressed up.",
+  "description": "What a customer's estate is permitted to send back to Vexa, stated as a closed schema rather than a promise. The payload is ONE commented YAML file the operator reads top to bottom before it leaves; this schema is that file's whole permitted field set, and the submit tool validates the document itself rather than a summary assembled beside it. Every object in this document sets additionalProperties:false, so the permitted field set is the WHOLE field set: there is no place to put a transcript, a meeting title, a participant, a mail body, a log line or a free-text note, and a payload that carries one fails validation before it is sent rather than being caught in review afterwards. That is the design claim — not that we would not read content, but that the format cannot carry it.\n\nThree properties beyond the field list, all enforced by the submit tool (kit/validate/vexa_validate.py --submit) and all writable as contract clauses (report_scope in the verify policy):\n  * TRIGGER — an explicit operator command, never a timer, a hook, or a running process. Nothing in the delivered software originates a report.\n  * DESTINATION — the channel host the estate already pulls from, and only that host. No new firewall rule, no second vendor endpoint, no third party.\n  * PAYLOAD — ONE FILE, `station-report.yaml`, whose section roles are enumerated in the contract (report_scope.allowed_sections). A report carrying a section outside those roles is refused locally, before a byte moves.\n\nThe outbound half of the same contract is delivery_scope: what a release may do inside the customer's cluster. The two are deliberately symmetric — a subscription is a pair of bounded promises, and each is a file the customer can read and tighten.\n\nNo standards body has defined this document; nobody has standardised what telemetry may leave a perimeter. The vocabulary is OpenTelemetry-shaped where a match exists and is OURS where none does, which is stated rather than dressed up.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "station", "generated_at", "generator", "kit", "kubernetes",
-               "provider", "namespaces", "contract", "phases", "tiers", "redaction", "files"],
+               "provider", "namespaces", "contract", "phases", "tiers", "redaction", "sections"],
   "allOf": [
     {
       "$comment": "THE TELEMETRY LADDER, ENFORCED BY THE SCHEMA RATHER THAN BY TWO TOOLS AGREEING. The station packager and our ingest both validate against this file, so the rung a payload occupies is decided in ONE place. A tool-side check would be two implementations of one rule, which is the shape every silent divergence in this system has taken.",
@@ -276,29 +276,59 @@
       }
     },
 
-    "contents": {
+    "profile": { "$ref": "#/$defs/section", "description": "The provider profile this run used, verbatim. Substrate facts — provider, Kubernetes version, scope, storage class, PSA mode, mirror host — and never credentials." },
+    "values": { "$ref": "#/$defs/section", "description": "The operator's values file, structurally intact, with every secret-looking value replaced by REDACTED. The SHAPE is the contribution; the values are not." },
+    "contract_document": { "$ref": "#/$defs/section", "description": "The contract this run was judged against, verbatim, beside its id and sha256 in `contract`. The report states the policy it was produced under rather than referring to one." },
+    "preflight_receipt": { "$ref": "#/$defs/section", "description": "The preflight receipt, verbatim." },
+    "install_log": { "$ref": "#/$defs/section", "description": "The install log, present only when --install ran. A console, so the packager keeps its tail and records the trim in sections[]." },
+    "smoke_receipt": { "$ref": "#/$defs/section", "description": "The smoke receipt, verbatim." },
+    "smoke_console": { "$ref": "#/$defs/section", "description": "The smoke run's console, tail-trimmed. Kept because a run that dies before writing its receipt leaves nothing else, and evidence of a crash is still evidence." },
+
+    "absent": {
       "type": "array",
-      "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
-      "description": "Bundle member names. Retained for readability; files[] is what a verifier reads."
+      "description": "Sections this run could NOT produce, each with a reason. Absent over empty: a blank receipt because nothing ran and a blank receipt because a phase produced nothing look identical, and only one of them is fine.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["what", "reason"],
+        "properties": {
+          "what": { "type": "string", "maxLength": 128 },
+          "reason": { "type": "string", "maxLength": 500 }
+        }
+      }
     },
 
-    "files": {
+    "refuses": {
+      "type": "array",
+      "description": "What the tool that wrote this refuses to do, in its own words, so a reader of the document does not have to read the source to find out. Prose, and bounded: it is a list of the tool's own claims, not a channel.",
+      "items": { "type": "string", "maxLength": 300 }
+    },
+
+    "sections": {
       "type": "array",
       "minItems": 1,
-      "description": "The bundle's members with their digests. The payload's manifest: what left, and provably which bytes.",
+      "description": "THE MANIFEST — every verbatim section above with the sha256 of its text. What used to be files[] over archive members, now over sections of one document: what travelled, and provably which bytes. Digests are over the normalised text (LF, no trailing whitespace, one final newline), so what is hashed is what is read.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["name", "sha256"],
         "properties": {
-          "name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
-          "sha256": { "$ref": "#/$defs/digest_hex" }
+          "name": { "enum": ["profile", "values", "contract_document", "preflight_receipt", "install_log", "smoke_receipt", "smoke_console"] },
+          "sha256": { "$ref": "#/$defs/digest_hex" },
+          "lines": { "type": "integer", "minimum": 0 },
+          "source_lines": { "type": "integer", "minimum": 0, "description": "How many lines the section had before trimming, when it was trimmed. Present only then, and the trim is never silent." },
+          "note": { "type": "string", "maxLength": 500 }
         }
       }
     }
   },
 
   "$defs": {
+    "section": {
+      "type": "string",
+      "maxLength": 262144,
+      "description": "ONE VERBATIM DOCUMENT, carried whole. These are the members the station bundle used to carry as files in a tarball; folding them into the report did not widen what may travel, it enumerated it — the seven names below are the whole set, additionalProperties is still false, and there is no eighth. The cap is not a budget, it is the claim that somebody read this before sending it: a section larger than a quarter of a megabyte is a dump."
+    },
     "phase": {
       "type": "object",
       "additionalProperties": false,

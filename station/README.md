@@ -24,7 +24,7 @@ The bundle is machinery. Three objects it deliberately does **not** author:
 Two different documents wear the word *contract*:
 
 - **the report contract** — `contract.yaml`, carrying `report_scope`
-  (tier · trigger · destination · allowed_files). The **receipt sender** mounts
+  (tier · trigger · destination · allowed_sections). The **receipt sender** mounts
   it at `/contract/contract.yaml` and refuses to collect above the tier it
   declares. The chart **references** it by name and never renders it: a
   `report_scope` we authored would make Vexa the author of the document that

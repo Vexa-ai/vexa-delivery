@@ -15,15 +15,11 @@ work/
 *.kubeconfig
 kubeconfig*
 
-# Station bundles (see stations/README.md): only the SYNTHETIC rehearsal
+# Station reports (see stations/README.md): only the SYNTHETIC rehearsal
 # station is committed. A real customer's station stays local — redacted
 # values are still their environment, and receipts name their clusters.
 stations/*/
 !stations/rehearsal/
-# A station profile.env is provider configuration (k8s version, storage class,
-# Argo/Kyverno pins) and never credentials: the ingest secret scan (S4)
-# refuses a bundle that carries any.
-!stations/rehearsal/profile.env
 
 # Per-customer onboarding packs and station profiles — same rule as stations/,
 # extended (ADR-0008, ADR-0009). This repository is PUBLIC: a pack names a

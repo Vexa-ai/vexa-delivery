@@ -1,18 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the station lane's checks.
 
-Hermetic: no helm, no network, no tarballs on the network path — rendered
-manifests are synthetic dicts shaped like `helm template` output, and bundles
-are built in a tmpdir. The refusals are the load-bearing tests: a station gate
-that passes something its contract did not cover is worse than no gate.
+Hermetic: no helm, no network — rendered manifests are synthetic dicts shaped
+like `helm template` output, and station reports are written in a tmpdir. The
+refusals are the load-bearing tests: a station gate that passes something its
+contract did not cover is worse than no gate.
 """
-import io
+import hashlib
 import json
 import pathlib
 import sys
-import tarfile
 import tempfile
 import unittest
+
+import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import vexa_station as vs  # noqa: E402
@@ -160,97 +161,101 @@ class Waivers(unittest.TestCase):
 
 
 class SecretScan(unittest.TestCase):
-    def setUp(self):
-        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="station-test-"))
+    """S4, now over SECTIONS. The scan parses each section back into its own
+    format — values as YAML, profile as an env file — so a credential inside a
+    block scalar is caught by exactly the two scans that used to run over
+    files. A scan of the outer document alone would see one long string."""
 
-    def write(self, name, text):
-        (self.tmp / name).write_text(text)
+    def scan(self, **sections):
+        report = {"schema_version": 1, "station": "rehearsal", **sections}
+        return vs.scan_report_for_secrets(report, sections)
 
     def test_redacted_values_pass(self):
-        self.write("values.redacted.yaml",
-                   "secrets:\n  existingSecretName: vexa-secrets\n  adminApiToken: REDACTED\n"
-                   "  internalApiSecret: \"\"\n  nextauthSecret: CHANGE_ME_nextauth\n")
-        self.assertEqual(vs.scan_bundle_for_secrets(self.tmp), [])
+        self.assertEqual(self.scan(values=(
+            "secrets:\n  existingSecretName: vexa-secrets\n  adminApiToken: REDACTED\n"
+            "  internalApiSecret: \"\"\n  nextauthSecret: CHANGE_ME_nextauth\n")), [])
 
     def test_plaintext_value_refused(self):
-        self.write("values.redacted.yaml", "secrets:\n  adminApiToken: s3cr3t-live-token-9f2a41cc\n")
-        f = vs.scan_bundle_for_secrets(self.tmp)
+        f = self.scan(values="secrets:\n  adminApiToken: s3cr3t-live-token-9f2a41cc\n")
         self.assertEqual(len(f), 1)
         self.assertIn("secrets.adminApiToken", f[0])
+        self.assertIn("[values]", f[0])
 
     def test_refusal_never_prints_the_value(self):
-        self.write("values.redacted.yaml", "secrets:\n  adminApiToken: s3cr3t-live-token-9f2a41cc\n")
-        self.assertNotIn("s3cr3t-live-token", " ".join(vs.scan_bundle_for_secrets(self.tmp)))
+        f = self.scan(values="secrets:\n  adminApiToken: s3cr3t-live-token-9f2a41cc\n")
+        self.assertNotIn("s3cr3t-live-token", " ".join(f))
 
     def test_secret_reference_is_not_a_secret(self):
-        self.write("values.redacted.yaml",
-                   "secrets:\n  existingSecretName: my-own-precreated-secret\n"
-                   "postgres:\n  credentialsSecretName: postgres-credentials\n")
-        self.assertEqual(vs.scan_bundle_for_secrets(self.tmp), [])
+        self.assertEqual(self.scan(values=(
+            "secrets:\n  existingSecretName: my-own-precreated-secret\n"
+            "postgres:\n  credentialsSecretName: postgres-credentials\n")), [])
 
-    def test_env_file_scanned(self):
-        self.write("profile.env", "STATION_NAME=x\n# comment\nREGISTRY_TOKEN=abcd1234efgh5678\n")
-        f = vs.scan_bundle_for_secrets(self.tmp)
+    def test_the_profile_section_is_scanned_as_an_env_file(self):
+        f = self.scan(profile="STATION_NAME=x\n# comment\nREGISTRY_TOKEN=abcd1234efgh5678\n")
         self.assertEqual(len(f), 1)
-        self.assertIn("profile.env:3", f[0])
+        self.assertIn("[profile]:3", f[0])
 
     def test_env_placeholder_passes(self):
-        self.write("profile.env", "REGISTRY_TOKEN=REDACTED\nSTATION_NAME=x\n")
-        self.assertEqual(vs.scan_bundle_for_secrets(self.tmp), [])
+        self.assertEqual(self.scan(profile="REGISTRY_TOKEN=REDACTED\nSTATION_NAME=x\n"), [])
 
     def test_pattern_scan_catches_pasted_credentials(self):
-        for name, blob in (("smoke-receipt.json", '{"log": "authorization: Bearer '
-                                                  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghij"}'),
-                           ("preflight-receipt.txt", "aws key AKIAIOSFODNN7EXAMPLE in the log"),
-                           ("notes.txt", "-----BEGIN RSA PRIVATE KEY-----")):
+        for name, blob in (
+            ("smoke_receipt", '{"log": "authorization: Bearer '
+                              'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghij"}'),
+            ("preflight_receipt", "aws key AKIAIOSFODNN7EXAMPLE in the log"),
+            ("smoke_console", "-----BEGIN RSA PRIVATE KEY-----"),
+        ):
             with self.subTest(name):
-                for p in self.tmp.iterdir():
-                    p.unlink()
-                self.write(name, blob)
-                self.assertTrue(vs.scan_bundle_for_secrets(self.tmp))
+                self.assertTrue(self.scan(**{name: blob}))
+
+    def test_a_secret_in_a_manifest_field_is_still_caught(self):
+        report = {"schema_version": 1, "provider": {"registryToken": "abcd1234efgh5678"}}
+        self.assertTrue(vs.scan_report_for_secrets(report, {}))
 
     def test_unparseable_yaml_refused(self):
-        self.write("values.redacted.yaml", "secrets:\n  a: [unclosed\n")
         with self.assertRaises(vs.CheckFailure):
-            vs.scan_bundle_for_secrets(self.tmp)
+            self.scan(values="secrets:\n  a: [unclosed\n")
 
 
-def make_bundle(path, files, station="rehearsal", manifest_files=None, drop=()):
-    """Build a bundle tar.gz whose station.json digests match its bytes."""
-    import hashlib
+SECTION_KEYS = ("profile", "values", "contract_document", "preflight_receipt",
+                "smoke_receipt", "smoke_console", "install_log")
 
-    root = pathlib.Path(tempfile.mkdtemp(prefix="bundle-")) / station
-    root.mkdir()
-    for name, text in files.items():
-        (root / name).write_text(text)
+
+def make_report(path, sections, station="rehearsal", manifest_sections=None, drop=(),
+                station_name=None, **head):
+    """Write a station report whose sections[] digests match its own text.
+
+    Hand-rolled rather than driven through the packager: these tests are the
+    INGEST's, and a fixture built by the tool under test on the other side of
+    the exchange proves the two agree, never that either is right.
+    """
+    body = {k: v for k, v in sections.items() if k not in drop}
     manifest = {
-        "schema_version": 1, "station": station, "customer": "test",
-        "created_at": "2026-08-24T00:00:00Z",
-        "files": manifest_files if manifest_files is not None else [
-            {"name": n, "sha256": hashlib.sha256((root / n).read_bytes()).hexdigest()}
-            for n in sorted(files) if n not in drop],
+        "schema_version": 1, "station": station_name or station,
+        "generated_at": "2026-08-24T00:00:00Z", "generator": "test",
+        "sections": manifest_sections if manifest_sections is not None else [
+            {"name": n, "sha256": hashlib.sha256(sections[n].encode()).hexdigest()}
+            for n in sorted(sections) if n not in drop],
+        **head,
+        **body,
     }
-    (root / "station.json").write_text(json.dumps(manifest, indent=1))
-    for n in drop:
-        (root / n).unlink()
-    with tarfile.open(path, "w:gz") as tf:
-        tf.add(root, arcname=station)
+    path.write_text(yaml.safe_dump(manifest, sort_keys=False))
     return path
 
 
 COMPLETE = {
-    "profile.env": "STATION_NAME=rehearsal\nPROVIDER=openshift\n",
-    "values.redacted.yaml": "secrets:\n  adminApiToken: REDACTED\n",
-    # report_scope is present because S10 refuses a bundle whose station
+    "profile": "STATION_NAME=rehearsal\nPROVIDER=openshift\n",
+    "values": "secrets:\n  adminApiToken: REDACTED\n",
+    # report_scope is present because S10 refuses a report whose station
     # contract carries no bound on what may leave. `tier` is deliberately
     # ABSENT here: that is the pre-ladder shape every existing subscriber has,
     # it must keep working, and it reads as tier 1.
-    "contract.yaml": ("contract_id: t-2026-01\nrequire:\n  - images-digest-pinned\n"
-                      "report_scope:\n  schema: report.v1\n"
-                      "  trigger: explicit-command-only\n"
-                      "  destination: channel.vexa.ai\n"),
-    "preflight-receipt.txt": "RESULT: PASS (9/9)\n",
-    "smoke-receipt.json": '{"result": "PASS"}\n',
+    "contract_document": ("contract_id: t-2026-01\nrequire:\n  - images-digest-pinned\n"
+                          "report_scope:\n  schema: report.v1\n"
+                          "  trigger: explicit-command-only\n"
+                          "  destination: channel.vexa.ai\n"),
+    "preflight_receipt": "RESULT: PASS (9/9)\n",
+    "smoke_receipt": '{"result": "PASS"}\n',
 }
 
 
@@ -258,19 +263,23 @@ class Ingest(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ingest-test-"))
 
-    def ingest(self, bundle, station="rehearsal"):
+    def ingest(self, report, station="rehearsal"):
         return vs.main(["--stations-dir", str(self.tmp / "stations"),
-                        "ingest", "--bundle", str(bundle), "--station", station])
+                        "ingest", "--bundle", str(report), "--station", station])
 
-    def test_complete_bundle_ingests(self):
-        b = make_bundle(self.tmp / "b.tar.gz", dict(COMPLETE))
+    def test_a_complete_report_ingests(self):
+        b = make_report(self.tmp / "b.yaml", dict(COMPLETE))
         self.assertEqual(self.ingest(b), 0)
         dest = self.tmp / "stations" / "rehearsal"
-        for name in list(COMPLETE) + ["station.json", "ingest-receipt.json"]:
-            self.assertTrue((dest / name).is_file(), name)
+        # ONE artifact plus our own receipt. The sections are not written back
+        # out as files: a directory of derived copies is a second version of
+        # what the customer sent, and it can disagree with the first.
+        self.assertEqual(sorted(p.name for p in dest.iterdir()),
+                         ["ingest-receipt.json", "station-report.yaml"])
         receipt = json.loads((dest / "ingest-receipt.json").read_text())
         self.assertTrue(receipt["ingested_at"].endswith("Z"))
         self.assertEqual(receipt["checks_passed"], ["S1", "S2", "S3", "S4", "S10"])
+        self.assertEqual([r["name"] for r in receipt["sections"]], sorted(COMPLETE))
         # ...and the receipt records WHICH scope the ingest enforced, so an
         # audit can answer "under what declared rung was this kept?" without
         # re-reading a contract that may since have changed.
@@ -278,84 +287,108 @@ class Ingest(unittest.TestCase):
         self.assertEqual(receipt["report_scope"]["declared_tier"], 1)
         self.assertEqual(receipt["report_scope"]["bundle_tier"], 1)
 
-    def test_incomplete_bundle_refused(self):
-        files = dict(COMPLETE)
-        files.pop("contract.yaml")
-        b = make_bundle(self.tmp / "b.tar.gz", files)
-        self.assertEqual(self.ingest(b), 3)
+    def test_an_incomplete_report_is_refused(self):
+        for role in COMPLETE:
+            with self.subTest(role):
+                b = make_report(self.tmp / f"{role}.yaml", dict(COMPLETE), drop=(role,))
+                self.assertEqual(self.ingest(b), 3)
 
-    def test_missing_declared_file_refused(self):
-        b = make_bundle(self.tmp / "b.tar.gz", dict(COMPLETE), drop=("contract.yaml",))
+    def test_an_empty_section_is_as_missing_as_no_section(self):
+        b = make_report(self.tmp / "b.yaml", dict(COMPLETE, preflight_receipt="   \n"))
         self.assertEqual(self.ingest(b), 3)
 
     def test_station_name_must_match(self):
-        b = make_bundle(self.tmp / "b.tar.gz", dict(COMPLETE))
+        b = make_report(self.tmp / "b.yaml", dict(COMPLETE))
         self.assertEqual(self.ingest(b, station="someone-else"), 3)
 
     def test_digest_mismatch_refused(self):
-        b = make_bundle(self.tmp / "b.tar.gz", dict(COMPLETE), manifest_files=[
+        b = make_report(self.tmp / "b.yaml", dict(COMPLETE), manifest_sections=[
             {"name": n, "sha256": "0" * 64} for n in sorted(COMPLETE)])
         self.assertEqual(self.ingest(b), 3)
 
-    def test_undeclared_file_refused(self):
-        files = dict(COMPLETE)
-        files["extra.txt"] = "smuggled\n"
-        b = make_bundle(self.tmp / "b.tar.gz", files, manifest_files=None, drop=())
-        # declare everything except the extra file
-        import hashlib
-        root = pathlib.Path(tempfile.mkdtemp()) / "rehearsal"
-        root.mkdir()
-        for n, t in files.items():
-            (root / n).write_text(t)
-        (root / "station.json").write_text(json.dumps({
-            "schema_version": 1, "station": "rehearsal", "files": [
-                {"name": n, "sha256": hashlib.sha256((root / n).read_bytes()).hexdigest()}
-                for n in sorted(COMPLETE)]}))
-        b = self.tmp / "c.tar.gz"
-        with tarfile.open(b, "w:gz") as tf:
-            tf.add(root, arcname="rehearsal")
+    def test_an_edited_section_is_caught_by_its_digest(self):
+        b = self.tmp / "b.yaml"
+        make_report(b, dict(COMPLETE))
+        doc = yaml.safe_load(b.read_text())
+        doc["values"] = doc["values"] + "extraKnob: true\n"
+        b.write_text(yaml.safe_dump(doc, sort_keys=False))
+        self.assertEqual(self.ingest(b), 3)
+
+    def test_an_undeclared_section_is_refused(self):
+        b = make_report(self.tmp / "b.yaml", dict(COMPLETE, smoke_console="smuggled\n"),
+                        manifest_sections=[
+                            {"name": n, "sha256": hashlib.sha256(COMPLETE[n].encode()).hexdigest()}
+                            for n in sorted(COMPLETE)])
+        self.assertEqual(self.ingest(b), 3)
+
+    def test_an_undeclared_top_level_key_is_refused(self):
+        """report.v1 is a closed schema. This is where we hold ourselves to it
+        on the side the customer cannot audit — a key nobody enumerated is a
+        content channel nobody agreed to."""
+        b = make_report(self.tmp / "b.yaml", dict(COMPLETE), transcript="…she said…")
+        self.assertEqual(self.ingest(b), 3)
+
+    def test_a_second_yaml_document_is_refused(self):
+        b = make_report(self.tmp / "b.yaml", dict(COMPLETE))
+        b.write_text(b.read_text() + "---\nstation: elsewhere\n")
+        self.assertEqual(self.ingest(b), 3)
+
+    def test_a_report_too_large_to_have_been_read_is_refused(self):
+        b = make_report(self.tmp / "b.yaml", dict(COMPLETE))
+        b.write_text(b.read_text() + "# padding\n" * (vs.MAX_REPORT_BYTES // 10))
         self.assertEqual(self.ingest(b), 3)
 
     def test_planted_secret_refused(self):
-        files = dict(COMPLETE)
-        files["values.redacted.yaml"] = "secrets:\n  adminApiToken: s3cr3t-live-token-9f2a41cc\n"
-        b = make_bundle(self.tmp / "b.tar.gz", files)
+        b = make_report(self.tmp / "b.yaml", dict(
+            COMPLETE, values="secrets:\n  adminApiToken: s3cr3t-live-token-9f2a41cc\n"))
         self.assertEqual(self.ingest(b), 3)
         self.assertFalse((self.tmp / "stations" / "rehearsal").exists())
 
     def test_re_ingest_needs_force(self):
-        b = make_bundle(self.tmp / "b.tar.gz", dict(COMPLETE))
+        b = make_report(self.tmp / "b.yaml", dict(COMPLETE))
         self.assertEqual(self.ingest(b), 0)
         self.assertEqual(self.ingest(b), 3)
         self.assertEqual(vs.main(["--stations-dir", str(self.tmp / "stations"), "ingest",
                                   "--bundle", str(b), "--station", "rehearsal", "--force"]), 0)
 
 
-class BundleShape(unittest.TestCase):
-    def members(self, *names):
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w") as tf:
-            for n in names:
-                info = tarfile.TarInfo(n)
-                info.size = 0
-                tf.addfile(info, io.BytesIO(b""))
-        buf.seek(0)
-        return tarfile.open(fileobj=buf)
+class ReportShape(unittest.TestCase):
+    """S1. The traversal, link and single-root checks are gone because their
+    SUBJECT is gone — nothing is extracted. What is left is the same question
+    in the new shape: one document of the kind we accept, small enough that a
+    person could have read it."""
 
-    def test_traversal_refused(self):
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="shape-test-"))
+
+    def load(self, text, name="r.yaml"):
+        p = self.tmp / name
+        p.write_text(text)
+        return vs.load_report(p)
+
+    def test_one_mapping_passes(self):
+        report, _ = self.load("schema_version: 1\nstation: x\n")
+        self.assertEqual(report["station"], "x")
+
+    def test_a_list_is_not_a_report(self):
         with self.assertRaises(vs.CheckFailure):
-            list(vs.safe_members(self.members("rehearsal/../../etc/passwd")))
+            self.load("- one\n- two\n")
 
-    def test_absolute_path_refused(self):
+    def test_two_documents_refused(self):
         with self.assertRaises(vs.CheckFailure):
-            list(vs.safe_members(self.members("/etc/passwd")))
+            self.load("schema_version: 1\n---\nschema_version: 1\n")
 
-    def test_two_roots_refused(self):
+    def test_unparseable_yaml_refused(self):
         with self.assertRaises(vs.CheckFailure):
-            list(vs.safe_members(self.members("a/one", "b/two")))
+            self.load("station: [unclosed\n")
 
-    def test_single_root_passes(self):
-        self.assertEqual(len(list(vs.safe_members(self.members("a/one", "a/two")))), 2)
+    def test_a_future_schema_version_is_refused_not_guessed(self):
+        with self.assertRaises(vs.CheckFailure):
+            self.load("schema_version: 2\nstation: x\n")
+
+    def test_a_missing_file_refused(self):
+        with self.assertRaises(vs.CheckFailure):
+            vs.load_report(self.tmp / "nope.yaml")
 
 
 class GateReport(unittest.TestCase):

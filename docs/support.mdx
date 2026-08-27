@@ -8,7 +8,7 @@ description: "Evidence-bound tickets and channel advisories."
 A ticket opens with the machine state assembled locally — preflight report, admission-refusal message, release coordinates — and **the complete payload shown before anything is sent**, so triage starts from the exact release identity and the exact failing check. An air-gapped site delivers the same payload out of band.
 
 <Note>
-**Rung.** There is no packaging command shipped for this yet. Today the payload is the artefacts you already have — the [preflight](preflight) report, the refusal message, and the `station.tar.gz` from [step 5](install#step-5-send-the-station-bundle-back) — attached by hand.
+**Rung.** There is no packaging command shipped for this yet. Today the payload is the artefacts you already have — the [preflight](preflight) report, the refusal message, and the `station-report.yaml` from [step 5](install#step-5-send-the-station-bundle-back) — attached by hand.
 </Note>
 
 Most fixes are releases. A ticket resolves as *fixed in release X*, and that release reaches you through the same channel, with the same evidence, promoted by your own gate. Severity shortens validation windows on our side; it never skips a stage. **Advisories** — a platform behaviour change, a fleet-wide defect, a withdrawn release — are published on the channel as signed content and surface on your next poll.

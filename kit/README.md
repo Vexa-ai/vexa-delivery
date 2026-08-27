@@ -63,7 +63,7 @@ nothing: an unsigned or wrong-key artifact is refused with nothing written to di
 
 | Piece | File | Note |
 |---|---|---|
-| Validate | [`validate/vexa_validate.py`](validate/vexa_validate.py) | one command: preflight → (optional install) → smoke → `station.tar.gz`, the secret-free record you send back |
+| Validate | [`validate/vexa_validate.py`](validate/vexa_validate.py) | one command: preflight → (optional install) → smoke → `station-report.yaml`, the one secret-free file you read and send back |
 | Preflight | [`preflight/vexa_preflight.py`](preflight/vexa_preflight.py) | P1–P9, each anchored to an observed incident; air-gapped `--snapshot` mode; probe pods are PSA-restricted-compliant |
 | Subscription | [`argocd/applicationset.yaml`](argocd/applicationset.yaml) | ServerSideApply always; volumeClaimTemplates ignoreDifferences |
 | Admission | [`policy/kyverno-vexa-admission.yaml`](policy/kyverno-vexa-admission.yaml) | your policy — tighten at will; we cannot override it |

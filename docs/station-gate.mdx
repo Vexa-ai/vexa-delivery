@@ -3,14 +3,16 @@ title: "The station gate"
 description: "Your specification, checked before a release reaches you — and a dated report of which guarantees held."
 ---
 
-**Nothing is published to your channel until it has been rendered with your values and matched against your contract.** Your **station** is the [`station.tar.gz`](install#step-5-send-the-station-bundle-back) you sent back, ingested: enough of your cluster's shape to render the next release *into it*, plus your contract saying what that release must prove.
+**Nothing is published to your channel until it has been rendered with your values and matched against your contract.** Your **station** is the [`station-report.yaml`](install#step-5-send-the-station-bundle-back) you sent back, ingested: enough of your cluster's shape to render the next release *into it*, plus your contract saying what that release must prove.
+
+It is **one file with named sections** — profile, values, contract, receipts — each carrying the sha256 of its own text in a manifest at the foot. The checks below are the same checks they always were, expressed against sections instead of archive members.
 
 ## Ingest, then gate — nine checks
 
-- **S1 bundle shape** — no absolute paths, no `..`, no links, one bundle root.
-- **S2 completeness** — all five files plus `station.json`, each matched to its role.
-- **S3 manifest identity** — `station.json` names this station, declared digests match the bytes, nothing undeclared rides along.
-- **S4 no plaintext secrets** — secret-shaped keys with real values, and credential patterns anywhere in the bytes: PEM private keys, `sk-`, `ghp_`, `AKIA…`, `AIza…`, `xox…`, JWTs, `client-key-data`.
+- **S1 report shape** — exactly one YAML document, a mapping, `schema_version: 1`, and under the size a person could have read before sending it. (There is no archive, so there is nothing to traverse out of: this is the same question in the new shape.)
+- **S2 completeness** — every section role this report *kind* requires is present and non-empty.
+- **S3 manifest identity** — the report names this station, every declared section hashes to the text that is there to read, nothing undeclared rides along, and a top-level key that is neither a manifest field nor a declared section is a refusal.
+- **S4 no plaintext secrets** — each section is parsed back into its own format (values as YAML, profile as an env file) and scanned for secret-shaped keys with real values, plus credential patterns anywhere in the bytes: PEM private keys, `sk-`, `ghp_`, `AKIA…`, `AIza…`, `xox…`, JWTs, `client-key-data`.
 - **S5 render** — `helm template` succeeds with your values over the chart defaults.
 - **S6 resources** — every container, init containers included, declares cpu **and** memory, requests **and** limits.
 - **S7 no hostPath** — nothing mounts a host path outside the tenancy your station declared.
@@ -44,12 +46,12 @@ Item names are **your** vocabulary; the gate matches strings and refuses what it
 python3 kit/validate/vexa_validate.py --customer-values my-values.yaml --submit
 ```
 
-Validates the report against `report.v1` before anything leaves, prints the payload path so you can open it first, and pushes with **your own** credential — scoped to your station's path and nothing else. It returns `submitted: channel.vexa.ai/vexa/stations/<you>/bundles:<date>` and a `digest:`. **The digest is your receipt** — it names the exact bytes that left your perimeter, and we can be held to it.
+Validates the report against `report.v1` and against your contract's `report_scope` before anything leaves, prints the path so you can open it first, and pushes with **your own** credential — scoped to your station's path and nothing else. The document validated is the document sent; there is no second payload assembled beside it. It returns `submitted: channel.vexa.ai/vexa/stations/<you>/bundles:<date>` and a `digest:`. **The digest is your receipt** — it names the exact bytes that left your perimeter, and we can be held to it.
 
-Each gated publish then writes a report naming the station, the chart and its `sha256`, your values' `sha256`, your contract id and hash, the evidence file, the timestamp, and a verdict per check and per contract item. Generated, not written.
+Each gated publish then writes a report naming the station, the chart and its `sha256`, your values section's `sha256`, your contract id and hash, the evidence file, the timestamp, and a verdict per check and per contract item. Generated, not written.
 
 <Note>
-**Rung.** The ingest and gate lane is in the tree; the worked example committed here is **synthetic** — no real station bundle has been ingested yet. See [what's proven, and where](tested).
+**Rung.** The ingest and gate lane is in the tree; the worked example committed here is **synthetic** — no real station report has been ingested yet. See [what's proven, and where](tested).
 </Note>
 
 Next: [Telemetry ladder](telemetry-ladder) · [For your auditors](governance)

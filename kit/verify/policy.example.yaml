@@ -160,8 +160,13 @@ min_entry_seq: 1
 #                  document that bounds what it may send.
 #   destination  — the channel host you already pull from, and only that host.
 #                  No new firewall rule and no second vendor endpoint.
-#   allowed_files— the bundle's file roles. A bundle carrying anything outside
-#                  this list is refused locally, before a byte is sent.
+#   allowed_sections
+#                — the report's section roles. A report carrying anything
+#                  outside this list is refused locally, before a byte is sent.
+#                  This clause was `allowed_files` while the report was six
+#                  files in a tarball; the old spelling is REFUSED rather than
+#                  ignored, because a bound we quietly stop reading is worse
+#                  than one we cannot meet. The refusal names the new spelling.
 #
 # `vexa_validate.py --submit` prints the payload path before sending it. Open
 # it. That is what it is for.
@@ -194,16 +199,15 @@ min_entry_seq: 1
 #   cadence: per-release               # per-release · daily · weekly · on-demand
 #   trigger: explicit-command-only     # or `scheduled`, which authorises the CronJob
 #   destination: channel.vexa.ai       # host only; no path, no second host
-#   allowed_files:
-#     - station.json
-#     - contract.yaml
-#     - profile.env
-#     - values.redacted.yaml
-#     - preflight-receipt.txt
-#     - smoke-receipt-*.md
-#     - smoke-console.txt
-#     - install-log.txt
-#   # Refuse to submit unless redaction was verified against the written archive.
+#   allowed_sections:
+#     - profile
+#     - values
+#     - contract_document
+#     - preflight_receipt
+#     - smoke_receipt
+#     - smoke_console
+#     - install_log
+#   # Refuse to submit unless redaction was verified against the written report.
 #   require_redaction_verified: true
 
 # ---- freshness -------------------------------------------------------------

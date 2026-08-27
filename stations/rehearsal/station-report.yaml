@@ -1,0 +1,322 @@
+# vexa-validate 0.2.0 — this station, as it actually stands.
+#
+# WHAT THIS IS. One file: the provider profile, your values with every secret
+# removed, the contract this run was judged against, and the preflight and
+# smoke receipts — each verbatim, each with the digest of its own text at the
+# foot of the document.
+#
+# ONE FILE, AND THAT IS THE DESIGN. Not a directory, not an archive, nothing
+# to extract. You have to read all of it before any of it leaves, and six
+# files in a tarball is a review task where one commented document is a read.
+#
+# WHAT IS NOT IN IT. No credentials: every value under a key matching
+# password|token|secret|key|apikey is REDACTED, and the finished file is
+# scanned for what was removed. No meeting content, no transcripts, no
+# participants, no schema and no rows — report.v1 sets
+# additionalProperties:false on every object, so there is nowhere in this
+# document to put one.
+#
+# IT HAS NOT BEEN SENT ANYWHERE. Writing it sends nothing. `--submit` sends
+# it, to the channel host you already pull from, with your own credential,
+# after checking it against your contract's report_scope. Read it first. That
+# is what it is for.
+
+schema_version: 1
+bundle_kind: install
+station: rehearsal
+generated_at: '2026-08-24T09:45:00Z'
+generator: >-
+  SYNTHETIC — hand-assembled from this repository's own example files,
+  rendered by kit/validate/vexa_validate.py's own writer. A real report is
+  produced by a run of that tool on a customer's cluster.
+kit:
+  commit: null
+  describe: '0.0.0-synthetic'
+  station_chart_version: null
+kubernetes:
+  server_version: v1.31.0
+provider:
+  name: openshift
+  profile_env_present: true
+  profile_tested: 'no'
+namespaces:
+  target: vexa-rehearsal
+  release_prefix: vexa-vexa
+tiers:
+  flows: false
+
+
+# THE CONTRACT THIS RUN WAS JUDGED AGAINST — id and sha256. The document
+# itself is below under `contract_document`; the sha256 is over that text, so
+# the identity can be recomputed from what you can see rather than from a file
+# you were told about.
+contract:
+  source: contract.yaml
+  kit_default: false
+  contract_id: rehearsal-2026-01
+  sha256: '94abcbb29d0ded329d7a91ed458b4558ee8e8a591c49f3a0e596f8b8eef5234d'
+
+
+# WHAT RAN, AND WHAT IT DECIDED. Verdicts and exit codes. The receipts these
+# verdicts came from are below, verbatim — nothing here summarises them.
+phases:
+  preflight:
+    verdict: PASS
+    exit_code: 0
+    receipt: preflight-receipt.txt
+  install:
+    skipped: true
+    reason: not requested (--install)
+  smoke:
+    verdict: PASS
+    exit_code: 0
+    receipt: smoke-receipt.json
+
+
+# 1 · THE PROVIDER PROFILE this run used, verbatim. Substrate facts: provider,
+# Kubernetes version, scope, storage class, PSA mode, mirror host. Never
+# credentials. If it says PROFILE_TESTED=no, this is the section worth sending
+# back filled in — it is the highest-value part of the contribution.
+profile: |
+  # SYNTHETIC station profile — rehearsal station, not a customer.
+  # Provider/substrate facts the station declares. Never credentials: the ingest
+  # secret scan (S4) refuses a bundle that carries any.
+  STATION_NAME=rehearsal
+  PROVIDER=openshift
+  KUBERNETES_VERSION=1.31
+  SCOPE=namespace
+  NAMESPACE=vexa-rehearsal
+  ARGOCD_VERSION=v3.5.1
+  KYVERNO_VERSION=v1.19.0
+  STORAGE_CLASS=thin-csi
+  PSA_ENFORCE=restricted
+  LIMITRANGE_PRESENT=yes
+  RESOURCEQUOTA_PRESENT=yes
+  REGISTRY_MIRROR=harbor.example.invalid/vexa-mirror
+
+
+# 2 · YOUR VALUES FILE, structurally intact, with every secret-looking value
+# replaced by REDACTED — keys matching password|token|secret|key|apikey, and
+# everything nested beneath them. THE SHAPE IS THE CONTRIBUTION: what we need
+# is which knobs you turned, never what you turned them to. An empty value
+# stays empty, because "not set" is configuration and not a secret.
+values: |
+  # SYNTHETIC — the rehearsal station's customer-local values, redacted for
+  # transport. Only the SHAPE travels: every credential is a placeholder, and
+  # ingest refuses the bundle if one is not (S4).
+  #
+  # Derived from kit/profiles/vexa/customer-values.example.yaml plus the two
+  # environment facts this station's shape depends on: object storage is the
+  # customer's own (in-cluster MinIO off), and every dependency image is pulled
+  # from their mirror at a digest.
+  secrets:
+    existingSecretName: vexa-station-secrets   # pre-created in the namespace
+    adminApiToken: REDACTED
+    internalApiSecret: REDACTED
+    nextauthSecret: REDACTED
+  global:
+    imagePullPolicy: IfNotPresent
+    imagePullSecrets:
+      - name: harbor-mirror-pull
+    tolerations: []
+  migrations:
+    enabled: false
+  gateway:
+    replicaCount: 1
+  # Dependencies come from the customer's mirror, pinned by digest — the same
+  # rule the delivered images obey (S8).
+  postgres:
+    image: harbor.example.invalid/vexa-mirror/postgres:17-alpine@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  redis:
+    image: harbor.example.invalid/vexa-mirror/valkey:8-alpine@sha256:2222222222222222222222222222222222222222222222222222222222222222
+  # Object storage is the customer's own S3 endpoint; the bundled MinIO and its
+  # init Job (image `minio/mc:latest`, no resources declared) are off.
+  minio:
+    enabled: false
+
+
+# 3 · THE CONTRACT, verbatim — the policy this run was produced under, carried
+# beside the evidence rather than referenced from it. Its `report_scope` is
+# the clause that bounds what may leave this perimeter, and `--submit` checks
+# this document against it before a byte moves.
+contract_document: |
+  # SYNTHETIC — the rehearsal station's contract: what a release must prove
+  # before it may run HERE. The customer's file; Vexa can tighten nothing and
+  # weaken nothing. Its sha256 is the contract's identity and rides in every
+  # gate report.
+  contract_id: rehearsal-2026-01
+
+  # Channel-entry half (read by kit/verify — see kit/verify/policy.example.yaml)
+  require_vendor_approval: true
+  require_publication_mode: published
+  require_evidence_kinds:
+    - candidate_map
+    - delivery_receipt
+    - source_provenance
+    - trusted_root
+  allow_break_glass: false
+  min_entry_seq: 1
+
+  # Station half (read by publisher/vexa_station.py gate) — the per-release
+  # guarantees this station requires before Vexa may publish to it.
+  require:
+    - german-teams-meeting-validated
+    - images-digest-pinned
+    - no-hostpath
+
+  # Delivery scope (read by publisher/vexa_station.py gate) — the blast radius
+  # this station permits. PSS/SCC + OLM-shaped vocabulary; see
+  # kit/verify/policy.example.yaml for the annotated form.
+  delivery_scope:
+    allowed_namespaces:
+      - vexa-staging
+      - vexa-prod
+    allow_cluster_scoped: false
+    pod_security: baseline
+    allowed_image_registries:
+      # This station mirrors everything into its own Harbor; Vexa's own images
+      # still come from Docker Hub today. Short refs like `vexaai/v012-gateway`
+      # are normalised to `docker.io/...` before matching, so the fully-qualified
+      # prefix is what belongs here.
+      - docker.io/vexaai/
+      - harbor.example.invalid/vexa-mirror/
+    resource_ceiling:
+      cpu: "16"
+      memory: 32Gi
+
+  # Report scope (read by kit/validate --submit) — what may leave this estate.
+  report_scope:
+    schema: report.v1
+    trigger: explicit-command-only
+    destination: channel.vexa.ai
+    # The sections of station-report.yaml this estate permits to leave. The
+    # report is ONE file, so the bound is over its named sections rather than
+    # over the members of an archive.
+    allowed_sections:
+      - profile
+      - values
+      - contract_document
+      - preflight_receipt
+      - smoke_receipt
+      - smoke_console
+      - install_log
+    require_redaction_verified: true
+
+
+# 4 · THE PREFLIGHT RECEIPT, verbatim — will this cluster run what the channel
+# delivers. Every finding names its own remedy.
+preflight_receipt: |
+  vexa-preflight — cluster conformance for the Vexa enterprise channel
+  SYNTHETIC RECEIPT — fabricated for the stations-lane rehearsal. No cluster was
+  contacted. A real receipt is produced by kit/preflight/vexa_preflight.py.
+  ==============================================================================
+  station: rehearsal   namespace: vexa-rehearsal   scope: namespace
+  kubernetes 1.31 (openshift)   generated 2026-08-24T09:10:00Z
+  ------------------------------------------------------------------------------
+  [PASS] P1 · Every delivered workload can schedule despite node taints
+  [PASS] P2 · Declared resources on every container, and they fit the LimitRange
+  [PASS] P3 · ResourceQuota headroom covers the declared totals
+  [PASS] P4 · SCC restricted-v2 / PodSecurity 'restricted' admission
+  [PASS] P5 · NetworkPolicy lets the delivered workloads resolve DNS and reach the registry
+  [PASS] P6 · The bot's Memory-backed /dev/shm fits the limits and the nodes
+  [PASS] P7 · Default StorageClass exists and binds
+  [PASS] P8 · Channel registry reachable and its signature verifies
+  [PASS] P9 · Egress to the meeting platforms
+  ------------------------------------------------------------------------------
+  RESULT: PASS (9/9)
+
+
+# 5 · THE SMOKE RECEIPT, verbatim — did what was delivered actually work here.
+# Chart revision, image digests, segment count.
+smoke_receipt: |
+  {
+    "synthetic": true,
+    "note": "SYNTHETIC smoke receipt — fabricated for the stations-lane rehearsal. No meeting was held and no cluster was contacted.",
+    "station": "rehearsal",
+    "release": "v0.12.26",
+    "ran_at": "2026-08-24T09:40:00Z",
+    "platform": "ms_teams",
+    "locale": "de-AT",
+    "checks": {
+      "api_reachable": "PASS",
+      "bot_dispatched": "PASS",
+      "bot_admitted": "PASS",
+      "transcript_returned": "PASS",
+      "transcript_language_detected": "de",
+      "teardown_clean": "PASS"
+    },
+    "exit_reason": "completed",
+    "result": "PASS"
+  }
+
+
+# THE MANIFEST — every verbatim section above, with the sha256 of its text and
+# its length. This is what makes the document checkable rather than merely
+# readable: the ingest recomputes each digest from the text it parsed, and a
+# section edited in transit is a refusal rather than a surprise later. Digests
+# are over the NORMALISED text (LF line endings, no trailing whitespace, one
+# final newline), which is exactly what is written below.
+sections:
+  - name: profile
+    sha256: '8f4f3c7e943a34b65ae6eacd095da8abd65d35dfd7983fbd90d34b1c87859330'
+    lines: 15
+  - name: values
+    sha256: '0e99ad5cec48ad0fa880bb11b5b4c545ffed0a13fd6ea0b70828e2669dcb4a54'
+    lines: 32
+  - name: contract_document
+    sha256: '94abcbb29d0ded329d7a91ed458b4558ee8e8a591c49f3a0e596f8b8eef5234d'
+    lines: 61
+  - name: preflight_receipt
+    sha256: '076ddb512fcc495f7d8dabbbb0f69fca402c2c843015b5f174b8d90456342377'
+    lines: 18
+  - name: smoke_receipt
+    sha256: '3cd84e3e1d4369e742b027f9502062298c4fc5352e90589a49b227e55e086072'
+    lines: 19
+
+
+# WHAT IS NOT HERE, AND WHY. Recorded rather than defaulted to an empty
+# string: a receipt that is blank because nothing ran and a receipt that is
+# blank because a phase produced nothing look identical, and only one of them
+# is fine. An empty list here means every section was produced.
+absent:
+  - what: install_log
+    reason: >-
+      install was not requested (--install); nothing ran, so there is no log
+      rather than an empty one
+  - what: smoke_console
+    reason: >-
+      this report was hand-assembled from the repository's own example files;
+      no smoke run produced a console. A real run carries one.
+
+
+# WHAT THE TOOL REFUSES, each enforced by code rather than by intent. This one
+# CAN transmit — that is what --submit is — so the refusals say what bounds
+# the transmission rather than pretending there is none.
+refuses:
+  - >-
+    send on its own: nothing here transmits until an operator types --submit;
+    there is no timer and no hook in this tool
+  - >-
+    send anywhere else: one destination, and it is the channel host you
+    already pull from — report_scope.destination in your own contract
+  - >-
+    send above your rung: this document is validated against report.v1 and
+    against your contract's report_scope before a byte moves
+  - >-
+    carry a credential: values under keys matching
+    password|token|secret|key|apikey are REDACTED, and the finished file is
+    scanned for every one removed
+  - >-
+    carry your content: report.v1 has no field for a transcript, a meeting
+    title, a participant or a log line, at any tier
+
+
+# THE REDACTION SELF-CHECK. `values_redacted` counts the plaintext values that
+# were removed from your values file. The finished document is then scanned
+# for every one of them; `verified: true` means none survived. A survivor
+# exits 3, names the count and never the value, and the file is kept so you
+# can inspect it — but it must not be sent.
+redaction:
+  verified: true
+  values_redacted: 3
+  leaks: 0

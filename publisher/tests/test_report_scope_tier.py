@@ -17,12 +17,14 @@ declared tier, a higher-tier BLOCK under an honest label, and a tier the
 contract does not permit at all), plus the compatibility case that must NOT
 break: a pre-ladder contract with no `tier` at all.
 """
+import hashlib
 import json
 import pathlib
 import sys
-import tarfile
 import tempfile
 import unittest
+
+import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "publisher"))
@@ -46,13 +48,8 @@ RELEASE = {"app": "vexa-prod", "pin": "0.1.0-estate.20260825.rev139",
            "verifier": {"verdict": "ELIGIBLE"}}
 
 
-def make_bundle(path, files, station="vexa-prod", kind="telemetry", tier=2, **blocks):
-    import hashlib
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="ladder-"))
-    root = tmp / "station"
-    root.mkdir()
-    for name, text in files.items():
-        (root / name).write_text(text)
+def make_bundle(path, sections, station="vexa-prod", kind="telemetry", tier=2, **blocks):
+    """One station report, its sections[] digests matching its own text."""
     manifest = {
         "schema_version": 1, "bundle_kind": kind, "tier": tier, "station": station,
         "generated_at": "2026-08-25T00:00:00+00:00", "generator": "test",
@@ -61,14 +58,19 @@ def make_bundle(path, files, station="vexa-prod", kind="telemetry", tier=2, **bl
         "phases": {}, "tiers": {"flows": False},
         "redaction": {"verified": True, "values_redacted": 0, "leaks": 0},
         **blocks,
+        **sections,
     }
-    manifest["files"] = sorted(
-        ({"name": f.name, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
-         for f in root.iterdir() if f.is_file()), key=lambda r: r["name"])
-    (root / "station.json").write_text(json.dumps(manifest, indent=1))
-    with tarfile.open(path, "w:gz") as tar:
-        tar.add(root, arcname="station")
+    manifest["sections"] = sorted(
+        ({"name": n, "sha256": hashlib.sha256(t.encode()).hexdigest()}
+         for n, t in sections.items()), key=lambda r: r["name"])
+    path.write_text(yaml.safe_dump(manifest, sort_keys=False))
     return path
+
+
+# The one required section of a telemetry report: no phase ran, so there is no
+# receipt to carry, and the contract is what bounds what may leave.
+def telemetry(tier=None, extra=""):
+    return {"contract_document": contract(tier, extra)}
 
 
 class LadderIngest(unittest.TestCase):
@@ -87,18 +89,18 @@ class LadderIngest(unittest.TestCase):
     # ---- the two named validations -------------------------------------
 
     def test_a_t2_bundle_against_a_t2_contract_is_kept_with_its_counters(self):
-        b = make_bundle(self.tmp / "t2.tar.gz", {"contract.yaml": contract(2)},
+        b = make_bundle(self.tmp / "t2.yaml", telemetry(2),
                         tier=2, release=RELEASE, health=HEALTH)
         self.assertEqual(self.ingest(b), 0)
         r = self.receipt()
         self.assertEqual(r["report_scope"], {"declared_tier": 2, "bundle_tier": 2,
                                              "blocks": ["health", "release"]})
-        kept = json.loads(
-            (self.tmp / "stations" / "vexa-prod" / "station.json").read_text())
+        kept = yaml.safe_load(
+            (self.tmp / "stations" / "vexa-prod" / "station-report.yaml").read_text())
         self.assertEqual(kept["health"]["pods"]["restarts_total"], 4)
 
     def test_a_t3_shaped_bundle_against_a_t2_contract_is_refused(self):
-        b = make_bundle(self.tmp / "t3.tar.gz", {"contract.yaml": contract(2)},
+        b = make_bundle(self.tmp / "t3.yaml", telemetry(2),
                         tier=3, release=RELEASE, health=HEALTH, usage=USAGE)
         self.assertEqual(self.ingest(b), 3)
         self.assertFalse((self.tmp / "stations" / "vexa-prod").exists(),
@@ -110,60 +112,46 @@ class LadderIngest(unittest.TestCase):
         """Declares tier 2 — which the contract permits — and carries a usage
         block anyway. The block is the payload; the label cannot authorise its
         own contents."""
-        b = make_bundle(self.tmp / "sneaky.tar.gz", {"contract.yaml": contract(2)},
+        b = make_bundle(self.tmp / "sneaky.yaml", telemetry(2),
                         tier=2, release=RELEASE, health=HEALTH, usage=USAGE)
         self.assertEqual(self.ingest(b), 3)
 
     def test_a_silent_station_that_submits_is_a_violation_on_our_side(self):
-        b = make_bundle(self.tmp / "t0.tar.gz", {"contract.yaml": contract(0)},
+        b = make_bundle(self.tmp / "t0.yaml", telemetry(0),
                         tier=1, release=RELEASE)
         self.assertEqual(self.ingest(b), 3)
 
     def test_tier_four_never_travels_this_path(self):
-        b = make_bundle(self.tmp / "t4.tar.gz", {"contract.yaml": contract(4)},
+        b = make_bundle(self.tmp / "t4.yaml", telemetry(4),
                         tier=4, release=RELEASE)
         self.assertEqual(self.ingest(b), 3)
 
     def test_a_contract_with_no_report_scope_is_refused(self):
-        b = make_bundle(self.tmp / "bare.tar.gz",
-                        {"contract.yaml": "contract_id: t\nrequire: []\n"},
+        b = make_bundle(self.tmp / "bare.yaml",
+                        {"contract_document": "contract_id: t\nrequire: []\n"},
                         tier=1, release=RELEASE)
         self.assertEqual(self.ingest(b), 3)
 
     # ---- compatibility, which must not break ----------------------------
 
     def test_a_pre_ladder_contract_with_no_tier_reads_as_t1(self):
-        b = make_bundle(self.tmp / "legacy.tar.gz", {"contract.yaml": contract(None)},
+        b = make_bundle(self.tmp / "legacy.yaml", telemetry(None),
                         tier=1, release=RELEASE)
         self.assertEqual(self.ingest(b), 0)
         self.assertEqual(self.receipt()["report_scope"]["declared_tier"], 1)
 
     def test_a_pre_ladder_bundle_with_no_tier_field_reads_as_t1(self):
-        b = make_bundle(self.tmp / "legacy2.tar.gz", {"contract.yaml": contract(None)},
+        b = make_bundle(self.tmp / "legacy2.yaml", telemetry(None),
                         tier=None)
-        # tier=None writes "tier": null; strip it the way a real old bundle has it
+        # tier=None writes "tier: null"; strip it the way a real old report has it
         self.assertEqual(self.ingest(self._drop_tier(b)), 0)
         self.assertEqual(self.receipt()["report_scope"]["bundle_tier"], 1)
 
     def _drop_tier(self, path):
-        import hashlib
-        tmp = pathlib.Path(tempfile.mkdtemp())
-        with tarfile.open(path) as tar:
-            try:
-                tar.extractall(tmp, filter="data")
-            except TypeError:
-                tar.extractall(tmp)
-        root = tmp / "station"
-        m = json.loads((root / "station.json").read_text())
-        m.pop("tier", None)
-        m["files"] = sorted(
-            ({"name": f.name, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
-             for f in root.iterdir() if f.is_file() and f.name != "station.json"),
-            key=lambda r: r["name"])
-        (root / "station.json").write_text(json.dumps(m, indent=1))
-        out = self.tmp / "legacy-notier.tar.gz"
-        with tarfile.open(out, "w:gz") as tar:
-            tar.add(root, arcname="station")
+        doc = yaml.safe_load(path.read_text())
+        doc.pop("tier", None)
+        out = self.tmp / "legacy-notier.yaml"
+        out.write_text(yaml.safe_dump(doc, sort_keys=False))
         return out
 
     # ---- the bundle KIND decides which files are required ---------------
@@ -173,17 +161,17 @@ class LadderIngest(unittest.TestCase):
         happen would mean either refusing every T2 submission or having the
         sender fabricate one — a manufactured artifact inside a signed
         bundle, which is the worse of the two by a distance."""
-        b = make_bundle(self.tmp / "tele.tar.gz", {"contract.yaml": contract(2)},
+        b = make_bundle(self.tmp / "tele.yaml", telemetry(2),
                         kind="telemetry", tier=2, release=RELEASE, health=HEALTH)
         self.assertEqual(self.ingest(b), 0)
 
     def test_an_install_bundle_still_needs_all_six_roles(self):
-        b = make_bundle(self.tmp / "inst.tar.gz", {"contract.yaml": contract(2)},
+        b = make_bundle(self.tmp / "inst.yaml", telemetry(2),
                         kind="install", tier=1, release=RELEASE)
         self.assertEqual(self.ingest(b), 3)
 
     def test_an_unknown_bundle_kind_is_refused_not_defaulted(self):
-        b = make_bundle(self.tmp / "weird.tar.gz", {"contract.yaml": contract(2)},
+        b = make_bundle(self.tmp / "weird.yaml", telemetry(2),
                         kind="whatever", tier=1)
         self.assertEqual(self.ingest(b), 3)
 

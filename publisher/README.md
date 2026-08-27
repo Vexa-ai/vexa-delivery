@@ -66,7 +66,7 @@ produced the entry.
 answers *may it be published at this customer's station?* — their contract gates our publish.
 
 ```
-python3 publisher/vexa_station.py ingest --bundle station-rehearsal.tar.gz --station rehearsal
+python3 publisher/vexa_station.py ingest --bundle station-report.yaml --station rehearsal
 python3 publisher/vexa_station.py gate   --station rehearsal --chart work/chart/vexa-0.12.26.tgz \
     --evidence work/evidence/v0.12.26.json \
     [--waive <require-item> --reason "<why, loudly recorded>"]
