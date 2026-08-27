@@ -7,7 +7,7 @@ description: "You already run Vexa: tell us your setup, get a bundle that fits i
 
 ## What we need to see
 
-The shape of your environment, so nothing we ship asks for something you do not already have.
+Your environment and configuration — the shape a bundle has to fit.
 
 - **Your platform** — Kubernetes or OpenShift, which version, which cloud.
 - **How the pieces are connected** — database and transcription: in-cluster or external, how each is addressed, which versions, and whether transcription runs on GPU or CPU.
@@ -16,39 +16,28 @@ The shape of your environment, so nothing we ship asks for something you do not 
 - **What you have customised** — the values you set, so a bundle never overwrites a deliberate choice.
 - **What you can reach** — Docker Hub directly, or only a mirror.
 
-**Nothing about your data.** No schema, no rows, no transcripts, no credentials.
-
 ## The report
 
-One command. It reads your namespace with `kubectl get` and nothing else: no database connection, no `exec`, no credentials.
+`kubectl get` across one namespace, written to plain files.
 
 ```bash
-python3 kit/report/vexa_state_report.py --namespace vexa --dry-run
-```
-
-`--dry-run` connects to nothing and writes nothing. It prints the exact commands a real run would issue, so you can hand that list to whoever owns the cluster before anything happens.
-
-```bash
+python3 kit/report/vexa_state_report.py --namespace vexa --dry-run   # the commands it will run
 python3 kit/report/vexa_state_report.py --namespace vexa
 ```
 
-The report is a directory of plain files with an archive beside it. `summary.txt` is the whole thing in plain English — read it first, open the raw files if you want to, then send the archive. The tool prints the path and stops; there is no transmit path in it at all.
+`summary.txt` is the whole report in plain English. Read it, then send the archive.
 
 The script is Apache-2.0 like everything here — if it misses something in your environment, patch it and send a PR.
-
-## Then you send it
-
-Open the files first. Send the archive by whatever means your policy allows. **We never see your environment — only the report you validated before sending.**
 
 ## What happens after
 
 Your channel is set up for the shape the report describes. Its first entry is the current release with its evidence attached; the channel is private to you, and its contents are Apache-2.0 like everything else. Your staging pulls it, you check it in a real meeting, and you promote to production yourself. After that you stay current automatically — each release checked against your configuration before it reaches you.
 
-Your database is not part of this. Vexa converges its own schema when it starts, so there is nothing for us to migrate and nothing of yours for us to touch.
+Vexa converges its own schema when it starts, so your database stays a matter between you and your DBA.
 
 ## How we moved our own production onto the channel
 
-**We did this to ourselves on 2026-08-25, and it is the same sequence your estate would follow.** Its shape is three commitments: the machinery goes in first and provably changes nothing, the takeover runs as a dry run before it is allowed to touch anything, and nothing is ever uninstalled. In order, with what we measured:
+**We did this to ourselves on 2026-08-25, and it is the same sequence your estate would follow.** In order, with what we measured:
 
 1. **Capture the before-state and take a fresh database snapshot** — pods, generations, the image-digest map, values, volumes — through the estate's own backup job.
 2. **Install Argo CD with `resourceTrackingMethod: annotation` set before any Application exists.** This is what makes adoption non-destructive: Argo's default tracking writes its marker into the Deployment selector, which is immutable. Result: **13 of 13 generations unchanged** — it landed inert.
