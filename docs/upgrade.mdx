@@ -1,38 +1,50 @@
 ---
 title: "Upgrade"
-description: "The door for a deployment that already exists: one read-only script, one report, and the rest follows."
+description: "You already run Vexa: tell us your setup, get a bundle that fits it."
 ---
 
-**A deployment with history does not get upgraded before the upgrade has been rehearsed on a rebuild of it.** Every existing deployment starts here. ([Install](install) is the other door — a cluster with nothing in it yet.)
+**You already run Vexa. Tell us about your setup and we give you a bundle that works with what you already have.** If you're on 0.10, that means you're ready for 0.12. ([Install](install) is the other door — a cluster with nothing in it yet.)
 
-## The five steps
+## What we need to see
 
-1. **You run a read-only script.** It writes a report — versions, migration revision, schema, a few aggregate counts. No data. You read it, then send it. The script is in the repo — if it misses something in your environment, patch it and send a PR.
-2. **We rebuild exactly that state on our side** and rehearse your upgrade on it until it's green.
-3. **Your channel's first entry is that rehearsed upgrade**, evidence attached. The channel is private to you; its contents are Apache-2.0 like everything else.
-4. **Your staging pulls it**, you check it in a real meeting, you promote to production yourself.
-5. **From then on you stay current automatically** — through the channel, or plain open-source images from Docker Hub, switchable any time.
+The shape of your environment, so nothing we ship asks for something you do not already have.
 
+- **Your platform** — Kubernetes or OpenShift, which version, which cloud.
+- **How the pieces are connected** — database and transcription: in-cluster or external, how each is addressed, which versions, and whether transcription runs on GPU or CPU.
+- **What constrains the namespace** — resources and limits, quotas and LimitRanges, the node shapes you have.
+- **What you run today** — image tags and the digests actually running, which names the jump.
+- **What you have customised** — the values you set, so a bundle never overwrites a deliberate choice.
+- **What you can reach** — Docker Hub directly, or only a mirror.
 
-**You need no more access than you already have to run your Vexa today. We build for what you have and deliver for that environment — if it's running 0.10, it's sufficient.**
+**Nothing about your data.** No schema, no rows, no transcripts, no credentials.
 
-## Step 1 — the report
+## The report
+
+One command. It reads your namespace with `kubectl get` and nothing else: no database connection, no `exec`, no credentials.
 
 ```bash
-python3 kit/report/vexa_state_report.py --namespace vexa \
-  --db-host postgres.vexa.svc --db-name vexa --db-user vexa
+python3 kit/report/vexa_state_report.py --namespace vexa --dry-run
 ```
 
-It writes **`state-report.tar.gz`**, prints the path, and stops — exit codes `0` written · `2` usage · `3` redaction leak. Inside: **`workloads.json`** — image refs and the digests actually running, replicas, resources, Kubernetes version, node shapes · **`db.json`** — engine, extensions, per-table row counts, total size, and the migration revision where one exists — Vexa runs no Alembic, so on a Vexa estate that field is absent with its reason and the probes stand in for it · **`schema.sql`** — DDL only · **`probes.json`** — one aggregate count per known upgrade hazard, with the exact SQL printed beside its answer · **`runtime.json`** — the transcription reproduction surface · **`report.json`** — tool version, the source of every section, the redaction verdict.
+`--dry-run` connects to nothing and writes nothing. It prints the exact commands a real run would issue, so you can hand that list to whoever owns the cluster before anything happens.
 
-**Without a database source every probe reports `not run`** — including the duplicate-key probe, which is the one that maps to an outage. The tool says so loudly rather than exiting quietly; the cluster half is still worth sending, but send it knowing that.
+```bash
+python3 kit/report/vexa_state_report.py --namespace vexa
+```
 
-**No rows, no meeting content, no transcripts, no credentials.** Environment capture is allowlist-first; values under keys matching `password|token|secret|key|apikey` become `REDACTED`, and `--verify-redaction` (on by default) re-extracts the finished archive and exits `3` if one survived, naming files, never values. Reads are `kubectl get -o json` and nothing else. Every database session opens with `default_transaction_read_only=on`, and a probe is refused before it reaches a connection unless it is a single `SELECT count(...)`. There is no transmit path in the tool at all — no submit flag, no destination, no endpoint. Reaching the database costs one more decision and the default is **not** `exec`: `--db-host` needs no Kubernetes permission at all and is the one to try first; [`kit/report/job.yaml`](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/report/job.yaml) runs the whole report in-cluster under a read-only ServiceAccount when nothing routes to the database; `--db-pod` needs `create` on `pods/exec`, which most estates audit. Copy-pasteable Role and RoleBinding, written to be forwarded to whoever owns the cluster: [`kit/report/rbac.yaml`](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/report/rbac.yaml).
+The report is a directory of plain files with an archive beside it. `summary.txt` is the whole thing in plain English — read it first, open the raw files if you want to, then send the archive. The tool prints the path and stops; there is no transmit path in it at all.
+
+The script is Apache-2.0 like everything here — if it misses something in your environment, patch it and send a PR.
 
 ## Then you send it
 
-Open the files first — they are plain JSON and plain SQL, and the tool stops instead of offering to help precisely so that reading them happens before anything leaves your perimeter. Send the archive by whatever means your policy allows, and the rehearsal starts from it. **We never see your environment — only the report you validated before sending.**
+Open the files first. Send the archive by whatever means your policy allows. **We never see your environment — only the report you validated before sending.**
 
+## What happens after
+
+Your channel is set up for the shape the report describes. Its first entry is the current release with its evidence attached; the channel is private to you, and its contents are Apache-2.0 like everything else. Your staging pulls it, you check it in a real meeting, and you promote to production yourself. After that you stay current automatically — each release checked against your configuration before it reaches you.
+
+Your database is not part of this. Vexa converges its own schema when it starts, so there is nothing for us to migrate and nothing of yours for us to touch.
 
 ## How we moved our own production onto the channel
 
