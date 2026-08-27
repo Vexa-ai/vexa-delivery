@@ -34,21 +34,14 @@ Every node above is the same artifact. Each stage that validates it signs it; th
 
 ```mermaid
 flowchart LR
-    subgraph vexa["Vexa — publisher side"]
-        P["1 · Publish<br/>images freeze, signed<br/>+ staging & prod evidence"]
-        G["2 · Gate<br/>rendered with your values,<br/>against your contract"]
-        C["3 · Channel<br/>gated entry lands,<br/><code>current</code> moves"]
-        P --> G --> C
+    subgraph V["Vexa — publisher side"]
+        P["1 · Publish"] --> G["2 · Gate — your values, your contract"] --> C["3 · Channel — current moves"]
     end
-    subgraph yours["Your cluster — nothing reaches in"]
-        L["4 · Pull<br/>your Argo CD polls,<br/>pull-only credential or mirror"]
-        A["5 · Admission<br/>Kyverno: signature checked,<br/>digest-pinned only"]
-        S["6 · Smoke<br/>a human, a real meeting,<br/>dated receipt"]
-        B["7 · Station bundle<br/>receipts · redacted values<br/>profile · contract"]
-        L --> A --> S --> B
+    subgraph Y["Your cluster — nothing reaches in"]
+        L["4 · Pull — pull-only credential"] --> A["5 · Admission — signature, digest-pinned"] --> S["6 · Smoke — real meeting, dated receipt"] --> B["7 · Station bundle"]
     end
-    C -.->|"pull only"| L
-    B -.->|"8 · sent back by hand —<br/>the station the next release<br/>is gated against"| G
+    C -.->|pull only| L
+    B -.->|"8 · sent back by hand — gates the next release"| G
 ```
 
 Vexa and the machinery that receives it both run in your cluster; the machinery is one signed chart pinned by your bootstrap file, and a hand-edit to either pin is reverted visibly.
