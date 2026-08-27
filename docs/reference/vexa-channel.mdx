@@ -14,24 +14,23 @@ Emitted from `python3 publisher/vexa_channel.py --help`.
 
 ```text
 usage: vexa-channel [-h]
-                    {fetch,build,verify,push,chart,refresh,revoke,platform-chart,platform-entry,sign-images,attest}
-                    ...
+                    {fetch,build,verify,push,chart,refresh,revoke,platform-chart,platform-entry,sign-images,attest} ...
 
-vexa-channel — turn a released Vexa version into an enterprise channel entry. The publisher
-consumes released artifacts and receipts, never clusters, and holds no production credentials.
-Subcommands: fetch gather the network-fetched inputs (release archive, provenance bundle, trusted
-root) via the gh CLI into a directory build assemble and cross-check a channel entry from a
-release tag, the candidate map at that tag, the internal delivery receipt, and the fetched inputs;
-write entry.json + evidence/ + VERIFY.md verify re-run every offline check against a built entry
-directory push push a built entry to an OCI registry (or layout) via oras, sign it and its image
-digests with cosign, and move the channel tag Every cross-check is named C1..C9; a failed check
-refuses the entry (there is no silent path — an incomplete chain needs an explicit --break-glass
-record, which becomes visible data in the signed entry). Two further checks guard the signing
-toolchain itself, and they run inside the push path so they cannot be skipped: T1 the cosign that
-signs is inside the pinned series. The signature LAYOUT is not stable across cosign majors, and
-the customer's admission controller reads exactly one layout. T2 after signing, the signature is
-discoverable in the shape Kyverno 1.19 will ask for — sha256-<digest>.sig in the signature
-repository — and verifies against the channel key. A pin is a promise; T2 is the proof.
+vexa-channel — turn a released Vexa version into a channel entry. The publisher consumes released
+artifacts and receipts, never clusters, and holds no production credentials. Subcommands: fetch
+gather the network-fetched inputs (release archive, provenance bundle, trusted root) via the gh
+CLI into a directory build assemble and cross-check a channel entry from a release tag, the
+candidate map at that tag, the internal delivery receipt, and the fetched inputs; write entry.json
++ evidence/ + VERIFY.md verify re-run every offline check against a built entry directory push
+push a built entry to an OCI registry (or layout) via oras, sign it and its image digests with
+cosign, and move the channel tag Every cross-check is named C1..C9; a failed check refuses the
+entry (there is no silent path — an incomplete chain needs an explicit --break-glass record, which
+becomes visible data in the signed entry). Two further checks guard the signing toolchain itself,
+and they run inside the push path so they cannot be skipped: T1 the cosign that signs is inside
+the pinned series. The signature LAYOUT is not stable across cosign majors, and the customer's
+admission controller reads exactly one layout. T2 after signing, the signature is discoverable in
+the shape Kyverno 1.19 will ask for — sha256-<digest>.sig in the signature repository — and
+verifies against the channel key. A pin is a promise; T2 is the proof.
 
 positional arguments:
   {fetch,build,verify,push,chart,refresh,revoke,platform-chart,platform-entry,sign-images,attest}
@@ -78,8 +77,9 @@ usage: vexa-channel build [-h] --release RELEASE --channel CHANNEL --entry-seq E
                           [--delivery-receipt DELIVERY_RECEIPT] --archive ARCHIVE
                           --provenance-bundle PROVENANCE_BUNDLE --trusted-root TRUSTED_ROOT
                           [--chart-ref CHART_REF] [--chart-digest CHART_DIGEST]
-                          [--chart-version CHART_VERSION] --identity IDENTITY --signing-mode
-                          {test_key,cosign_key,cosign_keyless} [--signing-note SIGNING_NOTE]
+                          [--chart-version CHART_VERSION] --identity IDENTITY
+                          --signing-mode {test_key,cosign_key,cosign_keyless}
+                          [--signing-note SIGNING_NOTE]
                           [--publication-mode {dry_run,candidate,published}]
                           [--publisher PUBLISHER] [--approved-by APPROVED_BY]
                           [--approval-receipt APPROVAL_RECEIPT] [--break-glass BREAK_GLASS]
@@ -279,8 +279,8 @@ Build a channel entry for a whole platform estate — several charts, no single 
 ```text
 usage: vexa-channel platform-entry [-h] --spec SPEC --validation-contract VALIDATION_CONTRACT
                                    --release RELEASE --channel CHANNEL --entry-seq ENTRY_SEQ
-                                   [--supersedes SUPERSEDES] --identity IDENTITY --signing-mode
-                                   {test_key,cosign_key,cosign_keyless}
+                                   [--supersedes SUPERSEDES] --identity IDENTITY
+                                   --signing-mode {test_key,cosign_key,cosign_keyless}
                                    [--signing-note SIGNING_NOTE]
                                    [--publication-mode {dry_run,candidate,published}]
                                    [--publisher PUBLISHER] [--approved-by APPROVED_BY]
@@ -335,9 +335,9 @@ options:
 Record a signed, structured claim about a release: a station's verdict, a soak result, anything a downstream contract can `require:` by name. This is how the internal channel accumulates evidence that the enterprise entry is later built from.
 
 ```text
-usage: vexa-channel attest [-h] --kind {prod-soak,security-hardening,station-verdict} --release
-                           RELEASE --vexa-repo VEXA_REPO --metrics METRICS --key KEY --out OUT
-                           [--push PUSH] [--insecure]
+usage: vexa-channel attest [-h] --kind {prod-soak,security-hardening,station-verdict}
+                           --release RELEASE --vexa-repo VEXA_REPO --metrics METRICS --key KEY
+                           --out OUT [--push PUSH] [--insecure]
 
 options:
   -h, --help            show this help message and exit

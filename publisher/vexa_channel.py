@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""vexa-channel — turn a released Vexa version into an enterprise channel entry.
+"""vexa-channel — turn a released Vexa version into a channel entry.
 
 The publisher consumes released artifacts and receipts, never clusters, and
 holds no production credentials. Subcommands:

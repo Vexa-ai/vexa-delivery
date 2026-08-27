@@ -3,7 +3,7 @@
 **Signed, pull-only delivery channels for self-hosted software.**
 
 Your cluster stays yours. vexa-delivery keeps a self-hosted deployment current through a
-channel your cluster pulls from — the open channel, free for everyone, or your enterprise channel: every entry is digest-pinned and cosign-signed, verified
+channel your cluster pulls from — the open channel, free for everyone, or your private channel: every entry is digest-pinned and cosign-signed, verified
 inside your perimeter against keys you pin, rolled automatically on staging, and promoted
 to production only under your own attestation. The publisher holds no access to your
 environment — nothing is ever pushed, and the only thing that travels back is a report you
@@ -22,7 +22,7 @@ cloud production.
 1. **Bring your own cloud** — k8s, GCloud, AWS, OpenShift. A namespace in a cluster, or an
    entire fresh one.
 2. **Install Vexa Delivery.**
-3. **Set it to consume the public images — or your enterprise channel.**
+3. **Set it to consume the public images — or your private channel.**
 4. **Cluster running, self-updating on new images published.**
 
 Already running Vexa? Start at [docs/upgrade](docs/upgrade.mdx).

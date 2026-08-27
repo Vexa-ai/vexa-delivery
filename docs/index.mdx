@@ -5,11 +5,11 @@ title: "Vexa Delivery"
 **Your running self-hosted [Vexa](https://github.com/Vexa-ai/vexa) service that stays up to
 date.**
 
-1. **Bring your own cloud** — k8s, GCloud, AWS, OpenShift. A namespace in a cluster, or an
+1. **Bring your own cloud** — [k8s](environments/kubernetes), [GCloud](environments/gke), [AWS](environments/eks), [OpenShift](environments/openshift). A namespace in a cluster, or an
    entire fresh one.
-2. **Install Vexa Delivery.**
-3. **Set it to consume the public images — or your enterprise channel.**
-4. **Cluster running, self-updating on new images published.**
+2. **Install Vexa Delivery** — [new deployment](install) · [existing one](upgrade).
+3. **Set it to consume the public images — or your private channel** — [how channels work](how-it-works).
+4. **Cluster running, self-updating on new images published** — [operations](operations).
 
 Everything is open source, images public on Docker Hub. Nothing reaches in: your cluster
 pulls, verifies with keys you pin, and promotes to production on your attestation.
