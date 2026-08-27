@@ -13,6 +13,19 @@ description: "Where your releases live, who may pull them, and how your credenti
 
 The default is the open channel of your shape. Sharing one shares nothing else: your credential reads your channel only, your values never leave your cluster, your pin is yours.
 
+## What a release is
+
+One OCI artifact:
+
+- **`entry.json`** — version, source commit, image digests, and the sha256 of every evidence file.
+- **`evidence/`** — digest map, delivery receipt from our own production run, SLSA provenance, Sigstore trust material for offline verification.
+- **`VERIFY.md`** — the commands, with this release's filenames filled in.
+- Beside it, the Helm chart as an OCI artifact, every digest baked into its values — including the images the runtime spawns per meeting.
+
+Two fields are contractual: **`evidence_absent`** names what this release lacks, and **`break_glass`** names who authorised an incomplete chain, and why.
+
+Each stage that validates the artifact signs it. The bytes never change; a candidate that fails stops accumulating evidence.
+
 ## Your credential
 
 One **pull-only** account scoped to your channel, minted, rotated and revoked with `vexa_subscriber.py list | add | revoke` (`add` also rotates; revocation lands within a minute). `channel.pub` is not secret — it is published and read aloud on a call. The secret half travels a different route, encrypted with [`age`](https://github.com/FiloSottile/age) to a key you already control, usually an SSH public key from your GitHub account with the fingerprint cited in the mail. Rotation invalidates nothing you already pulled.

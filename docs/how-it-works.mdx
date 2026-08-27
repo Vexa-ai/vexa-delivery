@@ -1,47 +1,17 @@
 ---
 title: "How it works"
-description: "One artifact, signed once, admitted only if your policy says so."
+description: "We publish, your cluster pulls and checks, it rolls out or back, a receipt returns."
 ---
 
-Your staging follows the channel pointer. Your production follows a pin only you move.
+1. **We publish** a release to a channel, with its validation evidence.
+2. **Your cluster pulls it.** Argo CD syncs; the PreSync verifier checks the entry against your contract, and Kyverno verifies the signatures with cosign at admission. That is what makes the update safe to roll.
+3. **The cluster rolls it out, or rolls it back.**
+4. **A receipt goes back to the channel**, so we know how it went.
 
-<img src="/images/delivery-loop.svg" alt="The delivery loop: dev, contract validation, channel, pull, contract verify, staging, promote, production, and optional receipts back" style={{width:"100%",maxWidth:"940px"}} />
+<img src="/images/delivery-loop.svg" alt="Vexa publishes and gates a release into the channel; your cluster pulls it, admits it, deploys to staging, a human smokes it, you promote to production, and a station report returns to the channel" style={{width:"100%",maxWidth:"1070px"}} />
 
-## The loop
+Argo CD works against a generic, deterministic state — a Kubernetes namespace — so this is a deterministic operation. Nothing is pushed to your cluster.
 
-1. **Publish** — images freeze and are signed.
-2. **Gate** — rendered with your values, against your contract. See [the station gate](station-gate).
-3. **Channel** — the gated entry lands; `current` moves.
-4. **Pull** — your Argo CD, over your pull-only credential or your mirror.
-5. **Admission** — Kyverno checks the signature and refuses anything not digest-pinned. See [verify](verify).
-6. **Smoke** — a human watches the bot capture a real meeting. Dated receipt.
-7. **Station report** — verdicts, redacted values, profile, contract; sent back.
-8. **Back to 2** — that report is the station the next release is gated against.
-
-<Note>
-**Rung.** Step 6 is the intended procedure and the smoke tool implements it, but no audio has reached the pipeline in any delivery run yet — [what's proven, and where](tested#the-delivered-software).
-</Note>
-
-## What a release is
-
-One OCI artifact:
-
-- **`entry.json`** — version, source commit, image digests, and the sha256 of every evidence file.
-- **`evidence/`** — digest map, delivery receipt from our own production run, SLSA provenance, Sigstore trust material for offline verification.
-- **`VERIFY.md`** — the commands, with this release's filenames filled in.
-- Beside it, the Helm chart as an OCI artifact, every digest baked into its values — including the images the runtime spawns per meeting.
-
-Two fields are contractual: **`evidence_absent`** names what this release lacks, and **`break_glass`** names who authorised an incomplete chain, and why.
-
-Each stage that validates the artifact signs it. The bytes never change; a candidate that fails stops accumulating evidence.
-
-## Channels — open or private
-
-Everything Vexa runs on is open source and published — images on Docker Hub, code and charts in the open.
-
-- **The open channel** carries those public releases exactly as published: digest-pinned, signed, pulled from Docker Hub. The way back is GitHub issues.
-- **Your private channel** is operated with us: releases arrive attestation-complete with the full evidence set, gated against your specification before anything reaches you. The way back is a ticket lane and the [telemetry rung you set](telemetry-ladder) — silent, receipts, health counters, never content.
-
-The software is identical on both, and switching is a subscription change, not a migration.
+We have no access to your cluster. Your cluster has access to the channel, one way. The loop closes with a receipt, and that is the only thing flowing back.
 
 Next: [Install](install) · [Upgrade](upgrade) · [The channel](channel)
