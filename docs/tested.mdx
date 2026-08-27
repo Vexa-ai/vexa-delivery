@@ -1,0 +1,80 @@
+---
+title: "What's proven, and where"
+description: "Every claim in these docs against the run that backs it — and the runs that have not happened yet."
+---
+
+**Each row names the run that proves it. Where nothing proves it, the row says so and links what does exist.** Every "proven" cell points at a [receipt](https://github.com/Vexa-ai/vexa-delivery/tree/main/docs/receipts) or a test target you can run yourself.
+
+One fact frames all of it: **almost everything below was run on Linode LKE, most of it on throwaway clusters, once each.** Our own production is the only estate with history that this machinery has touched. Your environment is a different one, and the gaps are where you come in — see [running it somewhere new](#running-it-somewhere-new) at the bottom.
+
+## Install and adoption
+
+| What | Proven where | Not yet |
+|---|---|---|
+| **Fresh install on an empty cluster** | Throwaway LKE, several times: preflight PASS, pinned Argo CD v3.5.1 + Kyverno v1.19.0, subscription synced, 12–13 pods Running on digests, the production pin holding at `UNPINNED` until moved by hand — [M2](receipts/2026-08-21-m2-throwaway-test), [MVP0](receipts/2026-08-21-mvp0-implementation), [week-exit rehearsal](receipts/2026-08-24-week-exit-rehearsal) | Any cluster that is not LKE. And a documented install reaches Synced/Healthy and still **cannot dispatch a bot** until `transcriptionServiceUrl` and `transcriptionServiceToken` are set; neither is in the example values file yet |
+| **A whole production estate pulled onto an empty cluster** | Partial. All 115 objects resolved and applied from the channel's signed artifacts alone, images pulled from the channel and **0 from Docker Hub** — [clean pull](receipts/2026-08-25-throwaway-clean-pull) | The estate coming up whole: **16 of 24 workloads reached Running** (3 more Completed). Ten findings are written up in that receipt rather than fixed by it, including the published chart defaulting `database.host` to our own production host |
+| **Adoption of a live Helm-deployed estate** | Twice, on LKE. A throwaway simulation: 18/18 pods kept their UID, 14 Deployments → 14 ReplicaSets, diff before sync was ownership metadata only — [throwaway adoption](receipts/2026-08-25-throwaway-adoption). Then our own production: 36/36 pods kept their UID, 111 ReplicaSets before and after — [prod adoption](receipts/2026-08-25-prod-adoption) | Any estate that is not ours. The `monitoring` namespace's own three Helm releases were not adopted in either run. **No load was applied during either sync** — both numbers were measured on idle estates |
+| **Adoption rollback** | Pin move forward then back on the adopted throwaway: 17 s and 10 s, 17/17 pods kept their UID | The full exit — delete the Application `cascade=false`, `helm rollback` — is written down and has never been executed |
+
+## Provider profiles
+
+`install.sh` has no per-provider branches; a profile is a small `profile.env`, and each carries a `PROFILE_TESTED` flag the installer prints on every run.
+
+| Profile | Proven where | Not yet |
+|---|---|---|
+| `lke` | `PROFILE_TESTED=yes` — every run on this page | — |
+| `generic` · `aws-eks` · `azure-aks` · `gcp-gke` | Nothing. `PROFILE_TESTED=no`. The per-cluster deltas on [EKS](environments/eks), [AKS](environments/aks) and [GKE](environments/gke) are read from the vendor's own documentation | Never run against a real cluster of that kind. The first subscriber's preflight, smoke and station reports are what changes these lines |
+| `openshift` | Offline only, and grounded: SCC/PSA/LimitRange logic checked against constraints recorded from a genuine MicroShift 4.18 SCC admission rehearsal — 25 chart objects admitted stock, zero SCC rejects, random-UID contexts injected on all 21 pods — plus a subscriber's own measurements ([parity detail](engineering/openshift-parity)) | `install.sh --provider openshift` has never run on OpenShift. One known defect blocks convergence there: `HOME` is absent under a random UID and the minio-init hook fails with `mkdir /.mc: permission denied` ([OpenShift](environments/openshift)) |
+
+## The delivered software
+
+| What | Proven where | Not yet |
+|---|---|---|
+| **Preflight P1–P9** | PASS on clean clusters, and every failure class seeded deliberately then caught on a throwaway LKE — taints, LimitRange squeeze, PodSecurity, NetworkPolicy, `/dev/shm`, image pull — with the console output kept verbatim beside the [M2 receipt](receipts/2026-08-21-m2-throwaway-test) | The SCC uid-range logic is unit-tested against an audit fixture, never against live OpenShift admission |
+| **Smoke S1–S2** — delivered set healthy, control plane answers | Live on LKE: Synced/Healthy with 13 pods and both APIs answering over operator port-forwards ([week-exit](receipts/2026-08-24-week-exit-rehearsal)), and a full `vexa_validate.py` run producing a PASS smoke receipt on a real cluster ([channel hardening](receipts/2026-08-25-channel-hardening)) | — |
+| **Smoke S3 on Teams** — the human loop | Partial. Bot dispatch, the digest-pinned bot image, pod lifecycle and the `ExitReason` reporting are all proven; the join then failed at our own rig tenant's anonymous-join policy ([week-exit](receipts/2026-08-24-week-exit-rehearsal)) | **Capture. No audio has reached the pipeline in any delivery run**, on any platform, so nothing here says anything about transcription |
+| **Smoke S3 on Google Meet** | The link parser is unit-tested (`make test-smoke`) | A live Meet run. No receipt records one |
+| **Smoke S4** — flows tier | S4 correctly reports that the flows tier is not in the delivered set, instead of crashing the run as it once did | The tier itself, and the agent/model tier behind it. The question of a model credential has never arisen |
+
+## The upgrade reporter
+
+[`kit/report/`](upgrade) is the door for a deployment that already has history. It is **fixture-tested end to end and has never read a real estate.**
+
+| Route | Proven where | Not yet |
+|---|---|---|
+| The tool itself | 50 tests against a fake `kubectl`, `psql` and `pg_dump`, where the fixture directory *is* the estate (`make test-report`). The fake `psql` refuses to answer unless the session opened read-only, so the read-only claim is tested rather than asserted | No receipt records a run against a real cluster or a real database |
+| `--db-host` | Fixtures. Tests assert no password reaches the command line and no `exec` is used | A real database |
+| [`job.yaml`](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/report/job.yaml) in-cluster | The manifest and its read-only ServiceAccount and [RBAC](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/report/rbac.yaml) exist and are reviewable | Applied to a cluster in any recorded run |
+| `--db-pod` (`kubectl exec`) | Fixtures. Tests hold it to being the only transport that uses `exec` | A real database |
+
+## The channel and its guarantees
+
+| What | Proven where | Not yet |
+|---|---|---|
+| **Signature admission** | Against the live channel with stock Kyverno 1.19 holding no registry credential: signed **ADMITTED**, unsigned **DENIED**, correct layout with the wrong key **DENIED** — [signature layout](receipts/2026-08-25-signature-layout), [authenticated channel](receipts/2026-08-25-kyverno-authenticated-channel). The day before, the same gate denied a correctly signed release as unsigned ([week-exit](receipts/2026-08-24-week-exit-rehearsal)); that is what these two receipts closed | The policy matches `*vexaai/*`, so the mirrored third-party images — caddy, redis, postgres, kubectl — are admitted without verification |
+| **The in-cluster verify gate** | Both directions on a live cluster: ELIGIBLE on a good entry, and NOT ELIGIBLE with the sync held when the station contract required an evidence kind the entry lacked ([week-exit](receipts/2026-08-24-week-exit-rehearsal)) | It was **not active for our own production adoption sync** — that entry was verified publisher-side instead. And `vexa_channel.py verify` cannot yet verify an estate entry at all ([prod adoption](receipts/2026-08-25-prod-adoption)) |
+| **Entry expiry, revocation, contract clauses** | Live against a scratch channel on the real registry, with the stale-entry message deliberately distinct from the signature message ([channel hardening](receipts/2026-08-25-channel-hardening)) | The deployed verifier, v0.1.1, does not check freshness — so nothing enforces expiry inside a cluster today |
+| **Kit bootstrap, verify-before-unpack, self-update** | From an empty directory against the live channel with a pull-only credential: the right key unpacks, the wrong key writes nothing at all, a write attempt returns 401. Self-update ran five times in one day, each time verifying before unpacking ([week-exit](receipts/2026-08-24-week-exit-rehearsal)) | — |
+| **Mirrored pull** | 43 images mirrored, every destination digest verified equal to its source twice, the estate then pulled with **0 images from Docker Hub**, and blob serving confirmed non-redirecting ([clean pull](receipts/2026-08-25-throwaway-clean-pull)). The pull-through-proxy lane is proven on a Harbor v2.15.2 rig: 9/9 checks through the proxy, wrong key refused ([parity detail](engineering/openshift-parity)) | An install on a **genuinely disconnected** network, as [security](security#isolated-networks) already states |
+| **The station bundle round trip** | Once, end to end on the live edge and a real cluster: write-scoping enforced per subscriber at the edge, and redaction exercised on a values file that really did carry live credentials — 7 removed, 0 surviving the post-write scan ([channel hardening](receipts/2026-08-25-channel-hardening)) | Concurrency, a large bundle, failure injection, a second subscriber |
+| **The station gate** | In the direction that matters: it **refused** the real v0.12.23 chart with 8 findings — four dependency images unpinned, two of them on `:latest` — and admits once the upstream fix is applied. The published entry carries the refusal as its evidence ([week-exit](receipts/2026-08-24-week-exit-rehearsal)) | — |
+
+## Day-2
+
+| What | Proven where | Not yet |
+|---|---|---|
+| **Pull upgrade** | Chart 0.12.31 → 0.12.32 arrived **26 seconds after publish with zero kubectl writes** ([week-exit](receipts/2026-08-24-week-exit-rehearsal)) | One measurement, on a two-node cluster with a warm image cache. It says the transport works unattended; it is not a latency figure |
+| **Rollback by pin** | On the adopted throwaway: back in 10 s, every pod kept its UID ([throwaway adoption](receipts/2026-08-25-throwaway-adoption)) | On our own production, or on any estate under traffic. Two steps back is a data restore and has not been rehearsed |
+| **Scale, upgrade under load, failure injection, break-glass** | Nothing | Stated here once so that no row above is read as implying it |
+
+## Running it somewhere new
+
+**Running this in an environment nobody here has seen is the contribution.** A row moves from *not yet* to *proven* when someone posts the artifacts that make it true, and most of those artifacts are things a normal install produces anyway:
+
+- **The station bundle.** [`vexa_validate.py`](install#step-5-send-the-station-bundle-back) writes `station.tar.gz` — your provider profile, your values with every secret-shaped value replaced by `REDACTED`, the contract, and the preflight and smoke receipts. Open it, then send it. That bundle is exactly what a `PROFILE_TESTED=no` line is waiting for.
+- **What broke.** Open an [issue](https://github.com/Vexa-ai/vexa-delivery/issues) with the preflight output and the refusal message. Half the findings on this page arrived that way — from a run that failed, not one that passed.
+- **A patch.** The [reporter](https://github.com/Vexa-ai/vexa-delivery/tree/main/kit/report) takes a new collector as one function and a new hazard probe as one JSON file; a provider profile is one small `profile.env`. Everything is Apache-2.0, inbound and outbound.
+
+Commits carry a DCO sign-off — `git commit -s`, name and email your own. The whole of it is in [CONTRIBUTING.md](https://github.com/Vexa-ai/vexa-delivery/blob/main/CONTRIBUTING.md), and it is two things: the license and the sign-off.
+
+Next: [Install](install) · [Upgrade](upgrade) · [Environments](environments/kubernetes) · [Verify](verify)

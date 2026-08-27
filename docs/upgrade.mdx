@@ -34,4 +34,22 @@ It writes **`state-report.tar.gz`**, prints the path, and stops — exit codes `
 Open the files first — they are plain JSON and plain SQL, and the tool stops instead of offering to help precisely so that reading them happens before anything leaves your perimeter. Send the archive by whatever means your policy allows, and the rehearsal starts from it. **We never see your environment — only the report you validated before sending.**
 
 
+## How we moved our own production onto the channel
+
+**We did this to ourselves on 2026-08-25, and it is the same sequence your estate would follow.** Its shape is three commitments: the machinery goes in first and provably changes nothing, the takeover runs as a dry run before it is allowed to touch anything, and nothing is ever uninstalled. In order, with what we measured:
+
+1. **Capture the before-state and take a fresh database snapshot** — pods, generations, the image-digest map, values, volumes — through the estate's own backup job.
+2. **Install Argo CD with `resourceTrackingMethod: annotation` set before any Application exists.** This is what makes adoption non-destructive: Argo's default tracking writes its marker into the Deployment selector, which is immutable. Result: **13 of 13 generations unchanged** — it landed inert.
+3. **Install Kyverno with zero policies**, so zero resource webhooks. Inert too; generations unchanged again.
+4. **Install the contract and the channel public key** into the namespace.
+5. **Create the Application with sync disabled, then read `argocd app diff`.** The fatal four — any selector, image or Secret difference — must be **zero**, and were. Residual label and tracking-annotation differences are expected: they are what adoption adds.
+6. **Sync with ServerSideApply.** **36 of 36 pods kept their UID**, and the namespace held 111 ReplicaSets before and after — no pod template changed anywhere.
+7. **Leave the Helm release secrets in place**, all 10 revisions of history intact. No `helm uninstall`, ever.
+
+**Rollback exists at every step**: move the pin back and re-sync, or exit completely — delete the Application with `cascade=false`, then `helm rollback` — which leaves the estate exactly where it started, still owned by Helm.
+
+Two that bite. **`--release-name` must match your existing Helm release** — Helm keys its release Secret on that name, and a mismatch installs a second copy of the whole estate beside the one you are running, against the same database. And **an estate with history usually has production and no staging**: `--staging-ns` and `--prod-ns` are separate namespaces here, so where your staging tier comes from is a decision to make before the Application exists.
+
+**This has been done once, on our own Linode LKE production, and your environment is not that one.** The run is written up in full at [prod adoption](receipts/2026-08-25-prod-adoption); everything else that is and is not proven is at [what's proven, and where](tested).
+
 Next: [How it works](how-it-works) · [The channel](channel) · [Operations](operations)
