@@ -46,8 +46,7 @@ every promotion carries the evidence that justified it.
 ## Two ways to stay current
 
 Everything Vexa runs on is open source and publicly published — images on Docker Hub,
-charts and code in the open repositories. There is nothing to be locked into: you can
-consume all of it without us, forever.
+charts and code in the open repositories.
 
 - **The open channel** delivers those public releases exactly as published — digest-pinned,
   signed, pulled from Docker Hub — so a self-hosted deployment stays current automatically.
