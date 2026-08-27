@@ -8,47 +8,119 @@
     "dark": "#0D9373"
   },
   "navigation": {
-    "groups": [
+    "tabs": [
       {
-        "group": "Guide",
-        "pages": [
-          "index",
-          "how-it-works",
-          "tested",
-          "install",
-          "upgrade",
-          "channel",
-          "station-gate",
-          "preflight",
-          "verify",
-          "telemetry-ladder",
-          "operations",
-          "security",
-          "governance",
-          "support",
-          "co-design"
+        "tab": "Product",
+        "groups": [
+          {
+            "group": "Guide",
+            "pages": [
+              "index",
+              "how-it-works",
+              "tested",
+              "install",
+              "upgrade",
+              "channel",
+              "station-gate",
+              "preflight",
+              "verify",
+              "telemetry-ladder",
+              "operations",
+              "security",
+              "governance",
+              "support",
+              "co-design"
+            ]
+          },
+          {
+            "group": "Command reference",
+            "pages": [
+              "reference/vexa-preflight",
+              "reference/vexa-smoke",
+              "reference/vexa-validate",
+              "reference/vexa-state-report",
+              "reference/kit-bootstrap",
+              "reference/kit-install",
+              "reference/kit-self-update"
+            ]
+          },
+          {
+            "group": "Environments",
+            "pages": [
+              "environments/kubernetes",
+              "environments/gke",
+              "environments/eks",
+              "environments/aks",
+              "environments/openshift"
+            ]
+          },
+          {
+            "group": "Not yet published",
+            "pages": [
+              "mail-edge",
+              "environments/microsoft365"
+            ]
+          }
         ]
       },
       {
-        "group": "Command reference",
-        "pages": [
-          "reference/vexa-preflight",
-          "reference/vexa-smoke",
-          "reference/vexa-validate",
-          "reference/vexa-state-report",
-          "reference/kit-bootstrap",
-          "reference/kit-install",
-          "reference/kit-self-update"
-        ]
-      },
-      {
-        "group": "Environments",
-        "pages": [
-          "environments/kubernetes",
-          "environments/gke",
-          "environments/eks",
-          "environments/aks",
-          "environments/openshift"
+        "tab": "Engineering",
+        "groups": [
+          {
+            "group": "State",
+            "pages": [
+              "engineering/index",
+              "engineering/durability",
+              "engineering/openshift-parity",
+              "receipts/2026-08-21-mvp0-implementation",
+              "receipts/2026-08-21-m2-throwaway-test",
+              "receipts/2026-08-24-week-exit-rehearsal",
+              "receipts/2026-08-25-signature-layout",
+              "receipts/2026-08-25-kyverno-authenticated-channel",
+              "receipts/2026-08-25-channel-hardening",
+              "receipts/2026-08-25-dogfood-staging",
+              "receipts/2026-08-25-throwaway-clean-pull",
+              "receipts/2026-08-25-throwaway-adoption",
+              "receipts/2026-08-25-prod-adoption"
+            ]
+          },
+          {
+            "group": "Publisher reference",
+            "pages": [
+              "reference/index",
+              "reference/vexa-channel",
+              "reference/vexa-station",
+              "reference/vexa-stations",
+              "reference/vexa-subscriber",
+              "reference/kit-release"
+            ]
+          },
+          {
+            "group": "Decisions",
+            "pages": [
+              "adr/0001-repo-charter",
+              "adr/0002-channel-format",
+              "adr/0003-customer-kit-shape",
+              "adr/0004-node-model",
+              "adr/0005-kit-license-split",
+              "adr/0006-internal-channel",
+              "adr/0007-station-bundle",
+              "adr/0008-repository-apache-2",
+              "adr/0009-public-visibility"
+            ]
+          },
+          {
+            "group": "Plans",
+            "pages": [
+              "plans/2026-08-25-prod-migration"
+            ]
+          },
+          {
+            "group": "Design",
+            "pages": [
+              "design/ticketing"
+            ]
+          }
         ]
       }
     ]
