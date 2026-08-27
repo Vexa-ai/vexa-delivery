@@ -68,6 +68,19 @@ One fact frames all of it: **almost everything below was run on Linode LKE, most
 | **Rollback by pin** | On the adopted throwaway: back in 10 s, every pod kept its UID ([throwaway adoption](receipts/2026-08-25-throwaway-adoption)) | On our own production, or on any estate under traffic. Two steps back is a data restore and has not been rehearsed |
 | **Scale, upgrade under load, failure injection, break-glass** | Nothing | Stated here once so that no row above is read as implying it |
 
+## Known gaps, and the issue each one lives in
+
+Stated so you can pick one up, not so we look complete.
+
+| Gap | Issue |
+|---|---|
+| **The free channel does not exist.** Every channel is credentialed; the landing's step 3 describes a service that is not running. | [#9](https://github.com/Vexa-ai/vexa-delivery/issues/9) |
+| **The state reporter has never read a real deployment.** 46 tests, all against fixtures. The first person to run it against a live estate finds what fixtures cannot. | [#5](https://github.com/Vexa-ai/vexa-delivery/issues/5) |
+| **Required values are documented, not enforced.** A deployment missing its transcription configuration reports Synced and Healthy and cannot dispatch a bot; the contract should refuse it instead. | [#6](https://github.com/Vexa-ai/vexa-delivery/issues/6) |
+| **Only Linode LKE is exercised end to end.** Every other provider profile is declared and never run. | per-provider pages |
+| **No audio has reached the pipeline in any delivery run.** The smoke step is implemented and never completed on any platform. | — |
+| **The docs gate depends on the Python patch release.** `gen-cli-reference --check` can disagree with itself between 3.12 patches; the pin is minor-only. | — |
+
 ## Running it somewhere new
 
 **Running this in an environment nobody here has seen is the contribution.** A row moves from *not yet* to *proven* when someone posts the artifacts that make it true, and most of those artifacts are things a normal install produces anyway:
