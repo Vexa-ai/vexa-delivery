@@ -31,9 +31,11 @@ options
                     (default vexa-staging)
   --prod-ns         namespace the production Application deploys into
                     (default vexa-prod)
-  --prod-pin        channel position prod follows      (default: none — prod
-                    Application is created only when you set a pin; moving the
-                    pin is YOUR gate)
+  --prod-pin        channel position prod follows. The production Application
+                    is created either way; with no pin it is parked at
+                    'UNPINNED', a position that resolves to nothing, so it
+                    syncs nothing until you move the pin. Moving it is YOUR
+                    gate.
   --signature-repository  OCI repo where cosign signatures live (default:
                     alongside each image)
   --registry-user   username for an AUTHENTICATED channel registry. The
@@ -452,9 +454,10 @@ sys.stdout.write(text)
 PYEOF
 if [ -z "$PROD_PIN" ]; then
   echo "   prod pin not set: the production Application tracks position 'UNPINNED' (a"
-  echo "   non-existent tag — it will sync nothing). Set your pin when your gate passes:"
+  echo "   non-existent tag — it will sync nothing). Set your pin when your gate passes;"
+  echo "   the pin is the CHART VERSION, which carries no 'v' prefix:"
   echo "     kubectl -n ${ARGOCD_NS} patch applicationset vexa-channel-subscription --type=json \\"
-  echo "       -p '[{\"op\":\"replace\",\"path\":\"/spec/generators/0/list/elements/1/position\",\"value\":\"vX.Y.Z\"}]'"
+  echo "       -p '[{\"op\":\"replace\",\"path\":\"/spec/generators/0/list/elements/1/position\",\"value\":\"X.Y.Z\"}]'"
 fi
 
 echo "== done. subscription state:"

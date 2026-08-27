@@ -5,19 +5,19 @@ description: "Nothing running yet: five steps you run yourself, one command each
 
 Each step is one command, and after them the software stays current on its own. (Already running Vexa? [Upgrade](upgrade) is your door.)
 
-Your channel's onboarding mail carries three things: the channel **name** (`acme-stable` in the examples below), the channel public key **`channel.pub`**, and your pull-only **credential**, age-encrypted — see [the channel](channel). `channel.pub` is what every signature on this page is checked against; keep it, and pin it.
+Your channel's onboarding mail carries what step 3 needs: the channel **name** (`acme-stable` in the examples below), your registry **account name**, your pull-only **credential**, age-encrypted, the channel public key **`channel.pub`**, and the **signature repository** the image signatures live in — see [the channel](channel). `channel.pub` is what every signature on this page is checked against; keep it, and pin it.
 
 ## What you need
 
 | | |
 |---|---|
 | Kubernetes ≥ 1.29 or OpenShift, `kubectl` access to a namespace | [per-cloud deltas](environments/kubernetes) |
-| 2 nodes × 4 vCPU / 8 GB, plus ~1 vCPU / 2 GiB per concurrent meeting bot | measured, not estimated |
+| 2 nodes × 4 vCPU / 8 GB, plus headroom per concurrent meeting bot — the bot requests 500m / 1Gi and its limit ships at 2 vCPU / 2560Mi | measured: p50 922Mi, max 1292Mi across 10 production bots |
 | A default StorageClass | Postgres, MinIO, Redis volumes |
 | LoadBalancer Services or an ingress you manage | reaching the gateway |
 | Outbound reach to the channel registry, or your own mirror | your cluster pulls |
 
-[Preflight](preflight) checks all of it in step 2 and fails closed, so you find out now rather than at first sync.
+[Preflight](preflight) checks four of those five rows in step 2 and fails closed, so you find out now rather than at first sync: the version floor (P9), the default StorageClass (P8), the route to the channel registry and a real pull by digest (P5, P7), and whether the delivered set fits your nodes, quotas and pod-security (P1, P2, P3, P4, P6). **The LoadBalancer/ingress row is yours** — no preflight check reads it, because how you expose the gateway is your cluster's business.
 
 ## Step 1 — Get the kit
 
@@ -47,12 +47,28 @@ Nine checks, fails closed, every finding names its remedy. See [Preflight](prefl
 ## Step 3 — Install
 
 ```bash
+export VEXA_CHANNEL_PASS=<the credential from your onboarding mail>
+
 ./kit/install.sh --provider <aws-eks|azure-aks|gcp-gke|generic|lke|openshift> \
   --registry channel.vexa.ai --channel acme-stable \
-  --channel-pubkey channel.pub --customer-values my-values.yaml
+  --registry-user <your-account> \
+  --channel-pubkey channel.pub --customer-values my-values.yaml \
+  --signature-repository channel.vexa.ai/vexa/channel/acme-stable/signatures \
+  --verifier-image <the verifier image ref from your onboarding mail>
 ```
 
-Idempotent. Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. Production appears only with `--prod-pin <version>` — moving that pin is your gate. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster. Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-signed test registry, `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift). (*Station bundle* here means the machinery chart Vexa publishes into your cluster; the `station-report.yaml` of step 5 is the return leg, travelling the other way.)
+Idempotent. Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster.
+
+Four of those flags are the difference between an install that syncs and one that does not, so none of them is optional against a credentialed channel:
+
+| Flag | Why it is there |
+|---|---|
+| `--registry-user` + `VEXA_CHANNEL_PASS` | your channel needs credentials to pull. Without them Argo CD's repo-server gets a 401 and the subscription never leaves `Unknown`. The password is read from the environment, never from argv. |
+| `--signature-repository` | where the image signatures live. Without it the admission policy looks for signatures alongside each image, finds none, and denies every pod with `no signatures found` — which is byte-identical to what it says about a genuinely unsigned image. |
+| `--verifier-image` | turns the chart-side PreSync verify gate **on**. It is off unless you pass this, and it is the gate that enforces entry freshness, revocation and your contract before a sync. |
+| `--prod-pin <version>` | the production Application is **created either way**, parked at `UNPINNED` — a position that resolves to nothing, so it syncs nothing — until you set a pin. Moving that pin is your gate. |
+
+Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-signed test registry, `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift). (*Station bundle* here means the machinery chart Vexa publishes into your cluster; the `station-report.yaml` of step 5 is the return leg, travelling the other way.)
 
 ## Step 4 — Smoke, with a human in a real meeting
 
@@ -69,7 +85,7 @@ Delivered set healthy → control plane answers → **you open a real meeting, a
 | `https://teams.live.com/meet/<id>?p=<pass>` or `https://teams.microsoft.com/meet/<id>?p=<pass>` | `teams`, with passcode |
 | `https://teams.microsoft.com/l/meetup-join/19%3ameeting_…` | `teams` |
 
-An unrecognized link fails immediately. `--non-interactive` rehearses without the human phase and reports FAIL with no admitted bot.
+An unrecognized link fails immediately. `--non-interactive` rehearses without the human phase: it records S3 as SKIP and the overall verdict stays PASS — it proves the tooling, not capture.
 
 <Note>
 **Rung.** This step is the intended procedure and the tool implements it, but **no audio has reached the pipeline in any delivery run yet** — bot dispatch, the pinned image and pod lifecycle are proven; capture is not. [What's proven, and where](tested#the-delivered-software).
@@ -82,8 +98,21 @@ python3 kit/validate/vexa_validate.py --namespace vexa-staging \
   --customer-values my-values.yaml --flows
 ```
 
+**This is the one step with a Python dependency:** it needs `pyyaml`, and `jsonschema` as well if you use `--submit`. Preflight, smoke and the report writer are stdlib-only — nothing to install for steps 2 and 4.
+
 Runs steps 2 and 4; add `--install` for step 3 between them. Exit codes: `0` pass · `1` phase failed · `2` usage · `3` redaction leak.
 
-Writes **one file**, `station-report.yaml` — your profile, your values with secrets redacted, the contract, and the receipts, each verbatim under a plain-English comment, with the sha256 of its own text at the foot. Read all of it, then send it: by hand, or with `--submit`, which pushes that same file to [your own path on the channel](station-gate) using your own credential.
+Writes **one file**, `station-report.yaml` — your profile, your values with secrets redacted, the contract, and the receipts, each verbatim under a plain-English comment, with the sha256 of its own text at the foot. Read all of it, then send it — by hand, or with `--submit`, which pushes that same file to [your own path on the channel](station-gate) using your own credential:
+
+```bash
+export VEXA_CHANNEL_USER=<your-station> VEXA_CHANNEL_PASS=<your credential>
+
+python3 kit/validate/vexa_validate.py --namespace vexa-staging \
+  --customer-values my-values.yaml \
+  --contract ./contract.yaml --station <your-station> \
+  --submit --submit-dry-run          # prints the payload path; sends nothing
+```
+
+Drop `--submit-dry-run` to actually send. Your `contract.yaml` must carry a `report_scope` — it is the clause that bounds what may leave, and a submit with no bound is refused locally. See [the station gate](station-gate#sending-it-back).
 
 Next: [The station gate](station-gate) · [Operations](operations) · [Isolated networks](security#isolated-networks)
