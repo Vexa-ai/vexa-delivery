@@ -34,17 +34,11 @@ Every node above is the same artifact. Each stage that validates it signs it; th
 
 Vexa and the machinery that receives it both run in your cluster; the machinery is one signed chart pinned by your bootstrap file, and a hand-edit to either pin is reverted visibly.
 
-## Two ways to stay current
+## Channels — open or private
 
-Everything Vexa runs on is open source and publicly published — images on Docker Hub, charts and code in the open repositories.
+- **The open channel** carries the public releases exactly as published — digest-pinned, signed, pulled from Docker Hub.
+- **A private channel** carries entries validated against one subscriber's contract — evidence attached, gated to that subscriber's specification, promoted on their own attestation.
 
-- **The open channel** delivers those public releases exactly as published — digest-pinned, signed, pulled from Docker Hub — so a self-hosted deployment stays current automatically. Community support.
-- **Your enterprise channel** is operated with us for your company: releases arrive attestation-complete with the full evidence set (gate reports, station verdicts from real environments), gated against your own specification before anything reaches you, with a support lane behind it.
-
-The channel is two-way, and the return path differs. On the open channel, the way back is GitHub issues — plus any station report you choose to share. On your enterprise channel, the return path is part of the contract: a ticket lane with response commitments, and the [telemetry rung](telemetry-ladder) you set — from silent to receipts to health counters to diagnostics, never content. The more your side chooses to send back, the faster your deployment improves — that bandwidth is what your enterprise channel is for.
-
-The software is identical on both paths, and switching paths is a subscription change, not a migration.
-
-Standards underneath: build-once/promote-by-digest over OCI content addressing · Sigstore signing · SLSA Provenance v1 · in-toto attestations · Kyverno admission · Argo CD GitOps.
+Channels are two-way. The way back on the open channel is GitHub issues, plus any station report a subscriber chooses to share; a private channel adds a ticket lane and the [telemetry rung the subscriber sets](telemetry-ladder) — never content. The software is identical on every channel.
 
 Next: [Upgrade](upgrade) · [Install](install) · [The channel](channel) · [Verify](verify)

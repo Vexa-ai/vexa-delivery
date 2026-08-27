@@ -43,29 +43,21 @@ Already running Vexa? Start at [docs/upgrade](docs/upgrade.mdx).
 The environment stays deterministic end to end: what runs is exactly what was signed, and
 every promotion carries the evidence that justified it.
 
-## Two ways to stay current
+## Channels — open or private
 
 Everything Vexa runs on is open source and publicly published — images on Docker Hub,
 charts and code in the open repositories.
 
-- **The open channel** delivers those public releases exactly as published — digest-pinned,
-  signed, pulled from Docker Hub — so a self-hosted deployment stays current automatically.
-  Community support.
-- **Your enterprise channel** is operated with us for your company: releases arrive
-  attestation-complete with the full evidence set (gate reports, station verdicts from real
-  environments), gated against your own specification before anything reaches you, with a
-  support lane behind it.
+- **The open channel** carries the public releases exactly as published — digest-pinned,
+  signed, pulled from Docker Hub.
+- **A private channel** carries entries validated against one subscriber's contract —
+  evidence attached, gated to that subscriber's specification, promoted on their own
+  attestation.
 
-The channel is two-way, and the return path differs. On the open channel, the way back is
-GitHub issues — plus any station report you choose to share. On your enterprise channel, the
-return path is part of the contract: a ticket lane with response commitments, and the
-[telemetry rung you set](docs/telemetry-ladder.mdx) — from silent to signed receipts to
-health counters to diagnostics, never content. The more your side chooses to send back, the
-faster your deployment improves — that bandwidth is what your enterprise channel is for.
-
-Same machinery, same kit, same verification on both paths. The software is identical —
-features never move behind a paywall — and switching paths is a subscription change, not a
-migration.
+Channels are two-way. The way back on the open channel is GitHub issues, plus any station
+report a subscriber chooses to share; a private channel adds a ticket lane and the
+[telemetry rung the subscriber sets](docs/telemetry-ladder.mdx) — never content. The
+software is identical on every channel.
 
 ## What's in the repository
 
