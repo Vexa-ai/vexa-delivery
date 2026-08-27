@@ -3,7 +3,7 @@ title: "Security model"
 description: "What runs where, what leaves your cluster, and what you pin."
 ---
 
-## What runs in your perimeter
+**Nothing reaches in: your cluster pulls, verifies with keys you pin, and promotes to production on your attestation.** No Vexa agent, controller or telemetry component runs in your perimeter.
 
 | Component | Controlled by |
 |---|---|
@@ -14,48 +14,32 @@ description: "What runs where, what leaves your cluster, and what you pin."
 | The kit — verified against your key before unpacking, never cloned | You, including when to update |
 | The Vexa workloads — digest-pinned images | Admitted only by your policy |
 
-No Vexa agent, controller or telemetry component. All of it — including the Vexa product —
-is Apache-2.0; the subscription buys the attested release stream, support and co-design, not
-access to code.
+All of it, the Vexa product included, is Apache-2.0; the subscription buys the attested release stream, support and co-design, not access to code.
 
 ## What leaves your cluster
 
-Nothing is required to leave. The subscription pulls and sends nothing, verification is
-offline, and blocking all egress only makes updates wait. Meeting content — audio,
-transcripts, participants — is in no delivery, verification or support payload. Three
-optional outbound classes exist, each off by default:
+Nothing is required to leave. The subscription pulls and sends nothing, verification is offline, and blocking all egress only makes updates wait. Meeting content — audio, transcripts, participants — is in no delivery, verification or support payload. Three outbound classes exist, each off by default and each something your side chooses to send:
 
 | Class | Carries |
 |---|---|
 | [Support tickets](support) | Composed locally, shown in full before sending: configuration shapes and error records |
 | [The station bundle](install#step-5-send-the-station-bundle-back) | Written to disk and sent by hand: substrate facts, values with secrets replaced, contract, receipts |
-| [Notifications and usage reports](support) | Enabled per event class; aggregate numbers and shapes |
+| [Notifications and usage reports](support) | Enabled per event class; aggregate numbers and shapes. Bounded by your [telemetry rung](telemetry-ladder) |
 
 ## Isolated networks
 
-With no route to `channel.vexa.ai`, mirror the artifacts into your own registry; digests and
-signatures survive mirroring, and verification pins our key, not a hostname.
+With no route to `channel.vexa.ai`, mirror the artifacts into your own registry; digests and signatures survive mirroring, and verification pins our key, not a hostname.
 
 <Note>
-**Rung.** The mirrored path is proven through a credentialed Harbor pull-through proxy. An
-install on a **genuinely disconnected** network has not been exercised yet.
+**Rung.** The mirrored path is proven through a credentialed Harbor pull-through proxy. An install on a **genuinely disconnected** network has not been exercised yet.
 </Note>
 
-## What you pin
+## What you pin, and what you hold
 
-The channel verification key, the build platform identity (Sigstore, public repo + issuer),
-and digest-only image references. Compromise of any registry, ours or your mirror, therefore
-runs nothing in your cluster. [How to check each one](verify).
+You pin the channel verification key, the build platform identity (Sigstore, public repo + issuer), and digest-only image references — so compromise of any registry, ours or your mirror, runs nothing in your cluster. [How to check each one](verify).
 
-## Credentials
+Your credential is **pull-only**, scoped to your channel, revocable independently of every other subscriber's inside a minute, enforced at the edge proxy rather than by the registry ([why](channel#worth-knowing)). It reaches you age-encrypted to a key you already control, never in plaintext, on a different route from the public key it pairs with. **Vexa holds no credential of yours** — there is no inbound access to grant.
 
-- Your credential is **pull-only**, scoped to your channel, revocable independently of every
-  other subscriber's, inside a minute.
-- Pull-only is enforced at the **edge proxy**, not by the registry
-  ([why](channel#worth-knowing)).
-- It reaches you **age-encrypted to a key you already control**, never in plaintext, on a
-  different route from the public key it pairs with.
-- **Vexa holds no credential of yours.** There is no inbound access to grant.
+[Preflight](preflight) reports, before install, exactly which workloads OpenShift SCC `restricted-v2` or PodSecurity `restricted` would refuse.
 
-[Preflight](preflight) reports, before install, exactly which workloads OpenShift SCC
-`restricted-v2` or PodSecurity `restricted` would refuse.
+Next: [Verify](verify) · [Telemetry ladder](telemetry-ladder) · [For your auditors](governance)

@@ -3,12 +3,7 @@ title: "Kubernetes"
 description: "What a generic Kubernetes cluster must provide before the setup script runs"
 ---
 
-Any conformant CNCF Kubernetes, v1.29 or newer. This is the reference
-environment: the setup script installs pinned Argo CD and the admission layer,
-subscribes the cluster to your channel, and from then on the cluster updates
-itself.
-
-## What you provide
+**Any conformant CNCF Kubernetes, v1.29 or newer — the reference environment.** The setup script installs pinned Argo CD and Kyverno, your contract and the channel public key, applies the subscription, and runs the [preflight](/preflight); from then on the cluster updates itself, and a scheduled floor check turns a drifting cluster visibly RED instead of failing quietly later.
 
 | Requirement | Why |
 |---|---|
@@ -17,58 +12,22 @@ itself.
 | LoadBalancer Services **or** an ingress you manage | reaching the gateway and dashboard |
 | 2 nodes × 4 vCPU / 8 GB (or equivalent) | runs the full stack; measured, not estimated |
 | Headroom for meeting bots: ~1 vCPU / 2 GiB **per concurrent bot** | production p99 memory is ~1.45 GiB per bot; the limit ships at 2 GiB |
-| Outbound reachability to the channel registry (or your own mirror of it) | the subscription pulls; nothing pushes in |
+| Outbound reachability to the channel registry (or your own mirror) | the subscription pulls; nothing pushes in |
 
-## What the setup script does
+## No ingress controller and no cert-manager
 
-Installs pinned Argo CD and Kyverno, installs your contract and the channel
-public key, applies the subscription, and runs the preflight — a deterministic
-checklist that names anything missing from the table above before anything is
-deployed. After that, the station bundle keeps the machinery itself
-reconciled, and a scheduled floor check re-verifies the environment
-continuously: a cluster that drifts below the floor turns visibly RED instead
-of failing quietly later.
+Nothing in the delivery machinery needs them — the subscription pulls, so it needs no inbound path at all. They matter only for the endpoints **you** expose. The pattern that works in that cluster class is a **per-service reverse proxy with built-in ACME** — a small Caddy Deployment in the namespace with its own LoadBalancer Service and certificate storage: one workload per exposed endpoint, a load balancer each, blast-radius isolation.
 
-## If the cluster has no ingress controller and no cert-manager
+Two things to get right:
 
-Plenty of otherwise-conformant clusters have neither — `kubectl get ingressclass`
-comes back empty and nothing issues certificates. Nothing in the delivery
-machinery needs them: the subscription pulls, so it needs no inbound path at
-all. They matter only for the endpoints **you** choose to expose — the gateway,
-the dashboard, a mirror of the channel.
-
-The pattern that works in that cluster class is a **per-service reverse proxy
-with built-in ACME** — a small Caddy Deployment in the same namespace, with its
-own LoadBalancer Service and its own certificate storage. It is one workload per
-exposed endpoint instead of one shared controller, which costs a load balancer
-each and buys blast-radius isolation.
-
-Two things to get right, from operating exactly this shape:
-
-- **Pin the ACME issuer, and pin it to production.** Caddy's default is a
-  fallback chain that ends at Let's Encrypt **staging**. If the production
-  issuers fail — a DNS record that had not propagated is enough — it will
-  cheerfully issue a staging certificate and carry on. Set `acme_ca` to
-  `https://acme-v02.api.letsencrypt.org/directory` with no fallback, so a
-  failure stays a visible failure.
-- **Confirm the issuer from outside, not from the logs.** A staging certificate
-  is invisible from inside the cluster: the pod is `Running`, TLS handshakes
-  complete, everything looks healthy — and every client sees
-  `x509: certificate signed by unknown authority`.
+- **Pin the ACME issuer, to production.** Caddy's default fallback chain ends at Let's Encrypt **staging**, so a DNS record that had not propagated is enough to get a staging certificate issued silently. Set `acme_ca` to `https://acme-v02.api.letsencrypt.org/directory` with no fallback. Create the DNS record **before** the proxy pod first starts — ACME fires on boot. Recovery is to delete the stored certificates and restart the rollout.
+- **Confirm the issuer from outside, not from the logs.** A staging certificate is invisible from inside the cluster: the pod is `Running`, TLS handshakes complete — and every client sees `x509: certificate signed by unknown authority`.
 
   ```bash
   openssl s_client -connect <host>:443 -servername <host> </dev/null 2>/dev/null \
     | openssl x509 -noout -issuer -dates
   ```
 
-  Create the DNS record **before** the proxy pod first starts, too: ACME fires on
-  boot, and a first attempt that races propagation is what produces the staging
-  certificate in the first place. Recovery is to delete the stored certificates
-  and restart the rollout.
+Everything installed is stock upstream plus configuration you can read in one sitting; nothing of ours runs privileged. Air-gapped variant: mirror the channel into your own registry — digests and signatures survive mirroring, and verification pins our key, not a hostname.
 
-## Notes
-
-- Everything installed is stock upstream (Argo CD, Kyverno) plus configuration
-  you can read in one sitting — nothing of ours runs privileged.
-- Air-gapped variant: mirror the channel into your own registry; digests and
-  signatures survive mirroring, and verification pins our key, not a hostname.
+Next: [Managed cloud](/environments/managed-cloud) · [OpenShift](/environments/openshift) · [Install](/install)

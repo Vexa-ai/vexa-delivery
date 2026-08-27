@@ -1,41 +1,23 @@
 ---
 title: "The station gate"
-description: "Your specification, checked before a release reaches you. The report is the per-release guarantees document."
+description: "Your specification, checked before a release reaches you — and a dated report of which guarantees held."
 ---
 
-Nothing is published to your channel until it has been rendered with **your** values and
-matched against **your** contract, and every publish writes you a dated report of which
-guarantees held.
+**Nothing is published to your channel until it has been rendered with your values and matched against your contract.** Your **station** is the [`station.tar.gz`](install#step-5-send-the-station-bundle-back) you sent back, ingested: enough of your cluster's shape to render the next release *into it*, plus your contract saying what that release must prove.
 
-Your **station** is the [`station.tar.gz`](install#step-5-send-the-station-bundle-back) you
-sent back, ingested: enough of your cluster's shape to render the next release *into it*, plus
-your contract saying what that release must prove.
-
-## Ingest — four checks before your bundle is unpacked
+## Ingest, then gate — nine checks
 
 - **S1 bundle shape** — no absolute paths, no `..`, no links, one bundle root.
 - **S2 completeness** — all five files plus `station.json`, each matched to its role.
-- **S3 manifest identity** — `station.json` names this station, declared digests match the
-  bytes, nothing undeclared rides along.
-- **S4 no plaintext secrets** — secret-shaped keys carrying real values, and credential
-  patterns anywhere in the bytes: PEM private keys, `sk-`, `ghp_`, `AKIA…`, `AIza…`, `xox…`,
-  JWTs, `client-key-data`.
-
-A refusal prints file, line and rule — never the value — so it is safe to paste into a ticket.
-
-## Gate — five checks, then your contract
-
+- **S3 manifest identity** — `station.json` names this station, declared digests match the bytes, nothing undeclared rides along.
+- **S4 no plaintext secrets** — secret-shaped keys with real values, and credential patterns anywhere in the bytes: PEM private keys, `sk-`, `ghp_`, `AKIA…`, `AIza…`, `xox…`, JWTs, `client-key-data`.
 - **S5 render** — `helm template` succeeds with your values over the chart defaults.
-- **S6 resources** — every container, init containers included, declares cpu **and** memory,
-  requests **and** limits. A LimitRange squeezes an undeclared container to 64Mi rather than
-  refusing it.
+- **S6 resources** — every container, init containers included, declares cpu **and** memory, requests **and** limits.
 - **S7 no hostPath** — nothing mounts a host path outside the tenancy your station declared.
 - **S8 digest-pinned** — every image reference ends in `@sha256:`.
-- **S9 contract** — every `require:` item is matched by evidence this release produced, or
-  explicitly waived.
+- **S9 contract** — every `require:` item is matched by evidence this release produced, or explicitly waived.
 
-Exit `0` on pass, **`3` on refusal**, dated report either way. A second run the same day
-rotates the earlier report aside rather than overwriting it.
+Exit `0` on pass, **`3` on refusal**, dated report either way. A refusal prints file, line and rule — never the value — so it is safe to paste into a ticket. A second run the same day rotates the earlier report aside rather than overwriting it.
 
 ## Your `require:` list
 
@@ -54,44 +36,20 @@ require:
   - no-hostpath
 ```
 
-Item names are **your** vocabulary; the gate matches strings and refuses what it cannot match.
-Treat edits like contract changes.
-
-**Waivers are loud.** An unmatched item refuses the publish unless a human waives it with a
-reason. Waivers print on stderr, get their own heading in the report, and are carried forward
-so the next release can be asked whether the waiver is still needed. An empty reason is itself
-a refusal.
+Item names are **your** vocabulary; the gate matches strings and refuses what it cannot match. **Waivers are loud:** an unmatched item refuses the publish unless a human waives it with a reason, waivers get their own heading in the report and are carried forward, and an empty reason is itself a refusal.
 
 ## Sending it back
-
-<Note>
-**Rung.** `--submit` lands with [PR #38](https://github.com/Vexa-ai/vexa-delivery/pull/38),
-open at the time of writing.
-</Note>
 
 ```bash
 python3 kit/validate/vexa_validate.py --customer-values my-values.yaml --submit
 ```
 
-It validates the report against `report.v1` before anything leaves, prints the payload path so
-you can open it first, and pushes with **your own** credential — scoped to your station's path
-and nothing else. Then:
+Validates the report against `report.v1` before anything leaves, prints the payload path so you can open it first, and pushes with **your own** credential — scoped to your station's path and nothing else. It returns `submitted: channel.vexa.ai/vexa/stations/<you>/bundles:<date>` and a `digest:`. **The digest is your receipt** — it names the exact bytes that left your perimeter, and we can be held to it.
 
-```text
-submitted: channel.vexa.ai/vexa/stations/<you>/bundles:2026-08-25
-digest:    sha256:35b16775…
-```
-
-**The digest is your receipt.** It names the exact bytes that left your perimeter, and we can
-be held to it.
-
-## The report
-
-Each gated publish writes a report naming the station, the chart and its `sha256`, your values'
-`sha256`, your contract id and hash, the evidence file, the timestamp, and a verdict per check
-and per contract item. Generated, not written.
+Each gated publish then writes a report naming the station, the chart and its `sha256`, your values' `sha256`, your contract id and hash, the evidence file, the timestamp, and a verdict per check and per contract item. Generated, not written.
 
 <Note>
-**Rung.** The ingest and gate lane is merged. The worked example committed in this
-repository is **synthetic**; no real station bundle has been ingested yet.
+**Rung.** `--submit` lands with [PR #38](https://github.com/Vexa-ai/vexa-delivery/pull/38), open at the time of writing. The ingest and gate lane is merged; the worked example committed in this repository is **synthetic** — no real station bundle has been ingested yet.
 </Note>
+
+Next: [Telemetry ladder](telemetry-ladder) · [For your auditors](governance)

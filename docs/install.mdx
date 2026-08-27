@@ -3,29 +3,16 @@ title: "Install"
 description: "Five steps you run yourself. One command each — or one command for all of them."
 ---
 
-Setting up the environment and the channel is a one-time job; after it the software stays up
-to date. Five steps, from a kit you verify with your own key. By mail you receive
-your pull-only **channel credential** (age-encrypted — see [the channel](channel)), the
-**channel public key** `channel.pub`, and your **bootstrap parameters**: registry path,
-channel name, pinned kit version.
+**One-time setup; after it the software stays current on its own.** By mail you get your pull-only **channel credential** (age-encrypted — see [the channel](channel)), the channel public key **`channel.pub`**, and your bootstrap parameters: registry path, channel name, pinned kit version.
 
 ## Step 1 — Bootstrap the kit
 
 ```bash
 curl -fsSL <bootstrap-url> | bash -s -- \
-  --registry channel.vexa.ai \
-  --channel <your-channel> \
-  --pubkey channel.pub
+  --registry channel.vexa.ai --channel <your-channel> --pubkey channel.pub
 ```
 
-The tag resolves to a digest and the signature is checked against your key before anything
-unpacks. A bad signature writes nothing to disk.
-
-| Option | |
-|---|---|
-| `--version vX.Y.Z` | a specific kit version (default: `latest`) |
-| `--dest` | where to unpack (default: `./vexa-kit`) |
-| `--keep-tarball` | keep the downloaded artifact |
+The tag resolves to a digest and the signature is checked against your key before anything unpacks; a bad signature writes nothing to disk. Also: `--version vX.Y.Z` (default `latest`), `--dest` (default `./vexa-kit`), `--keep-tarball`.
 
 ## Step 2 — Preflight
 
@@ -38,33 +25,12 @@ Nine checks, fails closed, every finding names its remedy. See [Preflight](prefl
 ## Step 3 — Install
 
 ```bash
-./kit/install.sh \
-  --provider <aws-eks|azure-aks|gcp-gke|generic|lke|openshift> \
-  --registry channel.vexa.ai \
-  --channel <your-channel> \
-  --channel-pubkey channel.pub \
-  --customer-values my-values.yaml
+./kit/install.sh --provider <aws-eks|azure-aks|gcp-gke|generic|lke|openshift> \
+  --registry channel.vexa.ai --channel <your-channel> \
+  --channel-pubkey channel.pub --customer-values my-values.yaml
 ```
 
-Idempotent. Runs preflight again, then installs pinned Argo CD, pinned Kyverno, your
-admission policy and the subscription. Production appears only with `--prod-pin` — moving
-that pin is your gate.
-
-`my-values.yaml` is yours: secrets or Secret references, pull secrets, tolerations, scale.
-Start from `kit/profiles/vexa/customer-values.example.yaml`. It is applied over every
-release and never leaves your cluster.
-
-| Option | When |
-|---|---|
-| `--registry-ca corporate-ca.pem` | your registry uses a private CA |
-| `--registry-insecure` | self-signed test registry (Argo CD has no CA-bundle path for OCI repos) |
-| `--prod-pin <version>` | create production at that release |
-| `--staging-ns` / `--prod-ns` | default `vexa-staging` / `vexa-prod` |
-| `--dry-run` | render everything, apply nothing |
-
-**No CLI access (OpenShift, shared clusters)?** Merge the signed **station bundle** chart
-into your config repo instead; your Argo pulls it and it installs everything. See
-[OpenShift](environments/openshift).
+Idempotent. Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. Production appears only with `--prod-pin <version>` — moving that pin is your gate. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster. Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-signed test registry, `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift).
 
 ## Step 4 — Smoke, with a human in a real meeting
 
@@ -73,12 +39,7 @@ python3 kit/smoke/vexa_smoke.py --namespace vexa-staging \
   --customer-values my-values.yaml --flows
 ```
 
-Four phases: the delivered set is healthy → the control plane answers → **you open a real
-meeting, admit the bot and speak while the CLI streams the transcript back** → the flows
-tier answers. Output: a dated receipt naming the chart revision, image digests, meeting id
-and segment count.
-
-Paste the **whole** meeting link:
+Delivered set healthy → control plane answers → **you open a real meeting, admit the bot and speak while the CLI streams the transcript back** → flows tier answers. Output: a dated receipt naming chart revision, image digests, meeting id and segment count. Paste the **whole** meeting link:
 
 | You paste | Dispatched as |
 |---|---|
@@ -86,37 +47,17 @@ Paste the **whole** meeting link:
 | `https://teams.live.com/meet/<id>?p=<pass>` or `https://teams.microsoft.com/meet/<id>?p=<pass>` | `teams`, with passcode |
 | `https://teams.microsoft.com/l/meetup-join/19%3ameeting_…` | `teams` |
 
-An unrecognized link fails immediately. `--non-interactive` skips the human phase for a
-rehearsal, and reports FAIL with no admitted bot.
+An unrecognized link fails immediately. `--non-interactive` rehearses without the human phase and reports FAIL with no admitted bot.
 
 ## Step 5 — Send the station bundle back
 
-One command runs steps 2–4 and writes the record:
-
 ```bash
-python3 kit/validate/vexa_validate.py \
-  --namespace vexa-staging \
-  --customer-values my-values.yaml \
-  --flows [--meeting-url URL | --non-interactive]
+python3 kit/validate/vexa_validate.py --namespace vexa-staging \
+  --customer-values my-values.yaml --flows [--meeting-url URL | --non-interactive]
 ```
 
-Add `--install` (with `--provider --registry --channel --channel-pubkey`) to run step 3 too.
-Exit codes: `0` pass · `1` phase failed · `2` usage · `3` redaction leak.
+Runs steps 2–4 — add `--install` (with `--provider --registry --channel --channel-pubkey`) to run step 3 too. Exit codes: `0` pass · `1` phase failed · `2` usage · `3` redaction leak.
 
-It writes **`station.tar.gz`**: your provider profile (`profile.env`), your values with every
-secret removed, the contract, the preflight and smoke receipts plus the raw smoke console,
-`station.json` (date, kit revision, phase verdicts, redaction result), and `install-log.txt`
-when `--install` ran.
+It writes **`station.tar.gz`**: your provider profile (`profile.env`), your values with every value under a key matching `password|token|secret|key|apikey` turned into `REDACTED`, the contract, the preflight and smoke receipts plus the raw smoke console, and `station.json`. `--verify-redaction` (on by default) re-extracts the finished archive and exits `3` if a removed value still appears, naming files, never values. Look at the file, then send it by hand — nothing transmits it.
 
-Any value under a key matching `password|token|secret|key|apikey` becomes `REDACTED`.
-`--verify-redaction` (on by default) re-extracts the finished archive and exits `3` if a
-removed value still appears, naming files, never values. Look at the file, then send it by
-hand — nothing transmits it.
-
-Your station's contract then gates what Vexa may publish to you. See
-[the station gate](station-gate).
-
-## Next
-
-Upgrades, rollback, kit self-update: [Operations](operations). Mirroring:
-[isolated networks](security#isolated-networks).
+Next: [The station gate](station-gate) · [Operations](operations) · [Isolated networks](security#isolated-networks)

@@ -3,11 +3,7 @@ title: "For your auditors"
 description: "What each subscription artifact answers in a change-control review."
 ---
 
-Vexa's software is Apache-2.0 and its images are public. The subscription supplies the
-evidence your governance requires — signatures, change records, named approvals — per release,
-instead of assembled by your team every week.
-
-## Artifact to question
+**The evidence your governance requires — signatures, change records, named approvals — arrives per release, instead of being assembled by your team every week.**
 
 | Your review asks | Answered by |
 |---|---|
@@ -24,16 +20,11 @@ instead of assembled by your team every week.
 
 Mapping, not legal advice; your compliance function owns the interpretation.
 
-- **Change management** (ISO 27001 A.8.32, SOX ITGC, PCI DSS) — the evidence bundle plus the
-  two approval records, machine-collected per release.
-- **Software integrity** (NIST SP 800-53 SI-7, SSDF) — digest pinning and signature
-  verification at admission, by your own policy engine.
-- **ICT third-party risk** (DORA, EBA outsourcing, NIS2) — a contracted provider with
-  monitoring, incident support and exit clarity. Everything you run is open source and your
-  evidence verifies offline, so exit leaves you with working software and records.
-- **Air-gapped networks** — releases, evidence and signatures move as OCI content through
-  your own mirror ([what is proven](security#isolated-networks)).
+- **Change management** (ISO 27001 A.8.32, SOX ITGC, PCI DSS) — the evidence bundle plus the two approval records, machine-collected per release.
+- **Software integrity** (NIST SP 800-53 SI-7, SSDF) — digest pinning and signature verification at admission, by your own policy engine.
+- **ICT third-party risk** (DORA, EBA outsourcing, NIS2) — a contracted provider with monitoring, incident support and exit clarity. Everything you run is open source and your evidence verifies offline, so exit leaves you with working software and records.
+- **Air-gapped networks** — releases, evidence and signatures move as OCI content through your own mirror ([what is proven](security#isolated-networks)).
 
-Evidence kinds that do not yet exist are declared absent, with reasons, inside each signed
-entry — today, per-image build attestations. [Verify](verify) shows how to read the boundary
-of any claim.
+Evidence kinds that do not yet exist are declared absent, with reasons, inside each signed entry — today, per-image build attestations.
+
+Next: [Verify](verify) · [The station gate](station-gate) · [Security model](security)

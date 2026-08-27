@@ -3,14 +3,7 @@ title: "The channel"
 description: "Where your releases live, who may pull them, and how your credential arrives."
 ---
 
-The channel is what keeps your deployment current: a private OCI repository on
-**`channel.vexa.ai`**, a registry Vexa operates. It
-carries signed entries, the digest-pinned Helm chart, image signatures, the kit, and a
-`current` pointer. Your staging follows `current`; your production follows a pin only you
-move. Mirroring the whole channel into your own registry is first-class: the guarantees are in
-the signatures and digests, not the transport.
-
-## Shared by shape, dedicated by contract
+**A private OCI repository on `channel.vexa.ai` carrying signed entries, the digest-pinned Helm chart, image signatures, the kit, and a `current` pointer.** Your staging follows `current`; your production follows a pin only you move. Mirroring the whole channel into your own registry is first-class — the guarantees are in the signatures and digests, not the transport.
 
 | | **Shared channel** | **Dedicated channel** |
 |---|---|---|
@@ -18,30 +11,14 @@ the signatures and digests, not the transport.
 | What it carries | The standard enterprise bundle for that shape | Releases gated by that customer's contract |
 | Credentials | Per subscriber, independently revocable | Per subscriber |
 
-The default is the shared channel of your shape. Sharing one shares nothing else: your
-credential reads your channel only, your values never leave your cluster, your pin is yours.
+The default is the shared channel of your shape. Sharing one shares nothing else: your credential reads your channel only, your values never leave your cluster, your pin is yours.
 
 ## Your credential
 
-One **pull-only** account scoped to your channel, minted, rotated and revoked with
-`vexa_subscriber.py list | add | revoke` (`add` also rotates; revocation lands within a
-minute). The credential and the trust anchor travel by different routes:
-
-| Artefact | How it reaches you |
-|---|---|
-| `channel.pub`, the cosign public key — not secret | Published, and read aloud on a call |
-| `<account>:<password>` — secret | Encrypted with [`age`](https://github.com/FiloSottile/age) to a key you already control, usually an SSH public key from your GitHub account, fingerprint cited in the mail |
+One **pull-only** account scoped to your channel, minted, rotated and revoked with `vexa_subscriber.py list | add | revoke` (`add` also rotates; revocation lands within a minute). `channel.pub` is not secret — it is published and read aloud on a call. The secret half travels a different route, encrypted with [`age`](https://github.com/FiloSottile/age) to a key you already control, usually an SSH public key from your GitHub account with the fingerprint cited in the mail. Rotation invalidates nothing you already pulled.
 
 ```bash
 age -d -i ~/.ssh/id_ed25519 channel-credential.age
-```
-
-If your organization has its own vendor-credential intake, that is used instead. Rotation
-invalidates nothing you already pulled.
-
-## Using it
-
-```bash
 oras login channel.vexa.ai -u <your-account> --password-stdin
 oras pull channel.vexa.ai/vexa/channel/<your-channel>:current -o entry/
 ```
@@ -50,42 +27,16 @@ Then [verify](verify) before anything runs.
 
 ## Freshness and revocation
 
+Entries **expire**. A channel nobody has published to goes stale, and your verifier says so in its own words — `FAIL STALE CHANNEL — this entry expired at …` — rather than in the vocabulary of a bad signature, because an expired entry and a forged one are different incidents. Your pinned release keeps running. `max_entry_age_days` in your contract tightens the horizon below ours; nothing widens it.
+
+A release found defective is named on a cosign-signed **revocation list** on the channel with a reason and a destination, and your verifier refuses it before the next sync. No list published at all is an **empty** list, not an error. **Your admission controller cannot read this list** — revocation is enforced by the verify gate, not by Kyverno.
+
 <Note>
-**Rung.** Both land with [PR #38](https://github.com/Vexa-ai/vexa-delivery/pull/38), open at
-the time of writing.
+**Rung.** Both land with [PR #38](https://github.com/Vexa-ai/vexa-delivery/pull/38), open at the time of writing.
 </Note>
-
-Entries **expire**. A channel nobody has published to goes stale, and your verifier says that
-in its own words rather than in the vocabulary of a bad signature:
-
-```text
-OK    entry signature verifies against the pinned channel key
-FAIL  STALE CHANNEL — this entry expired at 2026-08-24T12:19:45Z, 1 day(s) ago. The
-      signature is not in question and nothing has been tampered with: nobody has
-      published to this channel since. Contact Vexa.
-```
-
-The `OK` above the `FAIL` is the point — an expired entry and a forged one are different
-incidents and must not read alike. Your pinned release keeps running. `max_entry_age_days` in
-your contract tightens the horizon below ours; nothing widens it.
-
-**Revocation** is a cosign-signed list on the channel. A release found defective is named on
-it with a reason and a destination, and your verifier refuses it before the next sync:
-
-```text
-OK    revocation list signature verifies against the pinned channel key
-  CRITICAL: … -> move to v0.12.24
-FAIL  release v0.12.23 is REVOKED by the channel
-```
-
-No list published at all is an **empty** list, not an error — the other reading would refuse
-every install made before the capability existed. **Your admission controller cannot read this
-list:** revocation is enforced by the verify gate, not by Kyverno.
 
 ## Worth knowing
 
-- **Pull-only is enforced at the edge proxy, not by the registry** — htpasswd cannot express
-  read-without-write, so mutating verbs are gated in front of it and require the publisher
-  credential.
-- Bypassing that gate would still admit nothing: entries are signed with a key that is not on
-  the registry, images are digest-pinned, and your policy checks both.
+Pull-only is enforced at the **edge proxy**, not by the registry — htpasswd cannot express read-without-write, so mutating verbs are gated in front of it and require the publisher credential. Bypassing that gate would still admit nothing: entries are signed with a key that is not on the registry, images are digest-pinned, and your policy checks both.
+
+Next: [Verify](verify) · [Install](install)

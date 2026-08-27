@@ -3,41 +3,24 @@ title: "OpenShift"
 description: "What an OpenShift project must provide — including shared clusters where you hold a namespace, not the cluster"
 ---
 
-OpenShift is supported in the shape large organizations actually run it:
-a **shared cluster operated by a platform team**, where your team holds a
-project and deploys through GitOps. Nothing in the install needs
-cluster-admin, and nothing needs a CLI.
-
-## What you provide
+**Supported in the shape large organizations actually run it: a shared cluster operated by a platform team, where your team holds a project and deploys through GitOps.** Nothing in the install needs cluster-admin, and nothing needs a CLI.
 
 | Requirement | Why |
 |---|---|
-| A project (namespace) with **ResourceQuota + LimitRange** and runtime RBAC | the standard tenant grant your platform team already manages. Size the quota for the app **plus** Argo if Argo shares the project |
-| Argo CD — the **OpenShift GitOps operator** (recommended) or your house instance | deploys are commits your Argo syncs; the bootstrap is one merge into your config repo. Upstream Argo's own images hard-code UIDs that restricted-v2 rejects — the operator build is the one that installs clean |
+| A project with **ResourceQuota + LimitRange** and runtime RBAC | the standard tenant grant your platform team already manages. Size the quota for the app **plus** Argo if Argo shares the project |
+| Argo CD — the **OpenShift GitOps operator** (recommended) or your house instance | upstream Argo's own images hard-code UIDs that `restricted-v2` rejects; the operator build installs clean |
 | A registry path to the channel: your **Harbor/Artifactory pull-through proxy**, or direct pull | one proxy endpoint + project if the channel is private; nothing at all on the public lane |
 | `restricted-v2` SCC — the default | the stack runs under it stock: no SCC changes, no fixed UIDs, no privileged anything |
 
 ## How the install works here
 
-There is no setup script to run on a no-CLI platform — the script's work
-arrives as **one merge into your GitOps config repo**: an Argo Application
-carrying the station bundle reference, your contract, and the channel public
-key. Your Argo does the rest. From then on your staging tier follows releases
-automatically and your production pin moves only when your approver moves it —
-recorded, with the contract identity, where your audit can read it.
+There is no setup script on a no-CLI platform — the script's work arrives as **one merge into your GitOps config repo**: an Argo Application carrying the station bundle reference, your contract, and the channel public key. Your Argo does the rest. Your staging tier then follows releases automatically and your production pin moves only when your approver moves it, recorded with the contract identity where your audit can read it.
 
-## Platform notes, stated honestly
+## Platform notes
 
-- **Admission injects the security context.** The platform assigns a random
-  per-namespace UID and the images run under it; charts and spawned workloads
-  deliberately set no `securityContext` of their own.
-- **Spawned meeting bots** inherit your LimitRange defaults today; first-class
-  resource fields on spawned workloads are tracked upstream and the LimitRange
-  is the documented interim.
-- **Private-channel lane through a corporate proxy is validated**: entries,
-  charts, signatures, and attestations flow through a credentialed Harbor
-  proxy-cache, and revoking the subscriber credential fails closed for the
-  verdict-carrying artifacts.
-- Cluster-wide admission hardening (signature verification at the platform
-  layer) is an optional later step for your operations team; until then the
-  in-project verify gate is the enforcement point.
+- **Admission injects the security context.** The platform assigns a random per-namespace UID and the images run under it; charts and spawned workloads deliberately set no `securityContext` of their own.
+- **Spawned meeting bots** inherit your LimitRange defaults today; first-class resource fields on spawned workloads are tracked upstream and the LimitRange is the documented interim.
+- **The private-channel lane through a corporate proxy is validated**: entries, charts, signatures and attestations flow through a credentialed Harbor proxy-cache, and revoking the subscriber credential fails closed for the verdict-carrying artifacts.
+- Cluster-wide admission hardening at the platform layer is an optional later step; until then the in-project verify gate is the enforcement point.
+
+Next: [Install](/install) · [Preflight](/preflight) · [Kubernetes](/environments/kubernetes)
