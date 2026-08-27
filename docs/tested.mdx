@@ -72,7 +72,7 @@ One fact frames all of it: **almost everything below was run on Linode LKE, most
 
 **Running this in an environment nobody here has seen is the contribution.** A row moves from *not yet* to *proven* when someone posts the artifacts that make it true, and most of those artifacts are things a normal install produces anyway:
 
-- **The station report.** [`vexa_validate.py`](install#step-5-send-the-station-bundle-back) writes `station-report.yaml` — one commented file carrying your provider profile, your values with every secret-shaped value replaced by `REDACTED`, the contract, and the preflight and smoke receipts, each with the sha256 of its own text. Read it, then send it. That report is exactly what a `PROFILE_TESTED=no` line is waiting for.
+- **The station report.** [`vexa_validate.py`](install#step-5-send-the-station-report-back) writes `station-report.yaml` — one commented file carrying your provider profile, your values with every secret-shaped value replaced by `REDACTED`, the contract, and the preflight and smoke receipts, each with the sha256 of its own text. Read it, then send it. That report is exactly what a `PROFILE_TESTED=no` line is waiting for.
 - **What broke.** Open an [issue](https://github.com/Vexa-ai/vexa-delivery/issues) with the preflight output and the refusal message. Half the findings on this page arrived that way — from a run that failed, not one that passed.
 - **A patch.** The [reporter](https://github.com/Vexa-ai/vexa-delivery/tree/main/kit/report) takes a new collector as one function; a provider profile is one small `profile.env`. Everything is Apache-2.0, inbound and outbound.
 

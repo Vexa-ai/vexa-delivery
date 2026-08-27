@@ -52,7 +52,7 @@ Nine checks, fails closed, every finding names its remedy. See [Preflight](prefl
   --channel-pubkey channel.pub --customer-values my-values.yaml
 ```
 
-Idempotent. Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. Production appears only with `--prod-pin <version>` — moving that pin is your gate. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster. Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-signed test registry, `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift). (*Station bundle* here means the machinery chart Vexa publishes into your cluster; the `station.tar.gz` of step 5 is the return leg, travelling the other way.)
+Idempotent. Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. Production appears only with `--prod-pin <version>` — moving that pin is your gate. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster. Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-signed test registry, `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift). (*Station bundle* here means the machinery chart Vexa publishes into your cluster; the `station-report.yaml` of step 5 is the return leg, travelling the other way.)
 
 ## Step 4 — Smoke, with a human in a real meeting
 
@@ -75,7 +75,7 @@ An unrecognized link fails immediately. `--non-interactive` rehearses without th
 **Rung.** This step is the intended procedure and the tool implements it, but **no audio has reached the pipeline in any delivery run yet** — bot dispatch, the pinned image and pod lifecycle are proven; capture is not. [What's proven, and where](tested#the-delivered-software).
 </Note>
 
-## Step 5 — Send the station bundle back
+## Step 5 — Send the station report back
 
 ```bash
 python3 kit/validate/vexa_validate.py --namespace vexa-staging \
@@ -84,6 +84,6 @@ python3 kit/validate/vexa_validate.py --namespace vexa-staging \
 
 Runs steps 2 and 4; add `--install` for step 3 between them. Exit codes: `0` pass · `1` phase failed · `2` usage · `3` redaction leak.
 
-Writes `station.tar.gz` — your profile, your values with secrets redacted, the contract, and the receipts. Read it, then send it: by hand, or with `--submit`, which pushes it to [your own path on the channel](station-gate) using your own credential.
+Writes **one file**, `station-report.yaml` — your profile, your values with secrets redacted, the contract, and the receipts, each verbatim under a plain-English comment, with the sha256 of its own text at the foot. Read all of it, then send it: by hand, or with `--submit`, which pushes that same file to [your own path on the channel](station-gate) using your own credential.
 
 Next: [The station gate](station-gate) · [Operations](operations) · [Isolated networks](security#isolated-networks)
