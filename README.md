@@ -26,12 +26,16 @@ cloud production.
 3. **Set it to consume the public images — or a private channel.**
 4. **Cluster running, self-updating on new images published.**
 
+> **Not built yet.** Every channel is credentialed today — the free one in step 3 is
+> [issue #9](https://github.com/Vexa-ai/vexa-delivery/issues/9), not a running service.
+> What else is and is not proven: [what's proven, and where](docs/tested.mdx).
+
 Already running Vexa? Start at [docs/upgrade](docs/upgrade.mdx).
 
 ## How it works
 
 Publish → gate → channel → pull → admission → smoke → station bundle → back to the gate.
-The eight steps, with what each one checks and who holds it, are in
+The loop, with what each part checks and who holds it, is in
 [docs/how-it-works](docs/how-it-works.mdx).
 
 The environment stays deterministic end to end: what runs is exactly what was signed, and
@@ -42,9 +46,11 @@ every promotion carries the evidence that justified it.
 Everything Vexa runs on is open source and publicly published — images on Docker Hub,
 charts and code in the open repositories.
 
-- **The open channel** delivers those public releases exactly as published — digest-pinned,
-  signed, pulled from Docker Hub — so a self-hosted deployment stays current automatically.
-  Community support.
+- **The open channel** is designed to deliver those public releases exactly as published —
+  digest-pinned, signed, pulled from Docker Hub — so a self-hosted deployment stays current
+  automatically, with community support. **It is not running yet**
+  ([issue #9](https://github.com/Vexa-ai/vexa-delivery/issues/9)); every channel is
+  credentialed today.
 - **A private channel** is operated with us for your company: releases arrive
   attestation-complete with the full evidence set (gate reports, station verdicts from real
   environments), gated against your own specification before anything reaches you, with a
@@ -65,7 +71,7 @@ migration.
 | Path | What it is |
 |---|---|
 | `publisher/` | builds, signs and publishes channel entries |
-| `kit/` | the subscriber-side kit: bootstrap, preflight, install, smoke — five steps, one command each |
+| `kit/` | the subscriber-side kit: bootstrap, preflight, install, smoke, validate — five steps, one command each |
 | `station/` | station runners that validate entries in real environments and report verdicts |
 | `contracts/` | the delivery contracts entries are validated against |
 | `spec/` | the channel format and conformance specification |
@@ -79,10 +85,15 @@ migration.
   policy, with keys they pin — independently of the publisher.
 - **Evidence over assertion.** Every entry carries its validation evidence; every promotion
   is attested. All of it is verifiable offline, inside the subscriber's perimeter.
-- **Standard components, plus one of ours.** The subscriber-side footprint is Argo CD,
-  Kyverno and cosign, plus the PreSync verifier — a shell script on Alpine that reads the
-  channel and writes nothing. Configuration and code you can read in an afternoon, running
-  in the subscriber's own perimeter under their own control.
+- **Standard components, plus a named few of ours.** The subscriber-side footprint is Argo
+  CD, Kyverno and cosign, plus three things of ours, each named with what switches it on:
+  the PreSync verifier (a shell script on Alpine that reads the channel and writes nothing —
+  **off** unless installed with `--verifier-image`); on the station-bundle path, the floor
+  check (**on** by default, every 10 minutes; it writes one ConfigMap holding its verdict)
+  and the receipt sender (**off** by default; the only component that reaches outward, and
+  only to the channel host the cluster already pulls from). Configuration and code you can
+  read in an afternoon, running in the subscriber's own perimeter under their own control.
+  Full table: [docs/security](docs/security.mdx).
 
 ## Status
 
