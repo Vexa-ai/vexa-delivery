@@ -40,7 +40,9 @@ Nine checks, fails closed, every finding names its remedy. See [Preflight](prefl
   --channel-pubkey channel.pub --customer-values my-values.yaml
 ```
 
-Idempotent. Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. Production appears only with `--prod-pin <version>` — moving that pin is your gate. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster. Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-signed test registry, `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift).
+Idempotent. Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. Production appears only with `--prod-pin <version>` — moving that pin is your gate. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster. Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-signed test registry, `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift). (*Station bundle* here means the machinery chart Vexa publishes into your cluster; the `station.tar.gz` of step 5 is the return leg, travelling the other way.)
+
+**Set your transcription endpoint before step 4.** The example values file does not carry one, and a cluster that is Synced and Healthy still cannot dispatch a bot until `transcriptionServiceUrl` and `transcriptionServiceToken` are set in `my-values.yaml` — [what's proven, and where](tested#install-and-adoption).
 
 ## Step 4 — Smoke, with a human in a real meeting
 
@@ -59,6 +61,10 @@ Delivered set healthy → control plane answers → **you open a real meeting, a
 
 An unrecognized link fails immediately. `--non-interactive` rehearses without the human phase and reports FAIL with no admitted bot.
 
+<Note>
+**Rung.** This step is the intended procedure and the tool implements it, but **no audio has reached the pipeline in any delivery run yet** — bot dispatch, the pinned image and pod lifecycle are proven; capture is not. [What's proven, and where](tested#the-delivered-software).
+</Note>
+
 ## Step 5 — Send the station bundle back
 
 ```bash
@@ -66,7 +72,7 @@ python3 kit/validate/vexa_validate.py --namespace vexa-staging \
   --customer-values my-values.yaml --flows [--meeting-url URL | --non-interactive]
 ```
 
-Runs steps 2–4 — add `--install` (with `--provider --registry --channel --channel-pubkey`) to run step 3 too. Exit codes: `0` pass · `1` phase failed · `2` usage · `3` redaction leak.
+Runs steps 2 and 4 — add `--install` (with `--provider --registry --channel --channel-pubkey`) to run step 3 between them. Exit codes: `0` pass · `1` phase failed · `2` usage · `3` redaction leak.
 
 It writes **`station.tar.gz`**: your provider profile (`profile.env`), your values with every value under a key matching `password|token|secret|key|apikey` turned into `REDACTED`, the contract, the preflight and smoke receipts plus the raw smoke console, and `station.json`. `--verify-redaction` (on by default) re-extracts the finished archive and exits `3` if a removed value still appears, naming files, never values. Look at the file, then send it by hand — nothing transmits it.
 

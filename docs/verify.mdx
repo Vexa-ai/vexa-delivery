@@ -42,7 +42,7 @@ An estate entry — one carrying an `estate` block, published from a running clu
 jq -r '.evidence_absent[] | "\(.kind): \(.reason)"' entry.json
 ```
 
-What replaces them is a different claim, not a weaker one: the digest set is **captured from the running cluster**, per image, with its own receipt, and validated against a mandatory `validation_contract` named and hashed in the entry. **Your contract decides whether the absences are acceptable**, via `forbid_absent_evidence` — an estate-shaped contract lists `validation_contract` there, so an entry that declared *that* away is refused, and an OSS-shaped contract pointed at an estate refuses it correctly on its own terms. Worked form: `channels/<channel>/contracts/policy.internal-estate.yaml`.
+What replaces them is a different claim, not a weaker one: the digest set is **captured from the running cluster**, per image, with its own receipt, and validated against a mandatory `validation_contract` named and hashed in the entry. **Your contract decides whether the absences are acceptable**, via `forbid_absent_evidence` — an estate-shaped contract lists `validation_contract` there, so an entry that declared *that* away is refused, and an OSS-shaped contract pointed at an estate refuses it correctly on its own terms. Annotated worked form: [`kit/verify/policy.example.yaml`](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/verify/policy.example.yaml).
 
 ## If step 1 fails on the bundle format
 

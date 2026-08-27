@@ -3,7 +3,7 @@ title: "Kubernetes"
 description: "What a generic Kubernetes cluster must provide before the setup script runs"
 ---
 
-**Any conformant CNCF Kubernetes, v1.29 or newer — the reference environment.** The setup script installs pinned Argo CD and Kyverno, your contract and the channel public key, applies the subscription, and runs the [preflight](/preflight); from then on the cluster updates itself, and a scheduled floor check turns a drifting cluster visibly RED instead of failing quietly later.
+**Any conformant CNCF Kubernetes, v1.29 or newer — the reference environment.** The setup script installs pinned Argo CD and Kyverno, your contract and the channel public key, applies the subscription, and runs the [preflight](/preflight); from then on the cluster updates itself, and re-running the [preflight](/preflight) on a schedule turns a drifting cluster visibly RED instead of letting it fail quietly on a later sync.
 
 | Requirement | Why |
 |---|---|
@@ -16,7 +16,7 @@ description: "What a generic Kubernetes cluster must provide before the setup sc
 
 ## Status
 
-**This is the path our own production runs on, and the only one exercised end-to-end: Linode LKE.** `lke` is the single profile carrying `PROFILE_TESTED=yes` — installed from nothing on a throwaway LKE cluster ([receipt](/receipts/2026-08-21-m2-throwaway-test)), and Vexa's own production cluster adopted by its channel on 2026-08-25 with 36 of 36 pods keeping their UID through the sync ([receipt](/receipts/2026-08-25-prod-adoption)). A third run resolved the whole 115-object estate onto an empty cluster from signed artifacts alone; 16 of 24 workloads reached Running and the rest are written up as findings in [that receipt](/receipts/2026-08-25-throwaway-clean-pull) rather than fixed by it. `--provider generic` differs from `lke` only in that flag and the notes beside it: no conformant cluster other than LKE has run this end-to-end, so on anything else expect deltas and let the preflight find them. Per-provider deltas: [GKE](/environments/gke) · [EKS](/environments/eks) · [AKS](/environments/aks) · [OpenShift](/environments/openshift).
+**This is the path our own production runs on, and the only one exercised end-to-end: Linode LKE.** `lke` is the single profile carrying `PROFILE_TESTED=yes`. What has been run, and what has not, is tabulated in [what's proven, and where](/tested); the 2026-08-25 adoption of Vexa's own production is written up in [Upgrade](/upgrade). `--provider generic` differs from `lke` only in that flag and the notes beside it: no conformant cluster other than LKE has run this end-to-end, so on anything else expect deltas and let the preflight find them. Per-provider deltas: [GKE](/environments/gke) · [EKS](/environments/eks) · [AKS](/environments/aks) · [OpenShift](/environments/openshift).
 
 ## No ingress controller and no cert-manager
 

@@ -5,13 +5,13 @@ description: "Where your releases live, who may pull them, and how your credenti
 
 **A private OCI repository on `channel.vexa.ai` carrying signed entries, the digest-pinned Helm chart, image signatures, the kit, and a `current` pointer.** Your staging follows `current`; your production follows a pin only you move. Mirroring the whole channel into your own registry is first-class — the guarantees are in the signatures and digests, not the transport.
 
-| | **Shared channel** | **Dedicated channel** |
+| | **The open channel** | **Your private channel** |
 |---|---|---|
-| Who is on it | Many subscribers of one estate **shape** — an OpenShift-bank shape, an AKS shape, generic `enterprise-stable` | One customer |
-| What it carries | The standard enterprise bundle for that shape | Releases gated by that customer's contract |
+| Who is on it | Many subscribers of one estate **shape** — an OpenShift-bank shape, an AKS shape, a generic shape such as `acme-stable` | One customer |
+| What it carries | The standard bundle for that shape | Releases gated by that customer's contract |
 | Credentials | Per subscriber, independently revocable | Per subscriber |
 
-The default is the shared channel of your shape. Sharing one shares nothing else: your credential reads your channel only, your values never leave your cluster, your pin is yours.
+The default is the open channel of your shape. Sharing one shares nothing else: your credential reads your channel only, your values never leave your cluster, your pin is yours.
 
 ## Your credential
 

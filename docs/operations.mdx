@@ -22,6 +22,10 @@ Every estate that has been running has state an upgrade must survive — rows th
 
 Same standard as a first install — a human watches it capture a real meeting. Run [`vexa_validate.py`](install#step-5-send-the-station-bundle-back) instead to also refresh the station bundle; an upgrade is when your station's shape is most likely to have moved.
 
+<Note>
+**Rung.** The intended procedure, and the tool implements it — but **no audio has reached the pipeline in any delivery run yet** — [what's proven, and where](tested#the-delivered-software).
+</Note>
+
 ```bash
 python3 kit/smoke/vexa_smoke.py --namespace vexa-staging \
   --customer-values my-values.yaml --flows
@@ -45,8 +49,10 @@ Your cluster, your admin, your audit log — there is no path from Vexa into it.
 ## Update the kit
 
 ```bash
-./vexa-kit/self-update.sh --check   # what would move
-./vexa-kit/self-update.sh           # move it
+./kit/self-update.sh --check        # cloned layout (step 1's default): what would move
+./kit/self-update.sh               # move it
+
+./vexa-kit/self-update.sh --check   # bootstrap layout, where the kit unpacked to ./vexa-kit
 ```
 
 Resolves `latest` to a digest, verifies it against your pinned key, swaps the tree atomically. On a signature failure nothing is written and the running tree is untouched.

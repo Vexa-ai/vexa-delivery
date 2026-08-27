@@ -5,19 +5,19 @@ description: "Evidence-bound tickets and channel advisories."
 
 **A ticket carries the exact release identity and the exact failing check, and most fixes come back as a release through your own channel.** Meeting platforms change without notice, and when capture breaks the meetings are gone — support is the reactive lane; [co-design](co-design) is the proactive one.
 
-```bash
-vexa-support package <event>
-```
+A ticket opens with the machine state assembled locally — preflight report, admission-refusal message, release coordinates — and **the complete payload shown before anything is sent**, so triage starts from the exact release identity and the exact failing check. An air-gapped site delivers the same payload out of band.
 
-Assembles the machine state locally — preflight report, admission-refusal message, release coordinates — and **shows the complete payload before anything is sent**, so triage starts from the exact release identity and the exact failing check. An air-gapped site delivers the same payload out of band.
+<Note>
+**Rung.** There is no packaging command shipped for this yet. Today the payload is the artefacts you already have — the [preflight](preflight) report, the refusal message, and the `station.tar.gz` from [step 5](install#step-5-send-the-station-bundle-back) — attached by hand.
+</Note>
 
 Most fixes are releases. A ticket resolves as *fixed in release X*, and that release reaches you through the same channel, with the same evidence, promoted by your own gate. Severity shortens validation windows on our side; it never skips a stage. **Advisories** — a platform behaviour change, a fleet-wide defect, a withdrawn release — are published on the channel as signed content and surface on your next poll.
 
 ## Optional outbound
 
-Both are off by default, enabled by you per class, and carry shapes and numbers only — never meeting content. Their bound is your [telemetry rung](telemetry-ladder).
+Two classes, both off by default and both bounded by your [telemetry rung](telemetry-ladder), which is where the mechanism and the guarantees are written down.
 
-- **Notifications** — health degradation, failed sync, completed promotion, filed by Argo CD's built-in notifications engine pointed at the support endpoint. Configuration of a component you already run, not an agent.
+- **Notifications** — health degradation, failed sync, completed promotion, filed by Argo CD's built-in notifications engine pointed at the support endpoint: configuration of a component you already run.
 - **Usage reports** — where your agreement defines usage-based terms. The metric is computable by you from your own deployment and the report is signed from your side, so reconciliation compares receipts.
 
 **Severity** classifies what a finding means for capture in production, and maps to a delivery commitment in your subscription agreement. The mechanism is the same at every severity: evidence in, release out, your gate decides when it lands.

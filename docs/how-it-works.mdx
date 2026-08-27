@@ -32,15 +32,23 @@ Every node above is the same artifact. Each stage that validates it signs it; th
 7. **Station bundle** — receipts, redacted values, profile, contract; sent back by hand.
 8. **Back to 2** — that bundle is the station the next release is gated against.
 
+<Note>
+**Rung.** Step 6 is the intended procedure and the smoke tool implements it, but **no audio has reached the pipeline in any delivery run yet** — [what's proven, and where](tested#the-delivered-software).
+</Note>
+
 <img src="/images/delivery-loop.svg" alt="The delivery loop: publish, gate, channel, pull, admission, smoke, station bundle, and back to the gate" style={{width:"100%",maxWidth:"940px"}} />
 
-Vexa and the machinery that receives it both run in your cluster; the machinery is one signed chart pinned by your bootstrap file, and a hand-edit to either pin is reverted visibly.
+Vexa and the machinery that receives it both run in your cluster; the machinery is one signed chart, pinned in the subscription `install.sh` applies, and a hand-edit to either pin is reverted visibly.
 
 ## Channels — open or private
 
-- **The open channel** carries the public releases exactly as published — digest-pinned, signed, pulled from Docker Hub.
-- **A private channel** carries entries validated against one subscriber's contract — evidence attached, gated to that subscriber's specification, promoted on their own attestation.
+Everything Vexa runs on is open source and publicly published — images on Docker Hub, charts and code in the open repositories.
 
-Channels are two-way. The way back on the open channel is GitHub issues, plus any station report a subscriber chooses to share; a private channel adds a ticket lane and the [telemetry rung the subscriber sets](telemetry-ladder) — never content. The software is identical on every channel.
+- **The open channel** delivers those public releases exactly as published — digest-pinned, signed, pulled from Docker Hub — so a self-hosted deployment stays current automatically. Community support.
+- **Your private channel** is operated with us for your company: releases arrive attestation-complete with the full evidence set (gate reports, station verdicts from real environments), gated against your own specification before anything reaches you, with a support lane behind it.
+
+The channel is two-way, and the return path differs. On the open channel, the way back is GitHub issues — plus any station report you choose to share. On your private channel, the return path is part of the contract: a ticket lane with response commitments, and the [telemetry rung you set](telemetry-ladder) — from silent to receipts to health counters to diagnostics, never content. The more your side chooses to send back, the faster your deployment improves — that bandwidth is what your private channel is for.
+
+The software is identical on both paths, and switching paths is a subscription change, not a migration.
 
 Next: [Upgrade](upgrade) · [Install](install) · [The channel](channel) · [Verify](verify)

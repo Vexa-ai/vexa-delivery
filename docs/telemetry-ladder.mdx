@@ -43,7 +43,7 @@ report_scope:
 T1 fires from a PostSync hook Job when a sync completes. T2/T3 go by that CronJob, or by hand — the sender's RBAC is `get`/`list` on pods, deployments, cronjobs and jobs plus `get` on one named ConfigMap: no secrets, no exec, no logs, no write.
 
 ```bash
-vexa-validate --report --namespace vexa-prod \
+python3 kit/validate/vexa_validate.py --report --namespace vexa-prod \
   --contract ./contract.yaml --station <your-station> \
   --submit --submit-dry-run          # prints the payload path; sends nothing
 ```
@@ -51,7 +51,7 @@ vexa-validate --report --namespace vexa-prod \
 **T4 does not send.** It writes a scrubbed bundle to your disk and stops — no `--submit` path, and no `tier: 4` value in `report.v1`. Secret and ConfigMap values, container env values and credential-shaped annotations are removed; object names, images, conditions and event messages are kept.
 
 ```bash
-vexa-validate --export-diagnostics --namespace vexa-prod --out ./diag
+python3 kit/validate/vexa_validate.py --export-diagnostics --namespace vexa-prod --out ./diag
 ```
 
 A counter that could not be collected is reported **absent, with a reason** — never defaulted to zero. **T3 ships today as an interface with no implementation and says so:** every counter null, one `absent` row explaining why.

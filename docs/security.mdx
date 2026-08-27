@@ -11,7 +11,7 @@ description: "What runs where, what leaves your cluster, and what you pin."
 | Two admission policy files: digest-pinning, signature verification | You — tighten at will |
 | The subscription: one ApplicationSet, including the production pin | You |
 | Preflight, smoke, validate — readable scripts on your operator's machine | You |
-| The kit — verified against your key before unpacking, never cloned | You, including when to update |
+| The kit — cloned from the public repository, or pulled as a signed artifact and verified against your key before unpacking | You, including when to update |
 | The Vexa workloads — digest-pinned images | Admitted only by your policy |
 
 This is an open-source collaboration: Vexa, the delivery machinery, and everything that will ever travel through the channel is Apache-2.0. [Both paths](how-it-works) run the same software.
@@ -24,7 +24,9 @@ Nothing is required to leave. The subscription pulls and sends nothing, verifica
 |---|---|
 | [Support tickets](support) | Composed locally, shown in full before sending: configuration shapes and error records |
 | [The station bundle](install#step-5-send-the-station-bundle-back) | Written to disk and sent by hand: substrate facts, values with secrets replaced, contract, receipts |
-| [Notifications and usage reports](support) | Enabled per event class; aggregate numbers and shapes. Bounded by your [telemetry rung](telemetry-ladder) |
+| [Notifications and usage reports](support) | Enabled per event class; aggregate numbers and shapes |
+
+What each rung may carry, and the three independent things that hold it there, are in the [telemetry ladder](telemetry-ladder).
 
 ## Isolated networks
 

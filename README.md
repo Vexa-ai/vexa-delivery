@@ -3,7 +3,8 @@
 **Signed, pull-only delivery channels for self-hosted software.**
 
 Your cluster stays yours. vexa-delivery keeps a self-hosted deployment current through a
-channel your cluster pulls from — the open channel, free for everyone, or your private channel: every entry is digest-pinned and cosign-signed, verified
+channel your cluster pulls from — the open channel, or your private channel: every entry is
+digest-pinned and cosign-signed, verified
 inside your perimeter against keys you pin, rolled automatically on staging, and promoted
 to production only under your own attestation. The publisher holds no access to your
 environment — nothing is ever pushed, and the only thing that travels back is a report you
@@ -29,16 +30,9 @@ Already running Vexa? Start at [docs/upgrade](docs/upgrade.mdx).
 
 ## How it works
 
-1. **Publish** — a channel entry: digest-pinned chart and images, cosign signatures, and an
-   evidence bundle (gate reports, station verdicts) attached to the entry.
-2. **Pull** — the subscribing cluster syncs the channel on its own schedule. Nothing is
-   ever pushed; the publisher holds no credentials to the cluster.
-3. **Verify** — the kit's policy validates every entry against a contract: signatures,
-   digest pinning, evidence completeness. Admission control independently re-verifies
-   before a byte runs.
-4. **Promote** — the update rolls automatically on staging. The operator runs their
-   validation, attaches their own attestation, and the release promotes to production —
-   one auditable artifact per promotion.
+Publish → gate → channel → pull → admission → smoke → station bundle → back to the gate.
+The eight steps, with what each one checks and who holds it, are in
+[docs/how-it-works](docs/how-it-works.mdx).
 
 The environment stays deterministic end to end: what runs is exactly what was signed, and
 every promotion carries the evidence that justified it.
@@ -48,16 +42,23 @@ every promotion carries the evidence that justified it.
 Everything Vexa runs on is open source and publicly published — images on Docker Hub,
 charts and code in the open repositories.
 
-- **The open channel** carries the public releases exactly as published — digest-pinned,
-  signed, pulled from Docker Hub.
-- **A private channel** carries entries validated against one subscriber's contract —
-  evidence attached, gated to that subscriber's specification, promoted on their own
-  attestation.
+- **The open channel** delivers those public releases exactly as published — digest-pinned,
+  signed, pulled from Docker Hub — so a self-hosted deployment stays current automatically.
+  Community support.
+- **Your private channel** is operated with us for your company: releases arrive
+  attestation-complete with the full evidence set (gate reports, station verdicts from real
+  environments), gated against your own specification before anything reaches you, with a
+  support lane behind it.
 
-Channels are two-way. The way back on the open channel is GitHub issues, plus any station
-report a subscriber chooses to share; a private channel adds a ticket lane and the
-[telemetry rung the subscriber sets](docs/telemetry-ladder.mdx) — never content. The
-software is identical on every channel.
+The channel is two-way, and the return path differs. On the open channel, the way back is
+GitHub issues — plus any station report you choose to share. On your private channel, the
+return path is part of the contract: a ticket lane with response commitments, and the
+[telemetry rung you set](docs/telemetry-ladder.mdx) — from silent to receipts to health
+counters to diagnostics, never content. The more your side chooses to send back, the faster
+your deployment improves — that bandwidth is what your private channel is for.
+
+The software is identical on both paths, and switching paths is a subscription change, not a
+migration.
 
 ## What's in the repository
 
@@ -78,9 +79,9 @@ software is identical on every channel.
   policy, with keys they pin — independently of the publisher.
 - **Evidence over assertion.** Every entry carries its validation evidence; every promotion
   is attested. All of it is verifiable offline, inside the subscriber's perimeter.
-- **No agent.** The subscriber-side footprint is configuration for standard components —
-  Argo CD, Kyverno, cosign — readable in an afternoon. Nothing of the publisher's executes
-  in the subscriber's perimeter.
+- **Standard components only.** The subscriber-side footprint is Argo CD, Kyverno and cosign
+  — configuration you can read in an afternoon, running in the subscriber's own perimeter
+  under their own control.
 
 ## Status
 
@@ -91,7 +92,7 @@ receipts — is general.
 ## Getting started
 
 Two doors. **Already running Vexa?** Start at [docs/upgrade](docs/upgrade.mdx) — one read-only
-script writes the report your upgrade gets rehearsed against; that is the whole first step.
+script writes the report your bundle gets built to fit; that is the whole first step.
 **Nothing running yet?** Start at [docs/install](docs/install.mdx) — five steps from a kit you
 verify with your own key. Channels are credentialed today, both paths —
 [request access](mailto:dmitry@vexa.ai) and your credential, channel key and bootstrap
