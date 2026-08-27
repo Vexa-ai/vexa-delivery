@@ -11,7 +11,7 @@ description: "What a generic Kubernetes cluster must provide before the setup sc
 | A default StorageClass | Postgres, MinIO, Redis volumes |
 | LoadBalancer Services **or** an ingress you manage | reaching the gateway and dashboard |
 | 2 nodes × 4 vCPU / 8 GB (or equivalent) | runs the full stack; measured, not estimated |
-| Headroom for meeting bots: ~1 vCPU / 2 GiB **per concurrent bot** | production p99 memory is ~1.45 GiB per bot; the limit ships at 2 GiB |
+| Headroom **per concurrent bot**: it requests 500m / 1Gi and its limit ships at 2 vCPU / **2560Mi** | the only measurement we hold is production p50 **922Mi**, max **1292Mi**, across 10 bots — the limit carries that plus the 2Gi memory-backed `/dev/shm`, which counts against it |
 | Outbound reachability to the channel registry (or your own mirror) | the subscription pulls; nothing pushes in |
 
 ## Status

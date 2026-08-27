@@ -11,7 +11,7 @@ description: "Amazon EKS — what the provider profile sets, what the cluster mu
 
 ## What the provider profile configures
 
-`install.sh` has no per-provider branches — provider differences live only in `kit/providers/<name>/profile.env`. The `aws-eks` file sets the same pinned versions every profile sets, Argo CD `v3.5.1` and Kyverno `v1.19.0`, and nothing else. It installs no addon, selects no storage class and writes no load-balancer annotation: those are your cluster's own configuration, and preflight checks they are present rather than setting them.
+`install.sh` has no per-provider branches — provider differences live only in `kit/providers/<name>/profile.env`. The `aws-eks` file sets the same pinned versions every profile sets, Argo CD `v3.5.1` and Kyverno `v1.19.0`, and nothing else. It installs no addon, selects no storage class and writes no load-balancer annotation. Those are your cluster's own configuration. Preflight checks the storage class (P8) and the pull path to the channel (P5, P7); it reads **no** load-balancer or ingress state at all, so that row is yours to confirm.
 
 ## What the cluster must provide
 
@@ -21,6 +21,6 @@ description: "Amazon EKS — what the provider profile sets, what the cluster mu
 | **The AWS Load Balancer Controller**, or classic ELB, or an ingress you manage | `type: LoadBalancer` provisions nothing on EKS by itself |
 | Kubernetes ≥ 1.29 | the P9 floor |
 | Outbound reachability to the channel registry, or your own mirror — an ECR pull-through cache is the natural one here | the subscription pulls; nothing pushes in. Digests and signatures survive mirroring. |
-| 2 nodes × 4 vCPU / 8 GB, plus ~1 vCPU / 2 GiB per concurrent meeting bot | the sizing measured on the reference environment |
+| 2 nodes × 4 vCPU / 8 GB, plus headroom per concurrent meeting bot — it requests 500m / 1Gi and its limit ships at 2 vCPU / 2560Mi | measured on the reference environment: p50 922Mi, max 1292Mi across 10 bots |
 
 Next: [Install](/install) · [Preflight](/preflight) · [Kubernetes](/environments/kubernetes)
