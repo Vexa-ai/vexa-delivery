@@ -3,8 +3,7 @@
 **Signed, pull-only delivery channels for self-hosted software.**
 
 Your cluster stays yours. vexa-delivery keeps a self-hosted deployment current through a
-channel your cluster pulls from — the open channel, free for everyone, or a tailored channel
-operated with us: every entry is digest-pinned and cosign-signed, verified
+channel your cluster pulls from — the open channel, free for everyone, or your enterprise channel: every entry is digest-pinned and cosign-signed, verified
 inside your perimeter against keys you pin, rolled automatically on staging, and promoted
 to production only under your own attestation. The publisher holds no access to your
 environment — nothing is ever pushed, and the only thing that travels back is a report you
@@ -15,6 +14,16 @@ entries, the kit a subscribing cluster installs, and the station runners that va
 entries in real environments. [Vexa](https://github.com/Vexa-ai/vexa), the open-source
 meeting-intelligence platform, is the first workload — this machinery delivers Vexa's own
 cloud production.
+
+## Four moves
+
+**Your running self-hosted Vexa service that stays up to date:**
+
+1. **Bring your own cloud** — Kubernetes anywhere: GKE, AWS, OpenShift; a namespace in an
+   existing cluster or an entire fresh one. Nothing Vexa-specific.
+2. **Install Vexa Delivery.**
+3. **Set it to consume the public images — or your enterprise channel.**
+4. **Your cluster runs and self-updates as new images are published.**
 
 ## How it works
 
@@ -41,17 +50,17 @@ consume all of it without us, forever.
 - **The open channel** delivers those public releases exactly as published — digest-pinned,
   signed, pulled from Docker Hub — so a self-hosted deployment stays current automatically.
   Community support.
-- **A tailored channel** is operated with us for your company: releases arrive
+- **Your enterprise channel** is operated with us for your company: releases arrive
   attestation-complete with the full evidence set (gate reports, station verdicts from real
   environments), gated against your own specification before anything reaches you, with a
   support lane behind it.
 
 The channel is two-way, and the return path differs. On the open channel, the way back is
-GitHub issues — plus any station report you choose to share. On a tailored channel, the
+GitHub issues — plus any station report you choose to share. On your enterprise channel, the
 return path is part of the contract: a ticket lane with response commitments, and the
 [telemetry rung you set](docs/telemetry-ladder.mdx) — from silent to signed receipts to
 health counters to diagnostics, never content. The more your side chooses to send back, the
-faster your deployment improves — that bandwidth is what the tailored channel is for.
+faster your deployment improves — that bandwidth is what your enterprise channel is for.
 
 Same machinery, same kit, same verification on both paths. The software is identical —
 features never move behind a paywall — and switching paths is a subscription change, not a

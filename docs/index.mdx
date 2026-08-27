@@ -19,7 +19,7 @@ Hub, digest-pinned and signed. Subscribe your cluster and it stays current with 
 staging rolls automatically, you promote to production under your own attestation.
 Community support.
 
-## A tailored channel — operated with us
+## Your enterprise channel — operated with us
 
 A private channel for your company. Releases arrive attestation-complete, with the full
 evidence set — gate reports and station verdicts from real environments — and no release
@@ -27,21 +27,24 @@ reaches your channel until it has been rendered with your values and matched aga
 contract agreed for your company. A support lane with response commitments sits behind it.
 
 The channel is two-way, and the return path differs. On the open channel, the way back is
-GitHub issues — plus any station report you choose to share. On a tailored channel, the
+GitHub issues — plus any station report you choose to share. On your enterprise channel, the
 return path is contractual: a [ticket lane](support) with response commitments, and the
 [telemetry rung you set](telemetry-ladder) — from silent to receipts to health counters to
 diagnostics, never content. The more your side chooses to send back, the faster your
-deployment improves — that bandwidth is what a tailored channel is for.
+deployment improves — that bandwidth is what your enterprise channel is for.
 
 The software is identical on both paths — features never move behind a paywall — and
 switching paths is a subscription change, not a migration.
 
-## Three moves
+## Four moves
 
-1. **Set up a generic environment** — a Kubernetes cluster, an OpenShift namespace, a managed
-   cloud. Nothing Vexa-specific.
-2. **Set up the channel** — one pull-only credential, one subscription.
-3. **The software stays up to date** — inside your perimeter, on your schedule.
+**Your running self-hosted Vexa service that stays up to date:**
+
+1. **Bring your own cloud** — Kubernetes anywhere: GKE, AWS, OpenShift; a namespace in an
+   existing cluster or an entire fresh one. Nothing Vexa-specific.
+2. **Install Vexa Delivery.**
+3. **Set it to consume the public images — or your enterprise channel.**
+4. **Your cluster runs and self-updates as new images are published.**
 
 Read [how it works](how-it-works), then start at [Install](install). Each
 [environment](environments/kubernetes) page states what it must provide.
