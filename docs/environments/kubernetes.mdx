@@ -14,6 +14,10 @@ description: "What a generic Kubernetes cluster must provide before the setup sc
 | Headroom for meeting bots: ~1 vCPU / 2 GiB **per concurrent bot** | production p99 memory is ~1.45 GiB per bot; the limit ships at 2 GiB |
 | Outbound reachability to the channel registry (or your own mirror) | the subscription pulls; nothing pushes in |
 
+## Status
+
+**This is the path our own production runs on, and the only one exercised end-to-end: Linode LKE.** `lke` is the single profile carrying `PROFILE_TESTED=yes` — installed from nothing on a throwaway LKE cluster ([receipt](/receipts/2026-08-21-m2-throwaway-test)), and Vexa's own production cluster adopted by its channel on 2026-08-25 with 36 of 36 pods keeping their UID through the sync ([receipt](/receipts/2026-08-25-prod-adoption)). A third run resolved the whole 115-object estate onto an empty cluster from signed artifacts alone; 16 of 24 workloads reached Running and the rest are written up as findings in [that receipt](/receipts/2026-08-25-throwaway-clean-pull) rather than fixed by it. `--provider generic` differs from `lke` only in that flag and the notes beside it: no conformant cluster other than LKE has run this end-to-end, so on anything else expect deltas and let the preflight find them. Per-provider deltas: [GKE](/environments/gke) · [EKS](/environments/eks) · [AKS](/environments/aks) · [OpenShift](/environments/openshift).
+
 ## No ingress controller and no cert-manager
 
 Nothing in the delivery machinery needs them — the subscription pulls, so it needs no inbound path at all. They matter only for the endpoints **you** expose. The pattern that works in that cluster class is a **per-service reverse proxy with built-in ACME** — a small Caddy Deployment in the namespace with its own LoadBalancer Service and certificate storage: one workload per exposed endpoint, a load balancer each, blast-radius isolation.
@@ -30,4 +34,4 @@ Two things to get right:
 
 Everything installed is stock upstream plus configuration you can read in one sitting; nothing of ours runs privileged. Air-gapped variant: mirror the channel into your own registry — digests and signatures survive mirroring, and verification pins our key, not a hostname.
 
-Next: [Managed cloud](/environments/managed-cloud) · [OpenShift](/environments/openshift) · [Install](/install)
+Next: [GKE](/environments/gke) · [EKS](/environments/eks) · [AKS](/environments/aks) · [OpenShift](/environments/openshift) · [Install](/install)

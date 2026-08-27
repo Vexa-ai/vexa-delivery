@@ -1,0 +1,27 @@
+---
+title: "AKS"
+description: "Azure AKS — what the provider profile sets, what the cluster must provide, and how far the evidence goes"
+---
+
+**Azure Kubernetes Service — `--provider azure-aks`.** The generic [Kubernetes requirements](/environments/kubernetes) apply unchanged; this page is the delta and how far the evidence goes.
+
+## Status
+
+**Provider profile implemented; not yet validated by a station run in a real AKS cluster.** `kit/providers/azure-aks/profile.env` carries `PROFILE_TESTED=no`, and the installer prints that on every run — *this profile is declared, not yet exercised end-to-end; expect deltas.* The deltas below are named from Azure documentation, not measured by us. The first subscriber on AKS validates this page: the [preflight](/preflight), smoke and [station](/station-gate) reports from that install are the evidence, and this line changes when they exist.
+
+## What the provider profile configures
+
+`install.sh` has no per-provider branches — provider differences live only in `kit/providers/<name>/profile.env`. The `azure-aks` file sets the same pinned versions every profile sets, Argo CD `v3.5.1` and Kyverno `v1.19.0`, and nothing else. It selects no storage class, no load-balancer annotation, no ingress and no node selector: those are your cluster's own configuration, and preflight checks they are present rather than setting them.
+
+## What the cluster must provide
+
+| Requirement | Why |
+|---|---|
+| A default StorageClass | AKS ships `managed-csi` as default, so P8 passes as it stands |
+| **A decision on the Azure Policy add-on** | where it is enabled it enforces its own admission alongside the Kyverno policy the kit installs, and the delivered set has to satisfy both. Preflight P4 reads SCC and PodSecurity labels; it does not read Azure Policy constraints. |
+| LoadBalancer Services **or** an ingress you manage | reaching the gateway and dashboard |
+| Kubernetes ≥ 1.29 | the P9 floor |
+| Outbound reachability to the channel registry, or your own mirror | the subscription pulls; nothing pushes in |
+| 2 nodes × 4 vCPU / 8 GB, plus ~1 vCPU / 2 GiB per concurrent meeting bot | the sizing measured on the reference environment |
+
+Next: [Install](/install) · [Preflight](/preflight) · [Kubernetes](/environments/kubernetes)

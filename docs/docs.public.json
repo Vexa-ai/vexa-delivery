@@ -44,8 +44,10 @@
         "group": "Environments",
         "pages": [
           "environments/kubernetes",
-          "environments/openshift",
-          "environments/managed-cloud"
+          "environments/gke",
+          "environments/eks",
+          "environments/aks",
+          "environments/openshift"
         ]
       }
     ]

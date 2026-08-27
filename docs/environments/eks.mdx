@@ -1,0 +1,26 @@
+---
+title: "EKS"
+description: "Amazon EKS — what the provider profile sets, what the cluster must provide, and how far the evidence goes"
+---
+
+**Amazon Elastic Kubernetes Service — `--provider aws-eks`.** The generic [Kubernetes requirements](/environments/kubernetes) apply unchanged; this page is the delta and how far the evidence goes.
+
+## Status
+
+**Provider profile implemented; not yet validated by a station run in a real EKS cluster.** `kit/providers/aws-eks/profile.env` carries `PROFILE_TESTED=no`, and the installer prints that on every run — *this profile is declared, not yet exercised end-to-end; expect deltas.* The deltas below are named from AWS documentation, not measured by us. The first subscriber on EKS validates this page: the [preflight](/preflight), smoke and [station](/station-gate) reports from that install are the evidence, and this line changes when they exist.
+
+## What the provider profile configures
+
+`install.sh` has no per-provider branches — provider differences live only in `kit/providers/<name>/profile.env`. The `aws-eks` file sets the same pinned versions every profile sets, Argo CD `v3.5.1` and Kyverno `v1.19.0`, and nothing else. It installs no addon, selects no storage class and writes no load-balancer annotation: those are your cluster's own configuration, and preflight checks they are present rather than setting them.
+
+## What the cluster must provide
+
+| Requirement | Why |
+|---|---|
+| **The EBS CSI addon, with a StorageClass marked default** (gp3) | EKS ships no default StorageClass. Without one, preflight P8 fails and every delivered volume claim sits Pending. |
+| **The AWS Load Balancer Controller**, or classic ELB, or an ingress you manage | `type: LoadBalancer` provisions nothing on EKS by itself |
+| Kubernetes ≥ 1.29 | the P9 floor |
+| Outbound reachability to the channel registry, or your own mirror — an ECR pull-through cache is the natural one here | the subscription pulls; nothing pushes in. Digests and signatures survive mirroring. |
+| 2 nodes × 4 vCPU / 8 GB, plus ~1 vCPU / 2 GiB per concurrent meeting bot | the sizing measured on the reference environment |
+
+Next: [Install](/install) · [Preflight](/preflight) · [Kubernetes](/environments/kubernetes)

@@ -3,7 +3,13 @@ title: "OpenShift"
 description: "What an OpenShift project must provide — including shared clusters where you hold a namespace, not the cluster"
 ---
 
-**Supported in the shape large organizations actually run it: a shared cluster operated by a platform team, where your team holds a project and deploys through GitOps.** Nothing in the install needs cluster-admin, and nothing needs a CLI.
+**Built for the shape large organizations actually run it: a shared cluster operated by a platform team, where your team holds a project and deploys through GitOps.** Nothing in the install needs cluster-admin, and nothing needs a CLI.
+
+## Status
+
+**Rehearsed against recorded constraints; never installed on an OpenShift cluster.** The profile carries `PROFILE_TESTED=no`, and that is the accurate value: `kit/install.sh --provider openshift` has not been run against OpenShift, so Argo install, Kyverno install, admission policy and repo secrets are all untried there against real SCC and real RBAC. What has been done is offline — the SCC/PSA/LimitRange logic checked against constraints recorded from a genuine SCC admission rehearsal (MicroShift 4.18, 2026-08-21) and from a subscriber's own measurements: 25 chart objects admitted stock, zero SCC rejects, random-UID security contexts injected on all 21 pods ([parity detail](/engineering/openshift-parity)).
+
+**Vexa has not been observed converging and running on OpenShift, and one known defect is in the way.** Under a random UID, `HOME` is absent from the bot and agent-worker images at the `v0.12.23` digests; the minio-init hook fails with `mkdir /.mc: permission denied` and the Application never converges. `HOME=/tmp` is the one-variable fix, tracked upstream, not shipped. No preflight check detects it — a P4 PASS means admission will accept the pod, not that the process inside it can run. Two further gaps, stated as gaps: the OpenShift GitOps operator is recommended on evidence about upstream Argo's images rather than on a run of it with this kit, and bare-metal OpenShift with no LoadBalancer needs a `Route`, which the chart does not render today.
 
 | Requirement | Why |
 |---|---|
