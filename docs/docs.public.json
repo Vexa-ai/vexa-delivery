@@ -71,5 +71,16 @@
         ]
       }
     ]
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Vexa-ai/vexa-delivery"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Vexa-ai/vexa-delivery"
+    }
   }
 }

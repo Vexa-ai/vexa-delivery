@@ -9,20 +9,22 @@ date.**
 3. **Set it to consume the public images — or a private channel.**
 4. **Cluster running, self-updating on new images published.**
 
+📖 **Documentation: [delivery.vexa.ai](https://delivery.vexa.ai)**
+
 Everything is open source, images public on Docker Hub. Nothing reaches in: your cluster
 pulls, verifies with keys you pin, and promotes to production on your attestation.
 
 > **Not built yet.** Every channel is credentialed today — the free one in step 3 is
 > [issue #9](https://github.com/Vexa-ai/vexa-delivery/issues/9), not a running service.
-> What else is and is not proven: [what's proven, and where](docs/tested.mdx).
+> What else is and is not proven: [what's proven, and where](https://delivery.vexa.ai/tested).
 
-Already running Vexa? Start at [docs/upgrade](docs/upgrade.mdx).
+Already running Vexa? Start at [upgrade](https://delivery.vexa.ai/upgrade).
 
 ## How it works
 
 Publish → gate → channel → pull → admission → smoke → station report → back to the gate.
 The loop, with what each part checks and who holds it, is in
-[docs/how-it-works](docs/how-it-works.mdx).
+[how-it-works](https://delivery.vexa.ai/how-it-works).
 
 The environment stays deterministic end to end: what runs is exactly what was signed, and
 every promotion carries the evidence that justified it.
@@ -44,7 +46,7 @@ charts and code in the open repositories.
 
 The channel is two-way. On the open channel the way back is GitHub issues, plus any station
 report you choose to share. On a private channel it is part of the contract: a ticket lane
-with response commitments and the [telemetry rung you set](docs/telemetry-ladder.mdx) —
+with response commitments and the [telemetry rung you set](https://delivery.vexa.ai/telemetry-ladder) —
 never content.
 
 The software is identical on both paths, and switching paths is a subscription change, not a
@@ -77,7 +79,7 @@ migration.
   and the receipt sender (**off** by default; the only component that reaches outward, and
   only to the channel host the cluster already pulls from). Configuration and code you can
   read in an afternoon, running in the subscriber's own perimeter under their own control.
-  Full table: [docs/security](docs/security.mdx).
+  Full table: [security](https://delivery.vexa.ai/security).
 
 ## Status
 
@@ -87,9 +89,9 @@ receipts — is general.
 
 ## Getting started
 
-Two doors. **Already running Vexa?** Start at [docs/upgrade](docs/upgrade.mdx) — one read-only
+Two doors. **Already running Vexa?** Start at [upgrade](https://delivery.vexa.ai/upgrade) — one read-only
 script writes the report your bundle gets built to fit; that is the whole first step.
-**Nothing running yet?** Start at [docs/install](docs/install.mdx) — five steps from a kit you
+**Nothing running yet?** Start at [install](https://delivery.vexa.ai/install) — five steps from a kit you
 verify with your own key. Channels are credentialed today, both paths —
 [request access](mailto:dmitry@vexa.ai) and your credential, channel key and bootstrap
 parameters arrive by mail.
