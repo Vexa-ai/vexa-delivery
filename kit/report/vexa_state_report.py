@@ -85,10 +85,23 @@ kit/report/probes/ rather than a function. See probes/README.md.
 ────────────────────────────────────────────────────────────────────────────
 
     python3 kit/report/vexa_state_report.py --namespace vexa \\
-        [--db-pod postgres-0 --db-name vexa --db-user vexa]
+        [--db-host db.internal --db-name vexa --db-user vexa]
+
+Three ways to reach the database, in the order you should try them. `--db-host`
+(managed, external, or port-forwarded; the password comes from PGPASSWORD or
+~/.pgpass, never from argv). `--db-pod`, which runs psql inside the pod and
+therefore needs `create` on `pods/exec` — a privileged verb, declared as such
+in docs/upgrade-report.mdx. Or `kubectl apply -f kit/report/job.yaml`, which
+runs the database half from inside the cluster with a read-only ServiceAccount
+and no exec at all. With none of them the cluster half is still collected and
+the run still succeeds — but every probe reports `not run`, and the tool says
+so loudly, because the probes are the only part of this report that reads your
+data.
 
 Exit codes: 0 written · 2 usage · 3 redaction leak (the bundle is kept for
-inspection and must not be sent).
+inspection and must not be sent). A missing default probe set, an unreadable
+resource and an absent database are NOT usage errors: they degrade to `absent`
+with a reason and still write a bundle.
 """
 from __future__ import annotations
 
@@ -348,9 +361,10 @@ class Postgres:
     report can never become an incident.
     """
 
-    def __init__(self, kube, url=None, pod=None, container=None, dbname=None,
-                 user=None, timeout_ms=30000, binary="psql"):
+    def __init__(self, kube, url=None, host=None, port=None, pod=None, container=None,
+                 dbname=None, user=None, timeout_ms=30000, binary="psql"):
         self.kube, self.url, self.pod, self.container = kube, url, pod, container
+        self.host, self.port = host, port
         self.dbname, self.user, self.binary = dbname, user, binary
         self.pgoptions = ("-c default_transaction_read_only=on "
                           "-c statement_timeout=%d "
@@ -358,11 +372,42 @@ class Postgres:
 
     @property
     def configured(self):
-        return bool(self.url or self.pod)
+        return bool(self.url or self.host or self.pod)
+
+    @property
+    def transport(self):
+        if self.url:
+            return "--db-url"
+        if self.host:
+            return "--db-host"
+        if self.pod:
+            return "kubectl exec %s" % self.pod
+        return None
 
     def argv(self, tool, extra):
         if self.url:
             return [tool, self.url] + extra
+        if self.host:
+            # HOST/PORT AND NO PASSWORD ANYWHERE ON THE COMMAND LINE. The
+            # password comes from PGPASSWORD or ~/.pgpass, both of which the
+            # operator already controls — argv is readable in every process
+            # listing on the machine, which is exactly the objection --db-url
+            # carries and this transport exists to avoid. It is also the only
+            # transport that reaches a MANAGED database, which the Vexa chart
+            # supports (postgres.enabled=false) and which no amount of
+            # `kubectl exec` can talk to, because there is no pod to exec into.
+            cmd = [tool, "-h", self.host]
+            if self.port:
+                cmd += ["-p", str(self.port)]
+            if self.user:
+                cmd += ["-U", self.user]
+            if self.dbname:
+                cmd += ["-d", self.dbname]
+            return cmd + extra
+        # kubectl exec — `create` on pods/exec, which is a privileged verb and
+        # is declared as such in docs/upgrade-report.mdx. It is the last resort
+        # of the three on purpose: reach for --db-host first, and for the
+        # in-cluster Job (kit/report/job.yaml) when exec is not grantable.
         cmd = self.kube.base() + ["exec", "-n", self.kube.namespace, self.pod]
         if self.container:
             cmd += ["-c", self.container]
@@ -718,8 +763,9 @@ def collect_db(ctx):
         out["source"] = "absent"
         return Ctx.absent_section(
             out, "database",
-            "no database source given (--db-url or --db-pod). The DB sections are "
-            "absent, not empty — nothing here should be read as 'the database is fine'.")
+            "no database source given (--db-host, --db-url or --db-pod; or run the "
+            "in-cluster Job at kit/report/job.yaml). The DB sections are absent, not "
+            "empty — nothing here should be read as 'the database is fine'.")
 
     for key, sql in DB_SCALARS:
         value, err = pg.scalar(sql)
@@ -898,7 +944,7 @@ def collect_schema(ctx):
 # ── collector · probes ──────────────────────────────────────────────────────
 
 
-def load_probe_set(name):
+def load_probe_set(name, explicit=False):
     """A probe set is DATA, not code, and it is versioned by release.
 
     The hazards an upgrade has to clear are release-specific and they accrete:
@@ -907,6 +953,19 @@ def load_probe_set(name):
     kit/report/probes/ means adding one is a data change an operator can read
     in full before running it — which is the only reason they should believe
     the SQL is a count.
+
+    MISSING IS NOT FATAL WHEN NOBODY ASKED FOR IT. Operators copy one file to a
+    jump box — this tool is a single script on purpose — and `probes/` does not
+    travel with it. Killing the run there cost the whole report to a missing
+    data file, in a tool whose own rule is that a broken section must not cost
+    an operator their run. So an ABSENT DEFAULT DEGRADES: probes.json records
+    absent with a reason and a remedy, every other section is collected, and
+    the exit code stays 0.
+
+    A probe set the operator NAMED and that does not exist is the other case
+    and stays fatal — they asked for something specific and did not get it,
+    which is a usage error and exits 2, the documented code. Silently reporting
+    absent there would answer a question they did not ask.
     """
     if name in (None, "", "none"):
         return None, {"source": "disabled", "reason": "--probe-set none"}
@@ -915,8 +974,23 @@ def load_probe_set(name):
         path = HERE / "probes" / ("%s.json" % name)
     if not path.is_file():
         available = sorted(p.stem for p in (HERE / "probes").glob("*.json"))
-        raise SystemExit("%s: no probe set %r (available: %s)"
-                         % (TOOL, name, ", ".join(available) or "none"))
+        if explicit:
+            sys.stderr.write(
+                "%s: no probe set %r (available here: %s)\n"
+                % (TOOL, name, ", ".join(available) or "none — this tool has no "
+                   "probes/ directory beside it"))
+            raise SystemExit(2)
+        return None, {
+            "source": "absent",
+            "reason": "the default probe set %r was not found beside this tool, and "
+                      "%s. Copy kit/report/probes/ next to vexa_state_report.py, or "
+                      "pass --probe-set /path/to/<set>.json. Every other section was "
+                      "still collected — but the probes are the only part of this "
+                      "report that reads your data, so this bundle cannot say whether "
+                      "the upgrade would break on rows you already have."
+                      % (name, "the probes/ directory does not exist" if not available
+                         else "the sets present are: %s" % ", ".join(available)),
+        }
     try:
         rel = str(path.resolve().relative_to(REPO))
     except ValueError:
@@ -951,13 +1025,19 @@ def collect_probes(ctx):
     database, in the same document that reports the answer, and never has to
     trust that a name like "active-meeting uniqueness" means what it says.
     """
-    probe_set, meta = load_probe_set(ctx.args.probe_set)
+    probe_set, meta = load_probe_set(ctx.args.probe_set,
+                                     explicit=ctx.args.probe_set_explicit)
     out = {"source": meta.get("source"), "collected_at": utcnow(),
            "probe_set": (probe_set or {}).get("probe_set"),
            "description": (probe_set or {}).get("description"),
            "probes": []}
     if not probe_set:
+        out["degraded"] = meta.get("source") if meta.get("source") != "disabled" else None
         return Ctx.absent_section(out, "probes", meta.get("reason", "no probe set"))
+    if not ctx.pg.configured:
+        # Machine-readable, so the console warning and the bundle agree and a
+        # reader of the JSON alone cannot mistake "not run" for "nothing found".
+        out["degraded"] = "no-database-source"
 
     for spec in probe_set.get("probes", []):
         row = {"name": spec.get("name"), "hazard": spec.get("hazard"),
@@ -973,7 +1053,8 @@ def collect_probes(ctx):
             out["probes"].append(row)
             continue
         if not ctx.pg.configured:
-            row["reason"] = "no database source given; this probe was not run"
+            row["reason"] = ("no database source given (--db-host / --db-url / "
+                             "--db-pod); this probe was not run")
         elif spec.get("todo"):
             # A probe whose columns are marked unverified must not produce a
             # number. A wrong zero here reads as "your data is clean" and is
@@ -1231,7 +1312,8 @@ def run_collectors(ctx):
 def build(a):
     kube = Kube(a.namespace, kubeconfig=a.kubeconfig, context=a.context)
     db_url = a.db_url or os.environ.get("VEXA_REPORT_DB_URL")
-    pg = Postgres(kube, url=db_url, pod=a.db_pod, container=a.db_container,
+    pg = Postgres(kube, url=db_url, host=a.db_host, port=a.db_port,
+                  pod=a.db_pod, container=a.db_container,
                   dbname=a.db_name, user=a.db_user, timeout_ms=a.sql_timeout_ms)
     ctx = Ctx(kube, pg, a)
     if db_url:
@@ -1244,8 +1326,8 @@ def build(a):
 
     print("== %s %s — reading, never writing" % (TOOL, TOOL_VERSION))
     print("   namespace: %s" % a.namespace)
-    print("   database:  %s" % ("kubectl exec %s" % a.db_pod if a.db_pod
-                                else ("--db-url" if db_url else "ABSENT (no source given)")))
+    print("   database:  %s" % (pg.transport or "ABSENT (no source given) — the probes "
+                                "will not run; see the warning at the end"))
 
     files, sections = run_collectors(ctx)
 
@@ -1340,6 +1422,40 @@ def render(archive, report, probes, leaks):
               % (len(probes["violations"]), ", ".join(probes["violations"])))
         print("   That is what this report is FOR. Nothing is broken yet; the upgrade "
               "would break on it.")
+
+    # THE DEGRADED RUN IS THE ONE THAT NEEDS THE LOUDEST LINE.
+    #
+    # A run with no database source succeeds, writes a bundle, exits 0 and
+    # reports every probe as `not run` in a column an operator reads as
+    # unremarkable. But the probes are the only part of this report that reads
+    # THEIR data — everything else is an inventory of images and shapes — so a
+    # quiet degraded run is the failure that costs the most and announces
+    # itself the least. It stays exit 0 (a bundle WAS written, and the cluster
+    # half of it is worth sending) and it does not get to be quiet.
+    if probes.get("degraded"):
+        names = probes.get("not_run") or []
+        if probes["degraded"] == "no-database-source":
+            print("\n!! %d of %d invariant probes DID NOT RUN — no database source:"
+                  % (len(names), len(probes.get("probes") or names)))
+            for name in names:
+                print("     %s" % name)
+            print("   These are the only part of this report that reads YOUR data.")
+            print("   Without them this bundle is an inventory of images and shapes: it")
+            print("   cannot say whether the upgrade would break on rows you already have.")
+            print("   Give it a database — any ONE of:")
+            print("     --db-host <host> [--db-port] --db-name <db> --db-user <user>"
+                  "   (managed or external; password via PGPASSWORD or ~/.pgpass)")
+            print("     --db-pod <pod> --db-name <db> --db-user <user>"
+                  "                    (needs create on pods/exec)")
+            print("     kubectl apply -f kit/report/job.yaml"
+                  "                              (runs the DB half in-cluster; no exec)")
+        else:
+            print("\n!! NO INVARIANT PROBES RAN — the probe set could not be loaded.")
+            print("   Probes are the only part of this report that reads YOUR data, and")
+            print("   none of them were even asked. The cluster and database sections were")
+            print("   still collected; probes.json names the remedy.")
+        print("   Sending the bundle anyway is fine and useful — just know what is "
+              "missing from it.")
     if leaks:
         print("\n!! REDACTION FAILED — %d withheld value(s) survived into %s"
               % (len(leaks), archive.name))
@@ -1366,8 +1482,15 @@ def main(argv=None):
                     help="postgres DSN, if you can reach the database directly. Prefer "
                          "VEXA_REPORT_DB_URL: a password on a command line lands in shell "
                          "history and in every process listing on the machine.")
-    ap.add_argument("--db-pod", help="database pod to run psql/pg_dump in via kubectl exec, "
-                                     "when there is no route to Postgres from here")
+    ap.add_argument("--db-host",
+                    help="database host, when Postgres is managed or otherwise outside the "
+                         "cluster. NO PASSWORD ON THE COMMAND LINE: it comes from PGPASSWORD "
+                         "or ~/.pgpass. Prefer this over --db-url and over --db-pod.")
+    ap.add_argument("--db-port", type=int, help="port for --db-host (default: psql's own)")
+    ap.add_argument("--db-pod", help="database pod to run psql/pg_dump in via kubectl exec. "
+                                     "This needs CREATE ON PODS/EXEC, which is a privileged "
+                                     "verb in most estates — try --db-host first, or run "
+                                     "kit/report/job.yaml in-cluster if exec is not grantable")
     ap.add_argument("--db-container")
     ap.add_argument("--db-name")
     ap.add_argument("--db-user")
@@ -1379,9 +1502,12 @@ def main(argv=None):
                     help="count(*) every table instead of reading the planner's estimate. "
                          "Accurate, and a full scan per table; the estimate is the default "
                          "because a report should not become an incident.")
-    ap.add_argument("--probe-set", default=DEFAULT_PROBE_SET,
-                    help="probe set name under kit/report/probes/, a path to one, or "
-                         "'none' (default %s)" % DEFAULT_PROBE_SET)
+    ap.add_argument("--probe-set", default=None,
+                    help="probe set name under kit/report/probes/, a path to one, or 'none' "
+                         "(default %s). A set you NAME and that does not exist is a usage "
+                         "error (exit 2); the default merely missing — this tool is one "
+                         "file and gets copied without its probes/ directory — degrades to "
+                         "absent and the run still produces a bundle." % DEFAULT_PROBE_SET)
     ap.add_argument("--transcription-match", default=TRANSCRIPTION_DEFAULT_MATCH,
                     help="regex matching the transcription workloads whose runtime shape is "
                          "captured (default %r)" % TRANSCRIPTION_DEFAULT_MATCH)
@@ -1394,11 +1520,22 @@ def main(argv=None):
     ap.add_argument("--no-verify-redaction", dest="verify_redaction", action="store_false")
     a = ap.parse_args(argv)
 
+    # argparse cannot see the difference between a default and the same value
+    # typed out, and load_probe_set needs it: a missing DEFAULT degrades, a
+    # missing set the operator NAMED is a usage error.
+    a.probe_set_explicit = a.probe_set is not None
+    if a.probe_set is None:
+        a.probe_set = DEFAULT_PROBE_SET
+
     if a.db_container and not a.db_pod:
         ap.error("--db-container names a container inside --db-pod; give the pod too")
-    if a.db_url and a.db_pod:
-        ap.error("--db-url and --db-pod are two ways to reach one database; pick one, so "
-                 "the report says unambiguously how it was read")
+    if a.db_port and not (a.db_host or a.db_url):
+        ap.error("--db-port needs --db-host")
+    chosen = [flag for flag, value in (("--db-url", a.db_url), ("--db-host", a.db_host),
+                                       ("--db-pod", a.db_pod)) if value]
+    if len(chosen) > 1:
+        ap.error("%s are %d ways to reach one database; pick one, so the report says "
+                 "unambiguously how it was read" % (" and ".join(chosen), len(chosen)))
 
     archive, report, probes, leaks = build(a)
     return render(archive, report, probes, leaks)
