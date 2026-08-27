@@ -49,18 +49,18 @@ Your cluster, your admin, your audit log — there is no path from Vexa into it.
 ## Update the kit
 
 ```bash
-./kit/self-update.sh --check        # cloned layout (step 1's default): what would move
-./kit/self-update.sh               # move it
-
-./vexa-kit/self-update.sh --check   # bootstrap layout, where the kit unpacked to ./vexa-kit
+./vexa-kit/self-update.sh --check   # what would move
+./vexa-kit/self-update.sh           # move it
 ```
 
 Resolves `latest` to a digest, verifies it against your pinned key, swaps the tree atomically. On a signature failure nothing is written and the running tree is untouched.
+
+**Self-update is the bootstrap layout only.** It reads the `.kit-source` record that [`bootstrap.sh`](install#step-1-get-the-kit) writes beside the tree it unpacks, and errors out without one — a tree you cloned with `git` has no such record, and updates with `git pull`.
 
 ## If the channel goes away
 
 Your pinned release keeps running: Argo CD reconciles against digests it has already pulled, so an unreachable channel stops upgrades, not workloads. On our side the channel is a distribution copy — entries, charts and signatures are rebuilt from tagged releases, and the record of what was published is held in git, replicated, independent of the registry. A total loss costs us hours of republishing and costs you nothing: no re-install, no re-pinning, no re-verification.
 
-Also worth knowing: an out-of-band change is **reverted** on the next sync, not merely reported — a permanent local difference belongs in your values. An entry with an incomplete evidence chain carries a `break_glass` record (person, reason, timestamp) your verifier sees before you decide, and refusing all break-glass entries is a supported policy. A release found defective after publication is marked **withdrawn** and stops being promotable; your pinned release keeps running.
+Also worth knowing: an out-of-band change is **reverted** on the next sync, not merely reported — a permanent local difference belongs in your values. An entry with an incomplete evidence chain carries a `break_glass` record (person, reason, timestamp) your verifier sees before you decide, and refusing all break-glass entries is a supported policy — that, like revocation and freshness, is enforced by the PreSync verify gate, which runs only if you installed with [`--verifier-image`](install#step-3-install). A release found defective after publication is marked **withdrawn** and stops being promotable; your pinned release keeps running.
 
 Next: [Verify](verify) · [Support](support)

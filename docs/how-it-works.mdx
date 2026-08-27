@@ -4,7 +4,7 @@ description: "We publish, your cluster pulls and checks, it rolls out or back, a
 ---
 
 1. **We publish** a release to a channel, with its validation evidence.
-2. **Your cluster pulls it.** Argo CD syncs; the PreSync verifier checks the entry against your contract, and Kyverno verifies the signatures with cosign at admission. That is what makes the update safe to roll.
+2. **Your cluster pulls it.** Argo CD syncs; Kyverno verifies the signatures with cosign at admission, and — when you install with [`--verifier-image`](install#step-3-install), which is what turns that gate on — the PreSync verifier checks the entry against your contract before the sync. That is what makes the update safe to roll.
 3. **The cluster rolls it out, or rolls it back.**
 4. **A receipt goes back to the channel**, so we know how it went.
 

@@ -44,8 +44,10 @@ Entries **expire**. A channel nobody has published to goes stale, and your verif
 
 A release found defective is named on a cosign-signed **revocation list** on the channel with a reason and a destination, and your verifier refuses it before the next sync. No list published at all is an **empty** list, not an error. **Your admission controller cannot read this list** — revocation is enforced by the verify gate, not by Kyverno.
 
+Both clauses are enforced by that PreSync verify gate, and **the gate is off unless you install with [`--verifier-image`](install#step-3-install)**.
+
 <Note>
-**Rung.** Both are in the tree and neither has been exercised against a live subscriber yet — [what's proven, and where](tested).
+**Rung.** Neither has been exercised against a live subscriber yet, and the deployed verifier, **v0.1.1, does not check freshness — so nothing enforces expiry inside a cluster today**. [What's proven, and where](tested).
 </Note>
 
 ## Worth knowing
