@@ -1,0 +1,205 @@
+{
+  "main": {
+    "id": "e510be9a32754fe5",
+    "type": "split",
+    "children": [
+      {
+        "id": "4f1830ebe1cfa8df",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "c0859b66295e7a31",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "docs/README.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "README"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "1d5372c90a45aa42",
+    "type": "split",
+    "children": [
+      {
+        "id": "a47e636e59d10724",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "41836c34afc69212",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "22d77ccd75133889",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "1e84c01bad10a615",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "331c810bd7a7f455",
+    "type": "split",
+    "children": [
+      {
+        "id": "c9070a317290dce6",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "96372b470b31da65",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "docs/README.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "34c529e9b7c2c928",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "docs/README.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "1811fbb7bcec39b9",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "13a2c17df0ee875f",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "b991cfe5d5d915cf",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "docs/README.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "41836c34afc69212",
+  "lastOpenFiles": [
+    "publisher/tests/__pycache__/test_verify_gate_injection.cpython-313-pytest-9.0.2.pyc",
+    "publisher/__pycache__/vexa_subscriber.cpython-313.pyc",
+    "publisher/tests/__pycache__/test_subscriber.cpython-313-pytest-9.0.2.pyc",
+    "publisher/__pycache__/vexa_stations.cpython-313.pyc",
+    "publisher/tests/__pycache__/test_stations.cpython-313-pytest-9.0.2.pyc",
+    "publisher/tests/__pycache__/test_station_subscription_gate.cpython-313-pytest-9.0.2.pyc",
+    "publisher/tests/__pycache__/test_station_placement.cpython-313-pytest-9.0.2.pyc",
+    "publisher/tests/__pycache__/test_station.cpython-313-pytest-9.0.2.pyc",
+    "publisher/tests/__pycache__/test_signing_toolchain.cpython-313-pytest-9.0.2.pyc",
+    "publisher/tests/__pycache__/test_report_scope_tier.cpython-313-pytest-9.0.2.pyc",
+    "publisher/tests/__pycache__/test_receipt_sender_chart.cpython-313-pytest-9.0.2.pyc"
+  ]
+}

@@ -406,7 +406,7 @@ by a human, once.
 
 Worth noting for its own sake: the product recorded a full, correct
 `ExitReason` and provenance block. This is precisely the per-reason detail that
-[`Meeting-Failure-Taxonomy`](https://github.com/DmitriyG228/biz/blob/main/graph/sg/Meeting-Failure-Taxonomy.md) (private)
+an internal taxonomy note (private)
 says the aggregate snapshot throws away.
 
 ### S3, first attempt — a default install cannot run a meeting at all

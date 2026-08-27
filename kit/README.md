@@ -2,16 +2,15 @@
 
 **Apache-2.0** (see [LICENSE](LICENSE), [NOTICE](NOTICE) — local copies, because the kit ships as a
 standalone signed tarball; the whole repository is under the same license per
-[ADR-0008](../docs/adr/0008-repository-apache-2.md)). Open on purpose: this is the part that runs
-inside a customer's perimeter, so being readable and modifiable is what makes the "nothing
-proprietary of ours executes in your cluster" claim checkable.
+[ADR-0008](../docs/adr/0008-repository-apache-2.md)). This is the part that runs inside a
+customer's perimeter: readable and modifiable there, line by line.
 
 Bring your own cluster, run this command:
 
 ```
 ./kit/install.sh --provider lke \
   --registry <channel-registry-host> \
-  --channel enterprise-stable \
+  --channel acme-stable \
   --channel-pubkey channel.pub \
   --customer-values my-values.yaml \
   [--registry-ca corporate-ca.pem] [--prod-pin 0.12.24]
@@ -19,28 +18,35 @@ Bring your own cluster, run this command:
 
 What it does, in order: **conformance preflight** (refuses on FAIL) → pinned **Argo CD** → pinned
 **Kyverno** → **admission policy** (digest pinning + channel-signature verification, customer-owned)
-→ the **channel subscription** (ApplicationSet: `enterprise-staging` follows the channel pointer
-automatically; `enterprise-prod` follows a pin **you** move — that pin move is your gate, and
-nothing on the vendor side can move it).
+→ the **channel subscription** (an ApplicationSet with two elements: the staging Application, in
+`vexa-staging`, follows the channel pointer automatically; the production Application, in
+`vexa-prod`, follows a pin **you** move — that pin move is your gate, and nothing on the vendor
+side can move it).
 
-Everything installed is stock upstream plus rendered configuration — the whole kit is readable in
-one sitting, which is what makes "nothing of ours runs in your perimeter" checkable rather than
-promised. Nothing here phones home; verification is offline (see `spec/channel.md` and the
+Everything installed is stock upstream plus rendered configuration; the whole kit is readable in
+one sitting. Nothing here phones home; verification is offline (see `spec/channel.md` and the
 VERIFY.md inside every channel entry).
 
-## The kit rides its own conveyor
+## The kit is delivered the way releases are
 
 The kit is delivered the same way everything else on the channel is: as a versioned, signed OCI
 artifact, pulled by digest and **verified against your pinned key before a single byte is
-unpacked**. There is no `git clone` in the customer path.
+unpacked**.
+
+Two layouts, and which one you are on decides the paths below. `git clone` of this repository is
+the default first step ([install step 1](../docs/install.mdx)) and leaves the kit at `kit/`. The
+signature-verified bootstrap unpacks to `./vexa-kit`, so read `vexa-kit/...` for `kit/...`
+throughout.
 
 ```
-# bootstrap — one command, no repo checkout
-curl -fsSL <bootstrap-url> | bash -s -- \
-  --registry <channel-registry-host> --channel enterprise-stable --pubkey channel.pub
+# the verified path: clone, read, then let bootstrap pull the pinned signed kit
+git clone https://github.com/Vexa-ai/vexa-delivery && cd vexa-delivery
+bash kit/bootstrap.sh --registry <channel-registry-host> \
+  --channel acme-stable --pubkey channel.pub
 
 # later, refresh the kit itself; refuses to touch the tree on a bad signature
-./vexa-kit/self-update.sh          # add --check to see what would move
+./kit/self-update.sh               # cloned layout
+./vexa-kit/self-update.sh          # bootstrap layout — add --check to see what would move
 ```
 
 | Piece | File | Note |

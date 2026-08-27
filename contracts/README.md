@@ -1,7 +1,7 @@
 # Internal station contracts
 
 > **Moved (2026-08-25).** `internal-prod.json` now lives in
-> [`vexa-stations`](https://github.com/DmitriyG228/vexa-stations) (private) at
+> the stations ledger (a private repository) at
 > `channels/vexa-internal/contracts/internal-prod.json`. **This repository
 > carries schemas and examples; contract instances are records and live with
 > the records.** The copy under `station/chart/files/contracts/` is the
@@ -35,7 +35,7 @@ Every consumer takes the contract as a **path argument** — nothing resolves
 `contracts/` implicitly — so point them at the checkout:
 
 ```bash
-STATIONS=~/dev/vexa-stations
+STATIONS=<stations-ledger>
 sh kit/verify/vexa-verify.sh ... \
   --policy "$STATIONS/channels/vexa-internal/contracts/internal-prod.json"
 sh kit/install.sh ... \

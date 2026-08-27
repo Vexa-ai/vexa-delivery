@@ -1,6 +1,6 @@
 # Dogfood, day one — what was proven, and what stopped
 
-**Date:** 2026-08-25 · **Order:** founder pivot, [`Vexa-Delivery.md` § PIVOT](https://github.com/DmitriyG228/biz/blob/main/graph/sg/Vexa-Delivery.md) (private) — *vexa-platform becomes subscriber #1; staging first, prod later by ceremony.*
+**Date:** 2026-08-25 · **Order:** founder pivot, an internal strategy note (private) — *vexa-platform becomes subscriber #1; staging first, prod later by ceremony.*
 
 COMMITMENTS IN THIS RECEIPT — none.
 

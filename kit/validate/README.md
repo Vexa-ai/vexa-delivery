@@ -29,9 +29,9 @@ Add `--install` (with `--provider --registry --channel --channel-pubkey`) to run
 | `install-log.txt` | only when `--install` ran |
 | `station.json` | date, kit revision, Kubernetes server version, provider, namespaces, contract id + sha256, phase verdicts, redaction result |
 
-Send it back to Vexa. It is a configuration contribution, not telemetry: nothing
-is transmitted from your cluster, you look at the file first, and you send it (or
-do not) by hand.
+Send it back to Vexa. It is a configuration contribution you make by hand:
+nothing is transmitted from your cluster, you look at the file first, and you
+decide whether it leaves.
 
 ## Redaction
 

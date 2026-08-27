@@ -5,7 +5,7 @@
 > `policy.internal-estate.yaml` moved out on 2026-08-25 — it was an *instance*
 > (`vexa-internal-estate-2026-08`, our own estate channel), and instances are
 > records. It now lives in
-> [`vexa-stations`](https://github.com/DmitriyG228/vexa-stations) (private) at
+> the stations ledger (a private repository) at
 > `channels/vexa-internal/contracts/policy.internal-estate.yaml`. Every script
 > here takes `--policy <path>`, so pass the path into your checkout; nothing
 > resolves a policy by name.

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" width="900" height="470" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Dev, contract validation, channel. Your cluster pulls with Argo CD, verifies the contract, deploys to staging, a human validates and promotes, production deploys. Optional receipts return.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" width="900" height="470" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Publish, gate, channel. Your cluster pulls, admission verifies, staging deploys, smoke runs with a human in a real meeting, production deploys on your attestation. The station bundle your side chooses to send back returns to the gate.">
   <defs>
     <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" fill="#0D9373"/>
@@ -24,12 +24,12 @@
   <text class="lane" x="560" y="32">YOUR CLUSTER</text>
 
   <rect class="box" x="30" y="55" width="260" height="64"/>
-  <text class="ttl" x="50" y="81">Dev</text>
+  <text class="ttl" x="50" y="81">Publish</text>
   <text class="sub" x="50" y="100">a release is built, images frozen</text>
   <text class="sub" x="50" y="114">and signed</text>
 
   <rect class="box" x="30" y="155" width="260" height="64"/>
-  <text class="ttl" x="50" y="181">Contract validation</text>
+  <text class="ttl" x="50" y="181">Gate</text>
   <text class="sub" x="50" y="200">rendered with your values, checked</text>
   <text class="sub" x="50" y="214">against your contract</text>
 
@@ -41,20 +41,20 @@
   <path class="flow" d="M160 219 V249" marker-end="url(#g)"/>
 
   <rect class="box" x="560" y="55" width="310" height="58"/>
-  <text class="ttl" x="580" y="79">Argo CD</text>
-  <text class="sub" x="580" y="98">pulls, on your schedule</text>
+  <text class="ttl" x="580" y="79">Pull</text>
+  <text class="sub" x="580" y="98">your Argo CD polls, on your schedule</text>
 
   <rect class="box" x="560" y="135" width="310" height="58"/>
-  <text class="ttl" x="580" y="159">Contract verify</text>
-  <text class="sub" x="580" y="178">signature and digests checked inside your cluster</text>
+  <text class="ttl" x="580" y="159">Admission</text>
+  <text class="sub" x="580" y="178">Kyverno checks the signature and digest pinning</text>
 
   <rect class="box" x="560" y="215" width="310" height="58"/>
   <text class="ttl" x="580" y="239">Staging deploy</text>
   <text class="sub" x="580" y="258">automatic</text>
 
   <rect class="box" x="560" y="295" width="310" height="58"/>
-  <text class="ttl" x="580" y="319">A human validates</text>
-  <text class="sub" x="580" y="338">you check it, then promote</text>
+  <text class="ttl" x="580" y="319">Smoke</text>
+  <text class="sub" x="580" y="338">a human in a real meeting, then you promote</text>
 
   <rect class="box" x="560" y="375" width="310" height="58"/>
   <text class="ttl" x="580" y="399">Prod deploy</text>
@@ -69,5 +69,6 @@
   <text class="lbl" x="305" y="279">pull — nothing is pushed</text>
 
   <path class="back" d="M560 404 H345 V340 H165 V325" marker-end="url(#s)"/>
-  <text class="lbl" x="352" y="398">optional receipts — so we know it worked</text>
+  <text class="lbl" x="352" y="384">station bundle —</text>
+  <text class="lbl" x="352" y="398">what your side chooses to send back</text>
 </svg>

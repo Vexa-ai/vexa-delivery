@@ -15,7 +15,7 @@ Internal. The customer-facing half of this is one paragraph in
 | Layer | Holds | If it is lost |
 |---|---|---|
 | `Vexa-ai/vexa-delivery` | the publisher, the kit, the contracts, every receipt | the product |
-| [`DmitriyG228/vexa-stations`](https://github.com/DmitriyG228/vexa-stations) (private) | what was published on each channel, at which sequence, and where each station stands | the record of what we shipped |
+| the stations ledger (a private repository) | what was published on each channel, at which sequence, and where each station stands | the record of what we shipped |
 | `vexa-channel` bucket (Linode, us-sea-1) | entries, charts, kit tarballs, signatures — what `channel.vexa.ai` serves | hours of republish |
 | `<replica-host>:<replica-path>` | a nightly copy of the whole bucket | the shortcut that makes the republish unnecessary |
 | the operator's secrets vault (SOPS + age) | the channel signing keys and every credential | the ability to sign; see custody below |

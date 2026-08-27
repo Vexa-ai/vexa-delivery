@@ -3,7 +3,7 @@
 """vexa-stations — the reducer that writes the channel/station ledger.
 
 The bucket behind `channel.vexa.ai` is a DISTRIBUTION copy. This module writes
-the thing it is a copy of: a git repository (`DmitriyG228/vexa-stations`) that
+the thing it is a copy of: a git repository (a private repository) that
 holds, per channel, what has been published and where every station stands.
 
     channels/<channel>/channel.yaml                 last entry_seq, current

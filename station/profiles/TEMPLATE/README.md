@@ -18,7 +18,7 @@ Application they already own).
 | File | What it carries |
 |---|---|
 | `values-<name>.yaml` | The station chart's values for their environment: `scope` (`cluster` or `namespace`), channel name, chart/signature repositories, registry host and port, the pinned channel public key, their namespaces, whether cluster admission is available, and the floor CronJob's thresholds. See [`station/chart/values.yaml`](../../chart/values.yaml) for every key and its default. |
-| `contract-<name>.json` | The station half of the publish gate: publication mode, required evidence kinds, whether vendor approval is required. Shape: `vexa-internal-prod-2026`, in [`vexa-stations`](https://github.com/DmitriyG228/vexa-stations) (private) at `channels/vexa-internal/contracts/internal-prod.json` — contract instances are records and live there, not here (see [`contracts/README.md`](../../../contracts/README.md)). **We ingest this; we do not author it** — see [`stations/README.md`](../../../stations/README.md). |
+| `contract-<name>.json` | The station half of the publish gate: publication mode, required evidence kinds, whether vendor approval is required. Shape: `vexa-internal-prod-2026`, in the stations ledger (a private repository) at `channels/vexa-internal/contracts/internal-prod.json` — contract instances are records and live there, not here (see [`contracts/README.md`](../../../contracts/README.md)). **We ingest this; we do not author it** — see [`stations/README.md`](../../../stations/README.md). |
 | `README.md` | How the bundle reaches them, their one-time ops asks, who moves the production pin. |
 
 ## Two things to get right

@@ -1,7 +1,7 @@
 # stations — their contract gates our publish
 
 > **The durable record is in
-> [`vexa-stations`](https://github.com/DmitriyG228/vexa-stations) (private)**, at
+> the stations ledger (a private repository)**, at
 > `channels/<channel>/stations/<station>/`. A real customer's directory here is
 > gitignored by design (below), so what lives here is a working copy that
 > exists only on whichever laptop last ran an ingest — which is precisely why
