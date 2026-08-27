@@ -45,6 +45,13 @@ consume all of it without us, forever.
   environments), gated against your own specification before anything reaches you, with a
   support lane behind it.
 
+The channel is two-way, and the return path differs. On the open channel, the way back is
+GitHub issues — plus any station report you choose to share. On a tailored channel, the
+return path is part of the contract: a ticket lane with response commitments, and the
+[telemetry rung you set](docs/telemetry-ladder.mdx) — from silent to signed receipts to
+health counters to diagnostics, never content. The more your side chooses to send back, the
+faster your deployment improves — that bandwidth is what the tailored channel is for.
+
 Same machinery, same kit, same verification on both paths. The software is identical —
 features never move behind a paywall — and switching paths is a subscription change, not a
 migration.
