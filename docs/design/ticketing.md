@@ -81,12 +81,12 @@ operator the full payload before anything is sent.
 arrives as a sev1 ticket, and the approval produces the `break_glass` record inside the signed
 entry (ADR-0002 §5) — the audit trail is the ticket + the entry, never a side channel.
 
-## SLA surface (commitment shape only — numbers are commercial)
+## SLA surface (commitment shape)
 
 Severity binds to **delivery latency**, because with a pull conveyor our release latency is the
 customer's incident path (Attestation-Conveyor): sev1 = hotfix conveyor cadence (same stations,
-shortened soak — never a bypass), sev2 = next scheduled entry, sev3 = advisory/answer. The actual
-numbers are part of the subscription contract and the §9 Q3 pricing decision — not set here.
+shortened soak — never a bypass), sev2 = next scheduled entry, sev3 = advisory/answer. Actual
+numbers are set per subscription, not here.
 
 ## Automated events — founder direction 2026-08-21 (same session)
 
@@ -239,16 +239,15 @@ API)."* This names what the event lanes above actually are: the upstream half of
 
 **Why it compounds:** release N+1 can ship with evidence nobody else can mint OR aggregate —
 "validated in Vexa's prod and in K subscriber stagings across their providers." Every subscriber
-strengthens the promise for all; a later competitor starts with a fleet of zero. This is the
-network effect on evidence — the moat is the loop, not the signature.
+strengthens the promise for all — a network effect on evidence.
 
 **Honesty rule:** fleet evidence enters entries as its own kind, signed by the reporting
 environment's identity (ADR-0004's N-identities), never blended into our receipts. A customer
 who sends nothing back still receives the full down-channel; they simply do not strengthen it.
 
-## Metering — the founder's question: "is that the product we charge against?"
+## Metering
 
-Assessment for the §9 Q3 pricing decision — the decision itself stays open:
+Industry practice, surveyed:
 
 - **Industry practice for BYOC/self-managed is self-reported usage under contract, with
   true-up/audit clauses** — GitLab self-managed usage ping plus an offline usage file for

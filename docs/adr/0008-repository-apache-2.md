@@ -16,10 +16,8 @@ visible once a real subscriber's engineer was about to be given a clone.
 **The boundary protects something we do not distribute.** ADR-0005 itself established that the
 product is not the software — it is the attested release stream, the evidence, the support lane and
 the co-design hours. Applied to the factory, the same argument runs the same way. The factory is
-roughly two thousand lines of configuration and glue around stock Argo CD, Kyverno and cosign. A
-competitor who copied all of it would still have no channel, no receipts, no reference customer and
-no relationship, which is the entire thing being bought. An EE license over that is a fence around
-a field we do not farm.
+configuration and glue around standard components — Argo CD, Kyverno, cosign; the subscription's
+value lies in the operated channel and its evidence, not in this code.
 
 **The boundary costs us the contributor we want.** The kit was made Apache-2.0 precisely so
 operators could shape it — ADR-0005's last consequence anticipates contributions back. But the
@@ -57,8 +55,7 @@ Points 3 and 4 are the load-bearing pair. Point 3 is what makes 4 necessary.
   person with access has already received. There is no undo, and nobody should expect one.
 - **A competitor may lift the factory.** Anyone we grant access to may copy, modify and
   redistribute all of it, including publicly, and owes us nothing but attribution and a NOTICE
-  file. We are accepting this deliberately, on the judgment above about where the moat is. If that
-  judgment is wrong, the cost lands here.
+  file. We accept this deliberately.
 - **Confidentiality is not governed by a license, and this is the trap.** An open license plus a
   private repository reads as safe and is not: the moment we grant a person access, they lawfully
   hold everything in the tree, and Apache-2.0 places no confidentiality obligation on them at all.

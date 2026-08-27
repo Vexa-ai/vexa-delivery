@@ -24,8 +24,8 @@ repo. A customer needs no permission from us to run Vexa. What they subscribe to
 release stream, the support lane and the co-design hours — none of which is software.
 
 That left exactly one EE-licensed thing in a customer's hands: the **kit**. Which is
-configuration around stock Argo CD and Kyverno, is not the moat, and whose readability our own
-customer docs offer as the proof that nothing proprietary of ours executes in their perimeter.
+configuration around stock Argo CD and Kyverno, whose readability our own customer docs offer
+as the proof that nothing proprietary of ours executes in their perimeter.
 PRD §0c anticipated this ("the customer-side component ships open and auditable"); ADR-0001
 under-applied it.
 
