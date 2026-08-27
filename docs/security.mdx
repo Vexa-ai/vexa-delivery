@@ -3,7 +3,7 @@ title: "Security model"
 description: "What runs where, what leaves your cluster, and what you pin."
 ---
 
-**Nothing reaches in: your cluster pulls, verifies with keys you pin, and promotes to production on your attestation.** No Vexa agent, controller or telemetry component runs in your perimeter.
+**Nothing reaches in: your cluster pulls, verifies with keys you pin, and promotes to production on your attestation.** One component of ours runs in your cluster: the PreSync [verifier](verify), a shell script on Alpine with cosign, oras and jq. It reads the channel and its own policy, writes nothing, and is Apache-2.0 like everything else. Nothing else of ours executes there, nothing of ours reaches outward, and nothing proprietary runs at all.
 
 | Component | Controlled by |
 |---|---|

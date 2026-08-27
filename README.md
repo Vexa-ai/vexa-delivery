@@ -79,9 +79,10 @@ migration.
   policy, with keys they pin — independently of the publisher.
 - **Evidence over assertion.** Every entry carries its validation evidence; every promotion
   is attested. All of it is verifiable offline, inside the subscriber's perimeter.
-- **Standard components only.** The subscriber-side footprint is Argo CD, Kyverno and cosign
-  — configuration you can read in an afternoon, running in the subscriber's own perimeter
-  under their own control.
+- **Standard components, plus one of ours.** The subscriber-side footprint is Argo CD,
+  Kyverno and cosign, plus the PreSync verifier — a shell script on Alpine that reads the
+  channel and writes nothing. Configuration and code you can read in an afternoon, running
+  in the subscriber's own perimeter under their own control.
 
 ## Status
 
