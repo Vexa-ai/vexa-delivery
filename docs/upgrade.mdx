@@ -20,10 +20,10 @@ python3 kit/report/vexa_state_report.py --namespace vexa             # writes st
 
 ## Us
 
-1. We build your bundle and give you a channel.
-2. You install Vexa Delivery in your cluster — Argo CD, Kyverno, cosign, the admission policy.
-3. You subscribe to the channel.
-4. It stays current from there, as we publish.
+1. We build your bundle and give you [a channel](channel) — its name, its public key, and a pull-only credential.
+2. You [install Vexa Delivery](install) in your cluster: pinned Argo CD, pinned Kyverno, the [admission policy](verify), after a [preflight](preflight) that fails closed.
+3. You subscribe, and your staging syncs. [Promotion to production](operations) is yours to make.
+4. It stays current from there, as we publish — [how that works](how-it-works), and [what's proven where](tested).
 
 ## How we moved our own production onto the channel
 
