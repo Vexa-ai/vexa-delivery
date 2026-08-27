@@ -481,7 +481,27 @@ def _res(block):
     """
     if not block:
         return None
-    return " · ".join("%s %s" % (k, v) for k, v in sorted(block.items()))
+    return " · ".join("%s %s" % (k, _human_qty(v)) for k, v in sorted(block.items()))
+
+
+def _human_qty(v):
+    """`8138636Ki` -> `7.8Gi`. A node's advertised capacity is reported in Ki
+    down to the kilobyte, which is unreadable and — worse — makes two identical
+    machines look like two different shapes because they differ by 8Ki. Round
+    to one decimal at Gi/Mi so the number is both readable and groupable."""
+    s = str(v)
+    for suffix, scale in (("Ki", 1024), ("Mi", 1024 ** 2), ("Gi", 1024 ** 3)):
+        if s.endswith(suffix):
+            try:
+                n = float(s[: -len(suffix)]) * scale
+            except ValueError:
+                return s
+            if n >= 1024 ** 3:
+                return "%gGi" % round(n / 1024 ** 3, 1)
+            if n >= 1024 ** 2:
+                return "%gMi" % round(n / 1024 ** 2, 1)
+            return s
+    return s
 
 
 def _image_parts(image):
