@@ -1,0 +1,23 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "linode-block-storage-retain",
+        "annotations": {
+          "storageclass.kubernetes.io/is-default-class": "true"
+        }
+      },
+      "provisioner": "linodebs.csi.linode.com",
+      "reclaimPolicy": "Retain",
+      "volumeBindingMode": "Immediate"
+    },
+    {
+      "metadata": {
+        "name": "linode-block-storage"
+      },
+      "provisioner": "linodebs.csi.linode.com",
+      "reclaimPolicy": "Delete",
+      "volumeBindingMode": "Immediate"
+    }
+  ]
+}

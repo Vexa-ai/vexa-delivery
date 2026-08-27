@@ -1,0 +1,59 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "vexa-postgres",
+        "labels": {
+          "helm.sh/chart": "vexa-0.10.4",
+          "app.kubernetes.io/name": "postgresql"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "postgres",
+                "image": "registry.corp.example/mirror/postgres:16.3-alpine",
+                "resources": {
+                  "requests": {
+                    "cpu": "500m",
+                    "memory": "2Gi"
+                  },
+                  "limits": {
+                    "cpu": "2",
+                    "memory": "4Gi"
+                  }
+                },
+                "env": [
+                  {
+                    "name": "POSTGRES_DB",
+                    "value": "vexa"
+                  },
+                  {
+                    "name": "POSTGRES_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "vexa-postgres"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "imagePullSecrets": [
+              {
+                "name": "corp-registry"
+              }
+            ]
+          }
+        }
+      },
+      "status": {
+        "readyReplicas": 1,
+        "availableReplicas": 1
+      }
+    }
+  ]
+}

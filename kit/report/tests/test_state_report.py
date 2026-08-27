@@ -1,23 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the upgrade state reporter.
+"""Unit tests for the environment state reporter.
 
-Fixture-driven and completely offline: the fake `kubectl`, `psql` and `pg_dump`
-in kit/report/tests/bin/ answer out of kit/report/tests/fixtures/<case>/, so the
-whole tool runs end to end with no cluster, no database and no network.
+Fixture-driven and completely offline: the fake `kubectl` in
+kit/report/tests/bin/ answers out of kit/report/tests/fixtures/<case>/, so the
+whole tool runs end to end with no cluster and no network.
 
-What is pinned here is what the docs promise:
+What is pinned here is what the tool promises:
 
-  * REDACTION works on structures and on the pg_dump text, and the leak scan
-    catches a value that survived — naming files, never values;
-  * ABSENT-OVER-ZERO: a cluster that refuses every read produces a report that
-    says so, not one that says the namespace is empty;
-  * PROBE SHAPE: probes run, carry their SQL verbatim, evaluate against their
-    own stated expectation, and are refused before execution if they are not
-    an aggregate count;
+  * IT ONLY READS. `--dry-run` runs with every subprocess call booby-trapped,
+    so "it connects to nothing" is enforced rather than described — and the
+    commands it prints are compared against the ones a real run ACTUALLY
+    issues, recorded by the fake kubectl. A drifting dry run is a lie about
+    safety, so it is a test failure.
+  * THERE IS NO DATABASE. No client, no SQL, no flag that takes a password —
+    checked against the source, so adding one fails the build.
+  * REDACTION works on structures, the leak scan catches a value that survived,
+    and it names counts, never values.
+  * ABSENT OVER ZERO: a cluster that refuses every read produces a report that
+    says so, not one that says the namespace is empty.
+  * ONE FILE, and it is a document a person can read: valid YAML, inside its
+    line budget, with its explanation carried in comments.
   * EXIT CODES: 0 written, 2 usage, 3 redaction leak.
-
-The fake psql also asserts that the session was opened read-only, so the
-read-only claim is tested rather than asserted in a docstring.
 """
 import ast
 import contextlib
@@ -25,9 +28,9 @@ import io
 import json
 import os
 import pathlib
+import re
 import shutil
 import sys
-import tarfile
 import tempfile
 import unittest
 
@@ -36,60 +39,179 @@ sys.path.insert(0, str(HERE.parent))
 
 import vexa_state_report as sr                                          # noqa: E402
 
+try:
+    import yaml
+except ImportError:                                    # the tool needs none
+    yaml = None
+
 BIN = HERE / "bin"
 FIXTURES = HERE / "fixtures"
-
-
-def extract(archive, dest):
-    with tarfile.open(archive) as tar:
-        try:
-            tar.extractall(dest, filter="data")
-        except TypeError:                      # python < 3.12 has no filters
-            tar.extractall(dest)
-    return pathlib.Path(dest) / "state-report"
+SOURCE = (sr.HERE / "vexa_state_report.py").read_text()
 
 
 class Run:
-    """One end-to-end invocation against a fixture directory.
+    """One end-to-end invocation against a fixture directory."""
 
-    `probes_dir=None` runs the tool as if it had been copied somewhere on its
-    own, without its probes/ directory beside it — which is what an operator
-    who scp's one file to a jump box actually does.
-    """
-
-    def __init__(self, case, argv, probes_dir=""):
-        self.case, self.argv, self.probes_dir = case, argv, probes_dir
+    def __init__(self, case, argv=()):
+        self.case, self.argv = case, list(argv)
 
     def __enter__(self):
         self.tmp = tempfile.mkdtemp(prefix="vexa-report-test-")
         self.env = dict(os.environ)
-        self.here = sr.HERE
+        self.log = pathlib.Path(self.tmp) / "kubectl.log"
         os.environ["PATH"] = str(BIN) + os.pathsep + os.environ.get("PATH", "")
         os.environ["VEXA_TEST_FIXTURES"] = str(FIXTURES / self.case)
-        os.environ.pop("VEXA_REPORT_DB_URL", None)
-        if self.probes_dir is None:
-            sr.HERE = pathlib.Path(self.tmp) / "lonely-copy"
-            sr.HERE.mkdir()
+        os.environ["VEXA_TEST_KUBECTL_LOG"] = str(self.log)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            self.code = sr.main(self.argv + ["--out", self.tmp])
+            self.code = sr.main(["--namespace", "vexa", "--out", self.tmp] + self.argv)
         self.out = buf.getvalue()
-        self.archive = pathlib.Path(self.tmp) / "state-report.tar.gz"
-        self.root = extract(self.archive, pathlib.Path(self.tmp) / "x")
+        self.path = pathlib.Path(self.tmp) / sr.OUTPUT_NAME
+        self.text = self.path.read_text() if self.path.is_file() else ""
         return self
 
     def __exit__(self, *exc):
-        sr.HERE = self.here
         os.environ.clear()
         os.environ.update(self.env)
         shutil.rmtree(self.tmp, ignore_errors=True)
         return False
 
-    def json(self, name):
-        return json.loads((self.root / name).read_text())
+    @property
+    def doc(self):
+        return yaml.safe_load(self.text)
 
-    def text(self, name):
-        return (self.root / name).read_text()
+    def commands(self):
+        return [line for line in self.log.read_text().splitlines() if line.strip()]
+
+
+class DryRun:
+    """A --dry-run invocation with every subprocess call booby-trapped.
+
+    The claim is not "it probably does not connect": it is that nothing is
+    executed at all. So `subprocess.run` raises here, and the test fails loudly
+    if the code path ever reaches for a cluster.
+    """
+
+    def __init__(self, argv=()):
+        self.argv = list(argv)
+
+    def __enter__(self):
+        self.tmp = tempfile.mkdtemp(prefix="vexa-report-dry-")
+        self.real = sr.subprocess.run
+
+        def forbidden(*a, **kw):
+            raise AssertionError("--dry-run executed a subprocess: %r" % (a,))
+
+        sr.subprocess.run = forbidden
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                self.code = sr.main(["--namespace", "vexa", "--out", self.tmp,
+                                     "--dry-run"] + self.argv)
+        finally:
+            sr.subprocess.run = self.real
+        self.out = buf.getvalue()
+        return self
+
+    def __exit__(self, *exc):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        return False
+
+    def wrote_nothing(self):
+        return sorted(pathlib.Path(self.tmp).rglob("*")) == []
+
+
+# ── it only reads, and it says so truthfully ────────────────────────────────
+
+
+class TestDryRunTouchesNothing(unittest.TestCase):
+    def test_it_exits_zero_having_executed_nothing_and_written_nothing(self):
+        with DryRun() as r:
+            self.assertEqual(r.code, 0)
+            self.assertTrue(r.wrote_nothing(), "a dry run wrote files")
+
+    def test_it_prints_every_command_and_what_each_one_is_for(self):
+        with DryRun() as r:
+            for _, cmd in sr.cluster_reads(sr.Kube("vexa")):
+                self.assertIn(" ".join(cmd), r.out)
+            self.assertIn("WHAT IT READS", r.out)
+            self.assertIn("state-report.yaml", r.out)
+
+    def test_it_states_the_four_refusals(self):
+        with DryRun() as r:
+            for claim in ("Send anything", "Touch your database",
+                          "Read a Secret or a ConfigMap",
+                          "Copy your configuration wholesale"):
+                self.assertIn(claim, r.out, claim)
+
+
+class TestDryRunMatchesTheRealRun(unittest.TestCase):
+    """The dry run is a safety claim, so it is checked against reality.
+
+    A hand-maintained "here is what it does" list drifts on the first collector
+    somebody adds, and it drifts SILENTLY — which is the exact failure mode this
+    tool exists to refuse. The fake kubectl records what a real run executed;
+    this compares the two sets.
+    """
+
+    def test_a_real_run_issues_exactly_the_commands_dry_run_printed(self):
+        with DryRun() as dry:
+            printed = [" ".join(cmd) for _, cmd in sr.cluster_reads(sr.Kube("vexa"))]
+            for line in printed:
+                self.assertIn(line, dry.out)
+        with Run("healthy") as r:
+            executed = r.commands()
+            self.assertEqual(sorted(set(executed)), sorted(set(printed)),
+                             "the dry run and the real run disagree about what runs")
+            self.assertEqual(len(executed), len(printed),
+                             "a command ran a different number of times than announced")
+
+    def test_every_command_is_a_read(self):
+        with Run("healthy") as r:
+            for line in r.commands():
+                verb = line.split()[1]
+                self.assertIn(verb, ("get", "version"), line)
+
+
+class TestThereIsNoDatabase(unittest.TestCase):
+    """The refusal that would be easiest to erode, pinned against the source."""
+
+    def test_no_database_client_is_invoked_anywhere(self):
+        for token in ("psql", "pg_dump", "pgoptions", "libpq", "postgres://",
+                      "postgresql://"):
+            self.assertNotIn(token, SOURCE.lower(), token)
+
+    def test_no_sql_statement_appears_in_the_source(self):
+        for token in ("select ", "insert ", "pg_catalog", "information_schema"):
+            self.assertNotIn(token, SOURCE.lower(), token)
+
+    def test_no_flag_takes_a_password_or_a_connection(self):
+        flags = [n.value for n in ast.walk(ast.parse(SOURCE))
+                 if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                 and n.value.startswith("--")]
+        self.assertIn("--namespace", flags)              # the scan works
+        for verb in ("--db-url", "--db-host", "--db-pod", "--db-user", "--password",
+                     "--probe-set", "--exec"):
+            self.assertNotIn(verb, flags, verb)
+
+    def test_the_source_imports_nothing_that_can_reach_the_network(self):
+        imported = set()
+        for node in ast.walk(ast.parse(SOURCE)):
+            if isinstance(node, ast.Import):
+                imported.update(a.name for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module or "")
+        for module in ("urllib", "urllib.request", "http", "http.client", "socket",
+                       "smtplib", "ftplib", "requests", "httpx", "ssl", "psycopg2",
+                       "sqlite3", "yaml"):
+            self.assertNotIn(module, imported, module)
+
+    def test_no_flag_offers_to_send_anything(self):
+        flags = [n.value for n in ast.walk(ast.parse(SOURCE))
+                 if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                 and n.value.startswith("--")]
+        for verb in ("--submit", "--send", "--upload", "--destination", "--push"):
+            self.assertNotIn(verb, flags, verb)
 
 
 # ── redaction ───────────────────────────────────────────────────────────────
@@ -124,43 +246,19 @@ class TestRedact(unittest.TestCase):
         self.assertNotIn("", self.removed)
 
 
-class TestRedactText(unittest.TestCase):
-    def test_assignment_and_quoted_option_forms(self):
-        removed = set()
-        out = sr.redact_text(
-            "ALTER ROLE vexa SET app.api_token = 'tok-abc-123456';\n"
-            "OPTIONS (host 'analytics.internal', password 'fdw-secret-9999');\n",
-            removed)
-        self.assertNotIn("tok-abc-123456", out)
-        self.assertNotIn("fdw-secret-9999", out)
-        self.assertIn(sr.REDACTED, out)
-        self.assertIn("analytics.internal", out)      # not a credential; DDL survives
-        self.assertEqual(removed, {"tok-abc-123456", "fdw-secret-9999"})
-
-    def test_ordinary_ddl_is_untouched(self):
-        before = 'CREATE TABLE public.meetings (\n    status character varying(50)\n);\n'
-        self.assertEqual(sr.redact_text(before), before)
-
-
 class TestLeakScan(unittest.TestCase):
-    def test_survivor_is_found_and_reported_by_path_not_value(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = pathlib.Path(d)
-            (root / "sub").mkdir()
-            (root / "sub" / "workloads.json").write_text('{"image": "x:leaky-value-123456"}')
-            hits = sr.scan_for_leaks(root, {"leaky-value-123456"})
-            self.assertEqual([p for p, _ in hits], ["sub/workloads.json"])
-            self.assertTrue(all(isinstance(i, int) for _, i in hits))
+    def test_a_survivor_is_reported_by_index_and_never_by_value(self):
+        hits = sr.scan_text_for_leaks('image: x:leaky-value-123456\n',
+                                      {"leaky-value-123456", "not-present-000000"})
+        self.assertEqual(hits, [0])
+        self.assertTrue(all(isinstance(i, int) for i in hits))
 
     def test_short_values_are_not_scanned(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = pathlib.Path(d)
-            (root / "db.json").write_text('{"database": "vexa"}')
-            self.assertEqual(sr.scan_for_leaks(root, {"vexa"}), [])
+        self.assertEqual(sr.scan_text_for_leaks("namespace: vexa", {"vexa"}), [])
 
 
 class TestEnvAllowlist(unittest.TestCase):
-    def test_reproduction_variables_are_allowed(self):
+    def test_shape_settings_are_allowed(self):
         for name in ("WHISPER_MODEL_SIZE", "DEVICE", "BEAM_SIZE", "LANGUAGE",
                      "WORKERS", "REPLICAS", "COMPUTE_TYPE"):
             self.assertTrue(sr.env_allowed(name), name)
@@ -175,400 +273,263 @@ class TestEnvAllowlist(unittest.TestCase):
             self.assertFalse(sr.env_allowed(name), name)
 
 
-# ── probes ──────────────────────────────────────────────────────────────────
+# ── the YAML writer ─────────────────────────────────────────────────────────
 
 
-class TestProbeGrammar(unittest.TestCase):
-    def test_an_aggregate_count_is_accepted(self):
-        self.assertTrue(sr.check_probe_sql("SELECT count(*) FROM meetings WHERE x = 1;"))
+class TestYamlWriter(unittest.TestCase):
+    """It is hand-written, because the tool is one stdlib-only file. So the
+    quoting rules are tested rather than assumed."""
 
-    def test_a_row_read_is_refused(self):
-        with self.assertRaises(sr.SqlRefusal):
-            sr.check_probe_sql("SELECT * FROM meetings")
+    def test_things_that_would_change_meaning_are_quoted(self):
+        for value in ("0.10.4", "yes", "no", "true", "null", "3", "16.3-alpine",
+                      "a: b", "", " lead"):
+            self.assertTrue(sr._scalar(value).startswith("'"),
+                            "%r was left bare" % value)
 
-    def test_a_write_is_refused(self):
-        for sql in ("DELETE FROM meetings",
-                    "SELECT count(*) FROM meetings; DROP TABLE meetings",
-                    "SELECT count(*) FROM meetings WHERE (SELECT 1 FROM x) IS NOT NULL "
-                    "UNION SELECT 1 -- create index"):
-            with self.assertRaises(sr.SqlRefusal, msg=sql):
-                sr.check_probe_sql(sql)
+    def test_ordinary_words_stay_bare_and_read_as_prose(self):
+        for value in ("vexa", "Linode LKE", "cpu 2 · memory 8Gi", "in-cluster"):
+            self.assertFalse(sr._scalar(value).startswith("'"),
+                             "%r was needlessly quoted" % value)
 
-    def test_every_shipped_probe_passes_its_own_grammar(self):
-        for path in sorted((sr.HERE / "probes").glob("*.json")):
-            doc = json.loads(path.read_text())
-            self.assertTrue(doc.get("probes"), path.name)
-            for probe in doc["probes"]:
-                for field in ("name", "hazard", "expect", "sql", "migration"):
-                    self.assertIn(field, probe, "%s: %s" % (path.name, probe.get("name")))
-                sr.check_probe_sql(probe["sql"])
+    def test_types_survive(self):
+        self.assertEqual(sr._scalar(None), "null")
+        self.assertEqual(sr._scalar(True), "true")
+        self.assertEqual(sr._scalar(4), "4")
 
+    @unittest.skipIf(yaml is None, "PyYAML not installed")
+    def test_a_pathological_document_still_round_trips(self):
+        doc = {"a: b": ["x: y", "yes", "", "- dash", "#hash", "'quote"],
+               "n": {"deep": {"deeper": [{"k": None}]}}, "empty": [], "e2": {}}
+        self.assertEqual(yaml.safe_load("\n".join(sr._yaml(doc))), doc)
 
-class TestExpectation(unittest.TestCase):
-    def test_polarity_is_per_probe_not_a_convention(self):
-        self.assertTrue(sr.evaluate({"equals": 0}, 0))
-        self.assertFalse(sr.evaluate({"equals": 0}, 2))
-        self.assertTrue(sr.evaluate({"equals": 1}, 1))
-        self.assertFalse(sr.evaluate({"equals": 1}, 0))   # a missing index is NOT ok
-        self.assertTrue(sr.evaluate({"at_least": 0}, 418))
+    @unittest.skipIf(yaml is None, "PyYAML not installed")
+    def test_a_folded_long_string_survives_as_one_line_of_text(self):
+        long = ("A ResourceQuota covers cpu or memory here and this sentence is "
+                "deliberately far longer than the fold threshold so that it wraps.")
+        out = yaml.safe_load("\n".join(sr._yaml({"finding": long})))
+        self.assertEqual(out["finding"], long)
+        self.assertTrue(any(line.endswith(">-") for line in sr._yaml({"f": long})))
 
-    def test_a_count_that_was_never_taken_is_unknown_not_passing(self):
-        self.assertIsNone(sr.evaluate({"equals": 0}, None))
-
-
-# ── end to end ──────────────────────────────────────────────────────────────
+    def test_comments_wrap_by_paragraph_not_by_source_line(self):
+        lines = sr.comment("one two three\nfour five six\n\nsecond paragraph")
+        self.assertTrue(all(line.startswith("#") for line in lines))
+        self.assertIn("# one two three four five six", lines)
+        self.assertIn("#", lines)
 
 
+# ── the document a person reads ─────────────────────────────────────────────
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed")
 class TestHealthyRun(unittest.TestCase):
-    ARGV = ["--namespace", "vexa", "--db-pod", "postgres-0",
-            "--db-name", "vexa", "--db-user", "vexa"]
-
-    def test_exit_zero_and_every_section_present(self):
-        with Run("healthy", self.ARGV) as r:
+    def test_it_writes_one_file_and_nothing_else(self):
+        with Run("healthy") as r:
             self.assertEqual(r.code, 0)
-            for name in ("report.json", "workloads.json", "db.json", "schema.sql",
-                         "probes.json", "runtime.json", "README.txt"):
-                self.assertTrue((r.root / name).is_file(), name)
+            written = [p.name for p in pathlib.Path(r.tmp).iterdir()
+                       if p.name != "kubectl.log"]
+            self.assertEqual(written, [sr.OUTPUT_NAME])
+            self.assertIn(str(r.path), r.out)
 
-    def test_workloads_carry_running_digests_and_chart_provenance(self):
-        with Run("healthy", self.ARGV) as r:
-            w = r.json("workloads.json")
-            self.assertEqual(w["kubernetes_server_version"], "v1.28.9")
-            whisper = next(x for x in w["workloads"] if x["name"] == "vexa-whisperlive")
-            self.assertEqual(whisper["chart"]["helm.sh/chart"], "vexa-0.10.4")
-            self.assertEqual(whisper["replicas"], {"desired": 2, "ready": 2, "available": 2})
-            self.assertTrue(whisper["running"][0]["digest"].startswith("sha256:"))
-            # The per-meeting bot pod belongs to no Deployment and must not be
-            # lost — but it is grouped under "(unowned)" rather than under its
-            # own name, because a per-meeting pod is named after the meeting.
-            orphans = w["unowned_running_images"]
+    def test_it_is_a_document_a_person_can_read_end_to_end(self):
+        with Run("healthy") as r:
+            lines = r.text.splitlines()
+            self.assertLess(len(lines), 300, "too long to be read and approved")
+            self.assertGreater(len(lines), 100, "suspiciously thin for a real estate")
+            comments = [line for line in lines if line.startswith("#")]
+            self.assertGreater(len(comments), 30,
+                               "the explanation is supposed to be IN the file")
+            for heading in ("1 · PLATFORM", "2 · VERSIONS AND VALUES", "3 · RESOURCES",
+                            "4 · WIRING", "5 · REGISTRY"):
+                self.assertIn(heading, r.text, heading)
+
+    def test_platform_is_read_by_shape_and_never_by_name(self):
+        with Run("healthy") as r:
+            p = r.doc["platform"]
+            self.assertEqual(p["kubernetes"], "v1.28.9")
+            self.assertEqual(p["distribution"], "Kubernetes")
+            self.assertEqual(p["cloud"], "Linode LKE")
+            self.assertEqual(sum(s["count"] for s in p["node_shapes"]), 3)
+            self.assertNotIn("node-gpu-1", r.text)       # names are not collected
+            self.assertNotIn("12341", r.text)            # nor are instance ids
+            gpu = next(s for s in p["node_shapes"] if s["gpu"])
+            self.assertIn("nvidia.com/gpu 1", gpu["gpu"])
+            self.assertEqual(len(p["volumes"]), 2)
+            self.assertTrue(any("DEFAULT" in c for c in p["storage_classes"]))
+
+    def test_versions_carry_the_digest_actually_running(self):
+        with Run("healthy") as r:
+            whisper = next(w for w in r.doc["workloads"]
+                           if w["name"] == "vexa-whisperlive")
+            self.assertEqual(whisper["chart"], "vexa-0.10.4")
+            self.assertEqual(whisper["replicas"], "2 ready of 2 desired")
+            c = whisper["containers"][0]
+            self.assertEqual(c["tag"], "0.10.4")
+            self.assertTrue(c["running_digest"].startswith("sha256:"))
+            self.assertEqual(c["requests"], "cpu 2 · memory 8Gi · nvidia.com/gpu 1")
+
+    def test_the_per_meeting_bot_is_kept_but_never_named(self):
+        with Run("healthy") as r:
+            orphans = r.doc["running_outside_any_workload"]
             self.assertEqual(list(orphans), ["(unowned)"])
-            self.assertEqual(orphans["(unowned)"][0]["repository"], "vexaai/vexa-bot")
-            self.assertNotIn("meeting-xyz", json.dumps(w))
+            self.assertTrue(orphans["(unowned)"]["bot"].startswith("sha256:"))
+            self.assertNotIn("meeting-xyz", r.text)
 
-    def test_nodes_are_grouped_by_shape_and_not_named(self):
-        with Run("healthy", self.ARGV) as r:
-            nodes = r.json("workloads.json")["nodes"]
-            self.assertEqual(nodes["total"], 3)
-            self.assertEqual(len(nodes["classes"]), 2)
-            gpu = next(c for c in nodes["classes"] if c["gpu"])
-            self.assertEqual(gpu["gpu"]["nvidia.com/gpu"], "1")
-            self.assertNotIn("node-gpu-1", json.dumps(nodes))
-
-    def test_db_reports_the_absent_alembic_table_as_expected_not_broken(self):
-        with Run("healthy", self.ARGV) as r:
-            db = r.json("db.json")
-            self.assertEqual(db["server_version"], "16.3")
-            self.assertEqual(db["size_bytes"], 3221225472)
-            self.assertIsNone(db["migration"]["revisions"])
-            self.assertIn("converges the schema", db["migration"]["note"])
-            self.assertEqual([e["name"] for e in db["extensions"]],
-                             ["pgcrypto", "plpgsql", "uuid-ossp"])
-
-    def test_a_never_analysed_table_is_null_not_zero(self):
-        with Run("healthy", self.ARGV) as r:
-            rows = {t["table"]: t for t in r.json("db.json")["tables"]["rows"]}
-            self.assertEqual(rows["meetings"]["rows"], 418)
-            self.assertIsNone(rows["transcriptions"]["rows"])
-            self.assertIn("never analysed", rows["transcriptions"]["reason"])
-
-    def test_schema_is_ddl_and_its_credentials_are_gone(self):
-        with Run("healthy", self.ARGV) as r:
-            sql = r.text("schema.sql")
-            self.assertIn("CREATE TABLE public.meetings", sql)
-            self.assertNotIn("tok-should-be-redacted-42", sql)
-            self.assertNotIn("fdw-secret-value-9999", sql)
-            self.assertEqual(r.json("report.json")["sections"]["schema.sql"]["source"],
-                             "pg_dump --schema-only")
-
-    def test_probes_ran_carry_their_sql_verbatim_and_are_judged(self):
-        with Run("healthy", self.ARGV) as r:
-            probes = {p["name"]: p for p in r.json("probes.json")["probes"]}
-            dupes = probes["meeting-active-duplicate-keys"]
-            self.assertEqual(dupes["count"], 2)
-            self.assertFalse(dupes["holds"])
-            self.assertIn("SELECT count(*)", dupes["sql"])
-            self.assertIn("HAVING count(*) > 1", dupes["sql"])
-            # the index is absent on a pre-0.12.23 estate: expected 1, got 0
-            self.assertFalse(probes["meeting-active-index-present-and-valid"]["holds"])
-            # a probe that cannot fail is context, not a violation
-            self.assertTrue(probes["meetings-non-terminal-total"]["holds"])
-            self.assertEqual(sorted(r.json("probes.json")["violations"]),
-                             ["meeting-active-duplicate-keys",
-                              "meeting-active-duplicate-rows",
-                              "meeting-active-index-present-and-valid"])
-
-    def test_runtime_captures_the_model_and_device_and_nothing_else(self):
-        with Run("healthy", self.ARGV) as r:
-            rt = r.json("runtime.json")
-            whisper = next(w for w in rt["workloads"] if w["name"] == "vexa-whisperlive")
-            container = whisper["containers"][0]
-            self.assertEqual(container["model"]["value"], "medium")
-            self.assertEqual(container["inference_device"]["value"], "cuda")
-            self.assertEqual(container["gpu_requested"]["nvidia.com/gpu"], "1")
-            self.assertEqual(container["image_tag"], "0.10.4")
-            names = {e["name"] for e in container["env"]}
-            self.assertIn("BEAM_SIZE", names)
-            self.assertIn("LANGUAGE", names)
+    def test_customised_settings_are_captured_and_credentials_are_not(self):
+        with Run("healthy") as r:
+            whisper = next(w for w in r.doc["workloads"]
+                           if w["name"] == "vexa-whisperlive")
+            settings = whisper["containers"][0]["settings"]
+            self.assertEqual(settings["WHISPER_MODEL_SIZE"], "medium")
+            self.assertEqual(settings["DEVICE"], "cuda")
             # allowlist-first: these were never written, not written-then-redacted
-            self.assertNotIn("REDIS_URL", names)
-            self.assertNotIn("MODEL_API_KEY", names)
-            # a valueFrom env records WHERE the value comes from, never the value
-            token = next(e for e in container["env"] if e["name"] == "ADMIN_API_TOKEN")
-            self.assertEqual(token["from"], "secretKeyRef")
-            self.assertNotIn("value", token)
+            self.assertNotIn("REDIS_URL", settings)
+            self.assertNotIn("MODEL_API_KEY", settings)
+            self.assertIn("ADMIN_API_TOKEN (from secretKeyRef)",
+                          whisper["containers"][0]["provided_externally"])
+            for value in ("mk-not-in-the-report-0001", "hunter2please"):
+                self.assertNotIn(value, r.text, value)
 
-    def test_no_excluded_env_value_survives_anywhere_in_the_archive(self):
-        with Run("healthy", self.ARGV) as r:
-            blob = "".join(p.read_text() for p in r.root.rglob("*") if p.is_file())
-            self.assertNotIn("mk-not-in-the-report-0001", blob)
-            self.assertNotIn("hunter2please", blob)
-            self.assertTrue(r.json("report.json")["redaction"]["verified"])
-            self.assertEqual(r.json("report.json")["redaction"]["leaks"], 0)
+    def test_the_quota_finding_is_reported_because_it_broke_a_real_upgrade(self):
+        with Run("healthy") as r:
+            res = r.doc["resources"]
+            self.assertEqual(len(res["quotas"]), 1)
+            self.assertEqual(res["limit_ranges"], [])
+            self.assertEqual(len(res["containers_declaring_no_resources"]), 1)
+            self.assertIn("bot", res["containers_declaring_no_resources"][0])
+            self.assertIn("stops bots being admitted", res["finding"])
 
-    def test_the_report_names_the_source_of_every_section(self):
-        with Run("healthy", self.ARGV) as r:
-            report = r.json("report.json")
-            self.assertEqual(report["tool"], "vexa-state-report")
-            sections = report["sections"]
-            self.assertEqual(sections["workloads.json"]["source"], "kubectl")
-            self.assertEqual(sections["db.json"]["source"], "psql")
-            self.assertEqual(sections["probes.json"]["source"],
-                             "kit/report/probes/v0.12.23.json")
-            self.assertEqual(sections["runtime.json"]["collector"], "collect_runtime")
-            self.assertEqual(len(report["refuses"]), 3)
+    def test_the_finding_is_absent_when_a_limitrange_covers_the_gap(self):
+        # The condition is all three at once. Two of three is not a finding,
+        # and reporting one would train the reader to ignore it.
+        with Run("with-limitrange") as r:
+            self.assertNotIn("finding", r.doc["resources"])
+            self.assertTrue(r.doc["resources"]["limit_ranges"])
+
+    def test_wiring_names_the_database_without_connecting_to_it(self):
+        with Run("healthy") as r:
+            db = r.doc["wiring"]["database"]
+            self.assertEqual(db["where"], "in-cluster")
+            self.assertEqual(db["workload"], "vexa-postgres")
+            self.assertEqual(db["version"], "16.3-alpine")
+            self.assertTrue(any("DATABASE_URL" in a for a in db["addressed_by"]))
+            self.assertTrue(all("not collected" in a or "from " in a
+                                for a in db["addressed_by"]))
+            # a password is not an address, and its value is nowhere
+            self.assertNotIn("POSTGRES_PASSWORD", json.dumps(db))
+
+    def test_an_absent_component_is_a_gap_and_not_a_zero(self):
+        with Run("healthy") as r:
+            redis = r.doc["wiring"]["redis"]
+            self.assertEqual(redis["where"], "external or managed")
+            self.assertIsNone(redis["version"])
+            self.assertIn("a gap, not a zero", redis["note"])
+
+    def test_transcription_says_gpu_or_cpu_and_never_assumes(self):
+        with Run("healthy") as r:
+            t = r.doc["wiring"]["transcription"][0]
+            self.assertEqual(t["workload"], "vexa-whisperlive")
+            self.assertEqual(t["device"], "DEVICE = cuda")
+            self.assertEqual(t["model"], "WHISPER_MODEL_SIZE = medium")
+
+    def test_registry_reachability_is_observed_not_inferred(self):
+        with Run("healthy") as r:
+            reg = r.doc["registry"]
+            self.assertIn("docker.io", reg["registries_referenced"][0])
+            self.assertIsNone(reg["cluster_mirror_config"])
+            self.assertIn("not observable from here", reg["reachability"])
+
+    def test_a_private_registry_is_called_a_mirror_and_not_a_guess(self):
+        with Run("mirrored") as r:
+            reg = r.doc["registry"]
+            self.assertIn("registry.corp.example", reg["reachability"])
+            self.assertIn("mirror or a private registry", reg["reachability"])
+            self.assertEqual(reg["image_pull_credentials"], ["corp-registry"])
+
+    def test_nothing_in_the_document_was_redacted_after_the_fact(self):
+        """Allowlist-first means REDACTED should never need to appear.
+
+        When it does, it is almost always this bug: a field NAMED after secrets
+        (`image_pull_secrets`, `from_secret_or_configmap`) carrying names we
+        meant to keep, emptied by the blunt redaction rule. Two shipped that way
+        and the leak scan caught both. This is the cheap general guard.
+        """
+        with Run("healthy") as r:
+            def walk(node, path="doc"):
+                if isinstance(node, dict):
+                    for k, v in node.items():
+                        walk(v, "%s.%s" % (path, k))
+                elif isinstance(node, list):
+                    for i, v in enumerate(node):
+                        walk(v, "%s[%d]" % (path, i))
+                else:
+                    self.assertNotEqual(node, sr.REDACTED,
+                                        "%s was redacted; rename the key" % path)
+            walk(r.doc)
+
+    def test_the_refusals_and_the_verdict_are_in_the_file_itself(self):
+        with Run("healthy") as r:
+            doc = r.doc
+            self.assertEqual(len(doc["refuses"]), 4)
+            self.assertTrue(doc["redaction"]["verified"])
+            self.assertEqual(doc["redaction"]["leaks"], 0)
+            self.assertGreater(doc["redaction"]["withheld_values"], 0)
+            self.assertEqual(doc["absent"], [])
+            self.assertIn("IT HAS NOT BEEN SENT ANYWHERE", r.text)
 
 
-class TestAbsentSources(unittest.TestCase):
-    """A cluster that refuses every read, and no database at all."""
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class TestAbsentOverZero(unittest.TestCase):
+    """A cluster that refuses every read says so, rather than reporting empty."""
 
-    def test_it_still_exits_zero_and_writes_a_bundle(self):
-        with Run("empty", ["--namespace", "vexa"]) as r:
+    def test_it_still_exits_zero_and_still_writes_the_file(self):
+        with Run("empty") as r:
             self.assertEqual(r.code, 0)
-            self.assertTrue(r.archive.is_file())
+            self.assertTrue(r.path.is_file())
 
-    def test_nothing_is_defaulted_to_zero_or_empty(self):
-        with Run("empty", ["--namespace", "vexa"]) as r:
-            report = r.json("report.json")
-            self.assertEqual(report["sections"]["workloads.json"]["source"], "absent")
-            self.assertEqual(report["sections"]["db.json"]["source"], "absent")
-            self.assertEqual(report["sections"]["schema.sql"]["source"], "absent")
-            self.assertEqual(report["sections"]["runtime.json"]["source"], "absent")
-            self.assertTrue(report["absent"])
-            for row in report["absent"]:
+    def test_every_gap_is_named_with_a_reason(self):
+        with Run("empty") as r:
+            gaps = r.doc["absent"]
+            self.assertTrue(gaps)
+            for row in gaps:
+                self.assertTrue(row["what"], row)
                 self.assertTrue(row["reason"], row)
-                self.assertTrue(row["section"], row)
-            # schema.sql is not written at all rather than written empty
-            self.assertFalse((r.root / "schema.sql").exists())
+            named = " ".join(row["what"] for row in gaps)
+            for what in ("node shapes", "workloads", "storage classes"):
+                self.assertIn(what, named, what)
 
-    def test_probes_are_printed_but_not_run_without_a_database(self):
-        with Run("empty", ["--namespace", "vexa"]) as r:
-            probes = r.json("probes.json")["probes"]
-            self.assertTrue(probes)
-            for p in probes:
-                self.assertIsNone(p["count"])
-                self.assertIsNone(p["holds"])
-                self.assertIn("no database source", p["reason"])
-                self.assertIn("SELECT count(*)", p["sql"])
-            self.assertEqual(r.json("probes.json")["violations"], [])
+    def test_it_stays_inside_the_budget_when_there_is_nothing_to_report(self):
+        with Run("empty") as r:
+            self.assertLess(len(r.text.splitlines()), 200)
 
-    def test_a_transcription_gap_is_absent_and_not_cpu(self):
-        with Run("empty", ["--namespace", "vexa"]) as r:
-            reasons = " ".join(a["reason"] for a in r.json("runtime.json")["absent"])
-            self.assertIn("ABSENT, not 'CPU inference'", reasons)
+    def test_a_section_with_nothing_to_say_is_omitted_rather_than_faked(self):
+        with Run("empty") as r:
+            self.assertNotIn("running_outside_any_workload", r.doc)
 
 
+@unittest.skipIf(yaml is None, "PyYAML not installed")
 class TestRedactionLeakExitsThree(unittest.TestCase):
     def test_a_withheld_value_that_survives_fails_the_run(self):
-        with Run("leaky", ["--namespace", "vexa"]) as r:
+        with Run("leaky") as r:
             self.assertEqual(r.code, 3)
-            self.assertTrue(r.archive.is_file(),
-                            "the bundle is KEPT for inspection; it just must not be sent")
-            redaction = r.json("report.json")["redaction"]
-            self.assertFalse(redaction["verified"])
-            self.assertGreaterEqual(redaction["leaks"], 1)
-            self.assertIn("workloads.json", " ".join(redaction["leaking_files"]))
-            # the verdict names files. It must never name the value.
-            self.assertNotIn("leaky-value-123456", json.dumps(redaction))
+            self.assertTrue(r.path.is_file(),
+                            "the file is KEPT for inspection; it just must not be sent")
+            self.assertFalse(r.doc["redaction"]["verified"])
+            self.assertGreaterEqual(r.doc["redaction"]["leaks"], 1)
+            self.assertIn("DO NOT SEND IT", r.out)
+            # the verdict counts. It must never name the value.
+            self.assertNotIn("leaky-value-123456", r.out)
 
 
 class TestUsageExitsTwo(unittest.TestCase):
-    def test_two_database_transports_at_once_is_a_usage_error(self):
+    def test_no_namespace_is_a_usage_error(self):
         with self.assertRaises(SystemExit) as cm:
-            sr.main(["--namespace", "vexa", "--db-url", "postgres://x/y",
-                     "--db-pod", "postgres-0"])
+            sr.main([])
         self.assertEqual(cm.exception.code, 2)
 
-    def test_a_container_without_its_pod_is_a_usage_error(self):
+    def test_an_unknown_flag_is_a_usage_error(self):
         with self.assertRaises(SystemExit) as cm:
-            sr.main(["--namespace", "vexa", "--db-container", "postgres"])
+            sr.main(["--namespace", "vexa", "--db-host", "db.internal"])
         self.assertEqual(cm.exception.code, 2)
-
-    def test_a_probe_set_the_operator_named_and_that_is_missing_exits_two(self):
-        # They asked for something specific and did not get it. Reporting
-        # absent would answer a question nobody asked.
-        with self.assertRaises(SystemExit) as cm:
-            sr.load_probe_set("v9.9.9-does-not-exist", explicit=True)
-        self.assertEqual(cm.exception.code, 2)
-
-    def test_two_db_transports_at_once_is_a_usage_error(self):
-        for pair in (["--db-url", "postgres://x/y", "--db-host", "db.internal"],
-                     ["--db-host", "db.internal", "--db-pod", "postgres-0"]):
-            with self.assertRaises(SystemExit) as cm:
-                sr.main(["--namespace", "vexa"] + pair)
-            self.assertEqual(cm.exception.code, 2, pair)
-
-    def test_a_port_without_a_host_is_a_usage_error(self):
-        with self.assertRaises(SystemExit) as cm:
-            sr.main(["--namespace", "vexa", "--db-port", "5432"])
-        self.assertEqual(cm.exception.code, 2)
-
-
-class TestLonelyCopyStillReports(unittest.TestCase):
-    """The tool is one file and gets copied without its probes/ directory.
-
-    Regression: that used to raise SystemExit before anything was collected, so
-    a missing DATA FILE cost the operator the whole run — in a tool whose own
-    rule is that a broken section must not. It degrades now.
-    """
-
-    ARGV = ["--namespace", "vexa", "--db-pod", "postgres-0",
-            "--db-name", "vexa", "--db-user", "vexa"]
-
-    def test_it_exits_zero_and_still_writes_the_bundle(self):
-        with Run("healthy", self.ARGV, probes_dir=None) as r:
-            self.assertEqual(r.code, 0)
-            self.assertTrue(r.archive.is_file())
-
-    def test_every_other_section_was_still_collected(self):
-        with Run("healthy", self.ARGV, probes_dir=None) as r:
-            sections = r.json("report.json")["sections"]
-            self.assertEqual(sections["workloads.json"]["source"], "kubectl")
-            self.assertEqual(sections["db.json"]["source"], "psql")
-            self.assertEqual(sections["schema.sql"]["source"], "pg_dump --schema-only")
-            self.assertEqual(sections["probes.json"]["source"], "absent")
-
-    def test_the_probes_section_says_what_to_do_about_it(self):
-        with Run("healthy", self.ARGV, probes_dir=None) as r:
-            probes = r.json("probes.json")
-            reason = " ".join(a["reason"] for a in probes["absent"])
-            self.assertIn("--probe-set", reason)
-            self.assertIn("kit/report/probes/", reason)
-            self.assertEqual(probes["probes"], [])
-
-    def test_the_console_does_not_let_it_pass_quietly(self):
-        with Run("healthy", self.ARGV, probes_dir=None) as r:
-            self.assertIn("NO INVARIANT PROBES RAN", r.out)
-            self.assertIn("reads YOUR data", r.out)
-            # ...and it does not claim a count it does not have
-            self.assertNotIn("0 of 0", r.out)
-
-
-class TestClusterOnlyRunIsLoud(unittest.TestCase):
-    """A run with no database source succeeds and is nearly worthless.
-
-    Every probe reports `not run` in a column that reads as unremarkable, and
-    the probes are the only part of the report that reads the operator's data.
-    Exit stays 0 — a bundle was written and the cluster half is worth sending —
-    but it does not get to be quiet.
-    """
-
-    def test_the_warning_names_every_probe_that_did_not_run(self):
-        with Run("healthy", ["--namespace", "vexa"]) as r:
-            self.assertEqual(r.code, 0)
-            self.assertIn("DID NOT RUN", r.out)
-            self.assertIn("5 of 5", r.out)
-            for name in [p["name"] for p in r.json("probes.json")["probes"]]:
-                self.assertIn(name, r.out)
-
-    def test_it_says_why_it_matters_and_names_all_three_remedies(self):
-        with Run("healthy", ["--namespace", "vexa"]) as r:
-            self.assertIn("only part of this report that reads YOUR data", r.out)
-            self.assertIn("--db-host", r.out)
-            self.assertIn("--db-pod", r.out)
-            self.assertIn("kit/report/job.yaml", r.out)
-
-    def test_the_bundle_carries_the_same_verdict_as_the_console(self):
-        with Run("healthy", ["--namespace", "vexa"]) as r:
-            probes = r.json("probes.json")
-            self.assertEqual(probes["degraded"], "no-database-source")
-            self.assertEqual(len(probes["not_run"]), 5)
-            self.assertEqual(probes["violations"], [])
-
-    def test_a_run_with_a_database_carries_no_such_warning(self):
-        with Run("healthy", ["--namespace", "vexa", "--db-pod", "postgres-0",
-                             "--db-name", "vexa", "--db-user", "vexa"]) as r:
-            self.assertNotIn("DID NOT RUN", r.out)
-            self.assertIsNone(r.json("probes.json").get("degraded"))
-
-
-class TestDatabaseTransports(unittest.TestCase):
-    """Three ways in, and the docs now name the RBAC each one costs."""
-
-    def setUp(self):
-        self.kube = sr.Kube("vexa")
-
-    def test_db_host_puts_no_password_on_the_command_line(self):
-        pg = sr.Postgres(self.kube, host="db.internal", port=5432,
-                         dbname="vexa", user="vexa_report")
-        argv = pg.argv("psql", ["-c", "SELECT count(*) FROM meetings"])
-        self.assertEqual(argv[:9],
-                         ["psql", "-h", "db.internal", "-p", "5432",
-                          "-U", "vexa_report", "-d", "vexa"])
-        self.assertNotIn("exec", argv)
-        # the password reaches psql through the environment, never argv
-        self.assertTrue(all("PGPASSWORD" not in a for a in argv))
-        self.assertEqual(pg.transport, "--db-host")
-
-    def test_db_pod_is_the_only_transport_that_uses_exec(self):
-        exec_free = (sr.Postgres(self.kube, host="db.internal"),
-                     sr.Postgres(self.kube, url="postgres://db/x"))
-        for pg in exec_free:
-            self.assertNotIn("exec", pg.argv("psql", []))
-        pg = sr.Postgres(self.kube, pod="postgres-0")
-        self.assertIn("exec", pg.argv("psql", []))
-        self.assertEqual(pg.transport, "kubectl exec postgres-0")
-
-    def test_every_transport_opens_the_session_read_only(self):
-        for pg in (sr.Postgres(self.kube, host="db.internal"),
-                   sr.Postgres(self.kube, url="postgres://db/x"),
-                   sr.Postgres(self.kube, pod="postgres-0")):
-            self.assertIn("default_transaction_read_only=on", pg.pgoptions)
-
-    def test_no_source_at_all_is_simply_not_configured(self):
-        pg = sr.Postgres(self.kube)
-        self.assertFalse(pg.configured)
-        self.assertIsNone(pg.transport)
-
-
-class TestNoTransmitPath(unittest.TestCase):
-    """The refusal that is easiest to erode, so it is pinned in a test.
-
-    A future edit that adds a submit flag will fail here, which is the point:
-    the promise in the docs is 'it prints a path and stops', and a promise
-    nothing enforces is a plan.
-    """
-
-    def test_the_source_imports_nothing_that_can_reach_the_network(self):
-        tree = ast.parse((sr.HERE / "vexa_state_report.py").read_text())
-        imported = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imported.update(a.name for a in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                imported.add(node.module or "")
-        for module in ("urllib", "urllib.request", "http", "http.client", "socket",
-                       "smtplib", "ftplib", "requests", "httpx", "ssl"):
-            self.assertNotIn(module, imported, module)
-
-    def test_no_flag_offers_to_send_anything(self):
-        tree = ast.parse((sr.HERE / "vexa_state_report.py").read_text())
-        flags = [n.value for n in ast.walk(tree)
-                 if isinstance(n, ast.Constant) and isinstance(n.value, str)
-                 and n.value.startswith("--")]
-        self.assertIn("--namespace", flags)              # the scan works
-        for verb in ("--submit", "--send", "--upload", "--destination", "--push"):
-            self.assertNotIn(verb, flags, verb)
 
 
 if __name__ == "__main__":

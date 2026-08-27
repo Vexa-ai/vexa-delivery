@@ -38,14 +38,15 @@ One fact frames all of it: **almost everything below was run on Linode LKE, most
 
 ## The upgrade reporter
 
-[`kit/report/`](upgrade) is the door for a deployment that already has history. It is **fixture-tested end to end and has never read a real estate.**
+[`kit/report/`](upgrade) is the door for a deployment that already exists. It is **fixture-tested end to end and has never read a real estate.**
 
-| Route | Proven where | Not yet |
+| Claim | Proven where | Not yet |
 |---|---|---|
-| The tool itself | 50 tests against a fake `kubectl`, `psql` and `pg_dump`, where the fixture directory *is* the estate (`make test-report`). The fake `psql` refuses to answer unless the session opened read-only, so the read-only claim is tested rather than asserted | No receipt records a run against a real cluster or a real database |
-| `--db-host` | Fixtures. Tests assert no password reaches the command line and no `exec` is used | A real database |
-| [`job.yaml`](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/report/job.yaml) in-cluster | The manifest and its read-only ServiceAccount and [RBAC](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/report/rbac.yaml) exist and are reviewable | Applied to a cluster in any recorded run |
-| `--db-pod` (`kubectl exec`) | Fixtures. Tests hold it to being the only transport that uses `exec` | A real database |
+| The tool itself | 46 tests against a fake `kubectl`, where the fixture directory *is* the estate (`make test-report`) | No receipt records a run against a real cluster |
+| It only reads | Every command a run issues is recorded by the fake `kubectl` and asserted to be `get` or `version`. A source scan fails the build if a database client, any SQL, or a flag taking a password appears | — |
+| `--dry-run` touches nothing | It runs with `subprocess.run` replaced by a raising stub, and is asserted to write no files | — |
+| `--dry-run` tells the truth | The commands it prints are compared against the ones a real run actually executed. A drifting dry run fails the build | — |
+| Redaction | A withheld value that survives into the report exits `3`, naming the count and never the value. Two fields shipped named after secrets and were emptied by the blunt rule; the leak scan caught both, and a test now guards the whole class | A leak found in a real estate |
 
 ## The channel and its guarantees
 
@@ -73,7 +74,7 @@ One fact frames all of it: **almost everything below was run on Linode LKE, most
 
 - **The station bundle.** [`vexa_validate.py`](install#step-5-send-the-station-bundle-back) writes `station.tar.gz` — your provider profile, your values with every secret-shaped value replaced by `REDACTED`, the contract, and the preflight and smoke receipts. Open it, then send it. That bundle is exactly what a `PROFILE_TESTED=no` line is waiting for.
 - **What broke.** Open an [issue](https://github.com/Vexa-ai/vexa-delivery/issues) with the preflight output and the refusal message. Half the findings on this page arrived that way — from a run that failed, not one that passed.
-- **A patch.** The [reporter](https://github.com/Vexa-ai/vexa-delivery/tree/main/kit/report) takes a new collector as one function and a new hazard probe as one JSON file; a provider profile is one small `profile.env`. Everything is Apache-2.0, inbound and outbound.
+- **A patch.** The [reporter](https://github.com/Vexa-ai/vexa-delivery/tree/main/kit/report) takes a new collector as one function; a provider profile is one small `profile.env`. Everything is Apache-2.0, inbound and outbound.
 
 Commits carry a DCO sign-off — `git commit -s`, name and email your own. The whole of it is in [CONTRIBUTING.md](https://github.com/Vexa-ai/vexa-delivery/blob/main/CONTRIBUTING.md), and it is two things: the license and the sign-off.
 

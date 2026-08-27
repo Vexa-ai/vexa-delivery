@@ -161,12 +161,15 @@ vexa-validate: >-
   individual tools only when you are debugging one leg of it.
 
 vexa-state-report: >-
-  Run it FIRST on a deployment that already has history — which is nearly every
-  deployment — before anyone plans an upgrade to it. It reads the cluster and
-  the database and writes a bundle of plain files describing the state an
-  upgrade has to survive, so the rehearsal happens on a copy of your estate
-  rather than on a guess at it. It reads and never writes, and it prints a path
-  and stops: nothing transmits.
+  Run it FIRST on a deployment that already exists. It is a read-only `kubectl
+  get` sweep of one namespace — no database connection, no `pods/exec`, no
+  credentials of any kind, no SQL — and it writes one commented YAML file
+  describing the shape of that environment: platform and version, how the
+  database and transcription are wired, per-container resources against the
+  namespace's quotas and LimitRanges, the image digests actually running, the
+  settings you have customised, and where your images come from. Start with
+  `--dry-run`, which connects to nothing and prints every command it would run.
+  It prints a path and stops: nothing transmits.
 
 kit-bootstrap: >-
   The first command a new station ever runs: fetch the kit tree from the

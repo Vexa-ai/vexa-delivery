@@ -1,0 +1,41 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "vexa"
+      },
+      "spec": {
+        "ingressClassName": "nginx",
+        "tls": [
+          {
+            "secretName": "vexa-tls",
+            "hosts": [
+              "vexa.internal.example"
+            ]
+          }
+        ],
+        "rules": [
+          {
+            "host": "vexa.internal.example",
+            "http": {
+              "paths": [
+                {
+                  "path": "/",
+                  "pathType": "Prefix",
+                  "backend": {
+                    "service": {
+                      "name": "vexa-api-gateway",
+                      "port": {
+                        "number": 8000
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

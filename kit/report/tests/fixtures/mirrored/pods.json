@@ -68,8 +68,8 @@
         "containerStatuses": [
           {
             "name": "whisperlive",
-            "image": "vexaai/whisperlive:0.10.4",
-            "imageID": "docker-pullable://vexaai/whisperlive@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "image": "registry.corp.example/mirror/vexaai/whisperlive:0.10.4",
+            "imageID": "docker-pullable://registry.corp.example/mirror/vexaai/whisperlive@sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "restartCount": 0
           }
         ]
@@ -117,8 +117,8 @@
         "containerStatuses": [
           {
             "name": "admin-api",
-            "image": "vexaai/admin-api:0.10.4",
-            "imageID": "docker-pullable://vexaai/admin-api@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "image": "registry.corp.example/mirror/vexaai/admin-api:0.10.4",
+            "imageID": "docker-pullable://registry.corp.example/mirror/vexaai/admin-api@sha256:2222222222222222222222222222222222222222222222222222222222222222",
             "restartCount": 3
           }
         ]
@@ -141,8 +141,8 @@
         "containerStatuses": [
           {
             "name": "bot",
-            "image": "vexaai/vexa-bot:0.10.4",
-            "imageID": "docker-pullable://vexaai/vexa-bot@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            "image": "registry.corp.example/mirror/vexaai/vexa-bot:0.10.4",
+            "imageID": "docker-pullable://registry.corp.example/mirror/vexaai/vexa-bot@sha256:3333333333333333333333333333333333333333333333333333333333333333",
             "restartCount": 0
           }
         ]
@@ -194,8 +194,8 @@
         "containerStatuses": [
           {
             "name": "postgres",
-            "image": "postgres:16.3-alpine",
-            "imageID": "docker-pullable://postgres@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+            "image": "registry.corp.example/mirror/postgres:16.3-alpine",
+            "imageID": "docker-pullable://registry.corp.example/mirror/postgres@sha256:4444444444444444444444444444444444444444444444444444444444444444",
             "restartCount": 0
           }
         ]
