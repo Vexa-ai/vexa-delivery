@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "namespace-quota"
+      },
+      "spec": {
+        "hard": {
+          "requests.cpu": "20",
+          "requests.memory": "64Gi",
+          "pods": "80"
+        }
+      },
+      "status": {
+        "hard": {
+          "requests.cpu": "20",
+          "requests.memory": "64Gi",
+          "pods": "80"
+        },
+        "used": {
+          "requests.cpu": "2600m",
+          "requests.memory": "10496Mi",
+          "pods": "4"
+        }
+      }
+    }
+  ]
+}

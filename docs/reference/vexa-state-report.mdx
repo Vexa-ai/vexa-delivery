@@ -10,67 +10,85 @@ Source: `kit/report/vexa_state_report.py` · audience: customer
 
 ## When you use this
 
-Run it FIRST on a deployment that already has history — which is nearly every deployment — before anyone plans an upgrade to it. It reads the cluster and the database and writes a bundle of plain files describing the state an upgrade has to survive, so the rehearsal happens on a copy of your estate rather than on a guess at it. It reads and never writes, and it prints a path and stops: nothing transmits.
+Run it FIRST on a deployment that already exists. It is a read-only `kubectl get` sweep of one namespace — no database connection, no `pods/exec`, no credentials of any kind, no SQL — and it writes one commented YAML file describing the shape of that environment: platform and version, how the database and transcription are wired, per-container resources against the namespace's quotas and LimitRanges, the image digests actually running, the settings you have customised, and where your images come from. Start with `--dry-run`, which connects to nothing and prints every command it would run. It prints a path and stops: nothing transmits.
 
 ## Usage
 
 Emitted from `python3 kit/report/vexa_state_report.py --help`.
 
 ```text
-usage: vexa-state-report [-h] --namespace NAMESPACE [--kubeconfig KUBECONFIG] [--context CONTEXT]
-                         [--out OUT] [--db-url DB_URL] [--db-host DB_HOST] [--db-port DB_PORT]
-                         [--db-pod DB_POD] [--db-container DB_CONTAINER] [--db-name DB_NAME]
-                         [--db-user DB_USER] [--alembic-table ALEMBIC_TABLE] [--exact-row-counts]
-                         [--probe-set PROBE_SET] [--transcription-match TRANSCRIPTION_MATCH]
-                         [--sql-timeout-ms SQL_TIMEOUT_MS] [--verify-redaction]
+usage: vexa-state-report [-h] --namespace NAMESPACE [--dry-run] [--kubeconfig KUBECONFIG]
+                         [--context CONTEXT] [--out OUT]
+                         [--transcription-match TRANSCRIPTION_MATCH] [--verify-redaction]
                          [--no-verify-redaction]
 
-vexa-state-report — what is running here, before you upgrade it.
+vexa-state-report — the shape of your setup, so what we ship fits it.
 
-STEP ONE FOR ANY DEPLOYMENT THAT HAS HISTORY, which is nearly all of them. An
-operator runs this against their existing estate — a month old or three years
-old, one release behind or six — and gets a bundle of plain files describing
-the state an upgrade has to survive. They read it. They send it by hand. We
-reproduce that state on a throwaway environment, rehearse THEIR upgrade against
-it until it is green, and publish the rehearsed upgrade as the first entry of
-their channel with the evidence attached.
+A READ-ONLY `kubectl get` SWEEP OF ONE NAMESPACE, WRITTEN TO ONE FILE. No
+database connection, no `pods/exec`, no credentials of any kind, no SQL.
 
-    workloads.json   images + digests, replicas, resources, chart labels,
-                     Kubernetes version, node classes (instance type, GPU)
-    db.json          engine + version, migration revision, extensions,
-                     per-table row counts, total size
-    schema.sql       DDL only — no rows, ever
-    probes.json      named invariant probes for known upgrade hazards, each
-                     one an aggregate count, each one's SQL printed verbatim
-    runtime.json     the transcription reproduction surface: model, size,
-                     device, GPU-vs-CPU, allowlisted non-secret env
-    report.json      tool version, date, the source of every section above,
-                     and the redaction verdict
+You already run Vexa. This reads the shape of the environment it runs in, so
+the bundle we build for you works with what you already have and asks for
+nothing you do not. If you are on 0.10, that is what tells us you are ready
+for 0.12.
+
+ONE FILE, AND THAT IS THE DESIGN. `state-report.yaml`. Not a directory, not an
+archive, nothing to extract. The person who has to approve this before it
+leaves their perimeter must read ALL of it, and a pile of JSON files is a
+cross-referencing exercise rather than a read. YAML because the reader is a
+Kubernetes engineer who reads it all day, and because it carries comments — so
+the explanation of each section sits above the section instead of in a second
+document that can drift from it.
+
+WHAT IT COLLECTS, and the list is complete:
+
+  1. PLATFORM     Kubernetes or OpenShift, its version, the cloud or distro
+                  underneath, the node shapes available to schedule on, and
+                  the storage this cluster offers
+  2. WIRING       which components exist and how they are connected — the
+                  database and transcription especially: in-cluster or
+                  external, how each is addressed, versions, GPU or CPU
+  3. RESOURCES    requests and limits per container, plus the namespace's
+                  ResourceQuotas and LimitRanges. This is not decoration: a
+                  quota-controlled namespace stopped a subscriber's bot pods
+                  being admitted, because they declare no resources of their
+                  own and no LimitRange supplied a default
+  4. VERSIONS     the image tags and digests ACTUALLY running, so the jump is
+                  known exactly rather than assumed
+  5. VALUES       the settings this deployment has customised, so what we ship
+                  does not overwrite a deliberate choice
+  6. REGISTRY     whether images come from Docker Hub or through a mirror —
+                  reported as observed, never as inferred
+
+NEVER COLLECTED: schema, rows, row counts, SQL of any kind, transcripts,
+meeting content, credentials. The database appears here only as a COMPONENT —
+engine, version, in-cluster or external, how it is addressed, its resources —
+and every one of those facts is read from the cluster, never by connecting.
 
 THREE REFUSALS, and they are the design rather than caveats on it.
 
 1. IT DOES NOT TRANSMIT. There is no --submit, no destination flag and no
-   endpoint constant anywhere in this file. It writes an archive, prints the
+   endpoint constant anywhere in this file. It writes one file, prints its
    path, and stops. What leaves the perimeter leaves because a human read it
    and sent it.
 
-2. IT DOES NOT WRITE. Every cluster read is `kubectl get -o json`. Every
-   database session is opened with `default_transaction_read_only=on`, so the
-   server refuses a write even if this program had a bug that attempted one,
-   and every probe is checked against an aggregate-count-only grammar before
-   it goes near a connection.
+2. IT DOES NOT WRITE, AND IT DOES NOT CONNECT. Every call is `kubectl get -o
+   json` or `kubectl version -o json`. No other verb: no exec, no apply, no
+   patch, no delete, no port-forward, no logs. There is no database client in
+   this file and no flag that would take a password.
 
-3. IT CARRIES NO CONTENT. No rows, no meetings, no transcripts, no
-   participants — the schema dump is DDL, the counts are integers, and there
-   is no field anywhere below that could hold a customer's data. Environment
-   capture is ALLOWLIST-FIRST: a variable is excluded unless its name matches
-   the reproduction allowlist, so redaction is the second net and not the only
-   one.
+3. IT CARRIES NO CONTENT. There is no field anywhere below that could hold a
+   customer's data, because nothing here reads any. Settings capture is
+   ALLOWLIST-FIRST: a variable is excluded unless its name matches the
+   allowlist, so redaction is the second net and not the only one. Secret and
+   ConfigMap VALUES are never read; a `valueFrom` records only that the
+   deployment expects one. Node names, service addresses and ingress
+   hostnames are not collected either — they are inventory, not shape.
 
 ABSENT OVER ZERO, everywhere. A source that could not be read is recorded as
 absent with a reason. It is never defaulted to zero or to an empty list: zero
-is a claim, and a fabricated zero in a document whose entire purpose is to let
-somebody else rebuild your environment is worse than a stated gap.
+is a claim, and a fabricated zero in a document whose whole purpose is to say
+what somebody already has is worse than a stated gap.
 
 ────────────────────────────────────────────────────────────────────────────
 ADDING A COLLECTOR — this file expects to be edited by people we have never met
@@ -85,88 +103,97 @@ So a collector is deliberately small and self-contained:
 
     def collect_thing(ctx):
         '''One paragraph: what this is for and what it refuses.'''
-        out = {"source": "kubectl"}
+        out = {}
         doc, err = ctx.kube.get("things")
         if doc is None:
-            return ctx.absent_section(out, "things", err)   # absent, not zero
+            return ctx.absent(out, "things", err)      # absent, not zero
         out["things"] = [...]
         return out
 
-...and then one line in COLLECTORS at the bottom of this file. That is the
-whole contract:
+...and then one line in SECTIONS at the bottom of this file, with the comment a
+reader will see above it in the YAML. That is the whole contract:
 
-  * take `ctx`, return a dict, and put `"source"` in it;
-  * the dict IS the file — `("things.json", collect_thing)` writes it;
+  * take `ctx`, return a dict, and it becomes one block of state-report.yaml;
   * never raise to say "nothing here". Record absent with a reason. If you do
     raise, the driver names your collector, keeps every other section, and the
     report says which one failed — a broken collector must not cost an
     operator their whole run;
   * if you saw a value you decided not to write down, put it in
-    `ctx.withheld`. The redaction self-check scans the finished archive for
-    everything in that set, so an allowlist you extended stays checkable.
-
-Release-specific hazards are DATA, not code: add a JSON file under
-kit/report/probes/ rather than a function. See probes/README.md.
+    `ctx.withheld`. The redaction self-check scans the finished document for
+    everything in that set, so an allowlist you extended stays checkable;
+  * BUDGET IS A FEATURE. This file is read end to end by somebody deciding
+    whether to send it. Prefer one compact line to five nested ones; say each
+    fact once. Roughly 150-250 lines, comments included, is the shape;
+  * ONE TEST FOR WHETHER IT BELONGS: is it one of the six things above? Node
+    shapes, quotas, ingress class, resource limits, GPU-vs-CPU, image digests,
+    replica counts, allowlisted non-secret settings — yes. Anything describing
+    their data — no, and no amount of usefulness changes that.
 ────────────────────────────────────────────────────────────────────────────
 
-    python3 kit/report/vexa_state_report.py --namespace vexa \
-        [--db-host db.internal --db-name vexa --db-user vexa]
+    python3 kit/report/vexa_state_report.py --namespace vexa [--dry-run]
 
-Three ways to reach the database, in the order you should try them. `--db-host`
-(managed, external, or port-forwarded; the password comes from PGPASSWORD or
-~/.pgpass, never from argv). `--db-pod`, which runs psql inside the pod and
-therefore needs `create` on `pods/exec` — a privileged verb, declared as such
-in docs/upgrade.mdx. Or `kubectl apply -f kit/report/job.yaml`, which
-runs the database half from inside the cluster with a read-only ServiceAccount
-and no exec at all. With none of them the cluster half is still collected and
-the run still succeeds — but every probe reports `not run`, and the tool says
-so loudly, because the probes are the only part of this report that reads your
-data.
-
-Exit codes: 0 written · 2 usage · 3 redaction leak (the bundle is kept for
-inspection and must not be sent). A missing default probe set, an unreadable
-resource and an absent database are NOT usage errors: they degrade to `absent`
-with a reason and still write a bundle.
+Exit codes: 0 written · 2 usage · 3 redaction leak (the file is kept so it can
+be inspected and reported, and it must not be sent). An unreadable resource is
+NOT a usage error: it degrades to `absent` with a reason and still writes.
 
 options:
   -h, --help            show this help message and exit
   --namespace NAMESPACE
                         the namespace the Vexa workloads run in
+  --dry-run             print every kubectl command a real run would issue and what it would
+                        write, then exit 0 having connected to nothing and written nothing. Paste
+                        it into a change ticket.
   --kubeconfig KUBECONFIG
   --context CONTEXT
-  --out OUT             where state-report.tar.gz is written
-  --db-url DB_URL       postgres DSN, if you can reach the database directly. Prefer
-                        VEXA_REPORT_DB_URL: a password on a command line lands in shell history
-                        and in every process listing on the machine.
-  --db-host DB_HOST     database host, when Postgres is managed or otherwise outside the cluster.
-                        NO PASSWORD ON THE COMMAND LINE: it comes from PGPASSWORD or ~/.pgpass.
-                        Prefer this over --db-url and over --db-pod.
-  --db-port DB_PORT     port for --db-host (default: psql's own)
-  --db-pod DB_POD       database pod to run psql/pg_dump in via kubectl exec. This needs CREATE ON
-                        PODS/EXEC, which is a privileged verb in most estates — try --db-host
-                        first, or run kit/report/job.yaml in-cluster if exec is not grantable
-  --db-container DB_CONTAINER
-  --db-name DB_NAME
-  --db-user DB_USER
-  --alembic-table ALEMBIC_TABLE
-                        the migration-revision table to read (default alembic_version). A Vexa
-                        estate has none — its schema converges from SQLAlchemy metadata — and its
-                        absence is reported, not treated as an error.
-  --exact-row-counts    count(*) every table instead of reading the planner's estimate. Accurate,
-                        and a full scan per table; the estimate is the default because a report
-                        should not become an incident.
-  --probe-set PROBE_SET
-                        probe set name under kit/report/probes/, a path to one, or 'none' (default
-                        v0.12.23). A set you NAME and that does not exist is a usage error (exit
-                        2); the default merely missing — this tool is one file and gets copied
-                        without its probes/ directory — degrades to absent and the run still
-                        produces a bundle.
+  --out OUT             a directory to write state-report.yaml into, or a filename to write
+                        (default: the current directory)
   --transcription-match TRANSCRIPTION_MATCH
                         regex matching the transcription workloads whose runtime shape is captured
                         (default 'whisper|transcri|asr|diariz|stt')
-  --sql-timeout-ms SQL_TIMEOUT_MS
-                        server-side statement_timeout for every query (default 30000)
-  --verify-redaction    re-extract the finished archive and refuse to finish if a withheld value
-                        survived (default; exit 3)
+  --verify-redaction    scan the finished report and refuse to finish if a withheld value survived
+                        (default; exit 3)
   --no-verify-redaction
+
+what this is, in one sentence
+
+  A read-only `kubectl get` sweep of one namespace, written to one file. No
+  database connection, no pods/exec, no credentials of any kind, no SQL.
+
+why we ask for it
+
+  You already run Vexa. This reads the shape of the environment it runs in, so
+  what we build for you works with what you already have and asks for nothing
+  you do not. If you are on 0.10, that is what tells us you are ready for 0.12.
+
+what it collects
+
+  1 platform    Kubernetes or OpenShift, version, cloud, node shapes, storage
+  2 wiring      which components exist and how they are connected — database
+                and transcription especially: in-cluster or external, how each
+                is addressed, versions, GPU or CPU
+  3 resources   requests and limits per container, and the namespace's
+                ResourceQuotas and LimitRanges
+  4 versions    image tags and digests actually running
+  5 values      the settings this deployment has customised
+  6 registry    Docker Hub or a mirror — as observed, never inferred
+
+what you get
+
+  state-report.yaml — one file, roughly 150-250 lines, every block carrying a
+  plain-English comment above it. No directory, no archive, nothing to extract.
+  You are meant to read all of it before any of it is sent.
+
+what it enforces, and where to check it
+
+  reads only    every call is `kubectl get -o json` or `kubectl version -o json`
+                (Kube — there is no other verb anywhere in the file)
+  no database   no client, no SQL, no flag that takes a password; engine and
+                version are read from what is running (collect_wiring)
+  allowlist     a setting is dropped unless its name matches the allowlist, and
+                dropped anyway if it matches password|token|secret|key|apikey
+                (env_allowed)
+  no transmit   no --submit, no destination, no network client
+
+  START WITH --dry-run. It connects to nothing and prints every command it would
+  run, and what it would write.
 ```

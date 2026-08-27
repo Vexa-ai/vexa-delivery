@@ -1,0 +1,49 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "vexa-api-gateway"
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "ports": [
+          {
+            "name": "http",
+            "port": 8000,
+            "protocol": "TCP"
+          }
+        ]
+      }
+    },
+    {
+      "metadata": {
+        "name": "vexa-postgres"
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "ports": [
+          {
+            "name": "postgres",
+            "port": 5432,
+            "protocol": "TCP"
+          }
+        ]
+      }
+    },
+    {
+      "metadata": {
+        "name": "vexa-whisperlive"
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "ports": [
+          {
+            "name": "ws",
+            "port": 9090,
+            "protocol": "TCP"
+          }
+        ]
+      }
+    }
+  ]
+}

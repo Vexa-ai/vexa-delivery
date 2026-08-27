@@ -1,0 +1,48 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "data-vexa-postgres-0"
+      },
+      "spec": {
+        "storageClassName": "linode-block-storage-retain",
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "resources": {
+          "requests": {
+            "storage": "30Gi"
+          }
+        }
+      },
+      "status": {
+        "phase": "Bound",
+        "capacity": {
+          "storage": "30Gi"
+        }
+      }
+    },
+    {
+      "metadata": {
+        "name": "vexa-models"
+      },
+      "spec": {
+        "storageClassName": "linode-block-storage-retain",
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "resources": {
+          "requests": {
+            "storage": "10Gi"
+          }
+        }
+      },
+      "status": {
+        "phase": "Bound",
+        "capacity": {
+          "storage": "10Gi"
+        }
+      }
+    }
+  ]
+}

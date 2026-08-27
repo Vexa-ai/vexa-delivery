@@ -18,9 +18,10 @@ test-smoke:
 test-validate:
 	@if [ -d kit/validate/tests ]; then python3 -m unittest discover -s kit/validate/tests -v; else echo "kit/validate/tests not present yet; skipped"; fi
 
-# The upgrade state reporter, end to end against fake kubectl/psql/pg_dump in
-# kit/report/tests/bin. No cluster, no database, no network — the fixture
-# directory IS the estate.
+# The environment state reporter, end to end against a fake kubectl in
+# kit/report/tests/bin. No cluster and no network — the fixture directory IS
+# the estate — and the fake kubectl logs every invocation, so --dry-run is
+# checked against what a real run actually executes.
 test-report:
 	@if [ -d kit/report/tests ]; then python3 -m unittest discover -s kit/report/tests -v; else echo "kit/report/tests not present yet; skipped"; fi
 

@@ -6,6 +6,10 @@ VEXA_TEST_FIXTURES names a directory. `get <resource>` prints
 <fixtures>/<resource>.json; a resource with no fixture file exits 1 the way a
 real kubectl does when RBAC refuses it, which is the case the tool must
 degrade through rather than crash on.
+
+VEXA_TEST_KUBECTL_LOG, when set, records every invocation one per line. That is
+how the test suite checks that `--dry-run` prints the commands a real run
+ACTUALLY issues, rather than a second, drifting description of them.
 """
 import json
 import os
@@ -14,6 +18,11 @@ import sys
 
 FIX = pathlib.Path(os.environ["VEXA_TEST_FIXTURES"])
 argv = sys.argv[1:]
+
+log = os.environ.get("VEXA_TEST_KUBECTL_LOG")
+if log:
+    with open(log, "a") as fh:
+        fh.write(" ".join(["kubectl"] + argv) + "\n")
 
 # strip global flags the tool may pass
 while argv and argv[0] in ("--kubeconfig", "--context"):
@@ -35,15 +44,6 @@ if argv and argv[0] == "get":
         sys.exit(1)
     sys.stdout.write(path.read_text())
     sys.exit(0)
-
-if argv and argv[0] == "exec":
-    # `kubectl exec -n ns pod [-c c] -- env PGOPTIONS=... psql ...`
-    tail = argv[argv.index("--") + 1:] if "--" in argv else []
-    while tail and (tail[0] == "env" or "=" in tail[0]):
-        tail = tail[1:]
-    if not tail:
-        sys.exit(1)
-    os.execvp(tail[0], tail)
 
 sys.stderr.write("fake kubectl: unhandled %s\n" % json.dumps(argv))
 sys.exit(1)
