@@ -12,7 +12,7 @@ cosign verify-blob --key channel.pub \
   --bundle entry.json.sigstore.json --new-bundle-format entry.json
 ```
 
-**2 — The evidence bundle is intact.** Recompute the sha256 of every file in `evidence/` and compare to `entry.json` — a five-line script in `VERIFY.md`. A mismatch is a rejection.
+**2 — The evidence bundle is intact.** Recompute the sha256 of every file in `evidence/` and compare to `entry.json` — a nine-line script in `VERIFY.md`. A mismatch is a rejection.
 
 **3 — The source provenance is real.** Proves the source archive was built from the stated public repository at the stated commit, attested by the build platform's identity, not Vexa's word.
 
@@ -30,9 +30,12 @@ cosign verify-blob-attestation \
 **5 — The images carry the channel signature.** Same check your admission layer runs on every pod, same key; signatures live in the registry in the legacy format, with no transparency-log entry.
 
 ```bash
+COSIGN_REPOSITORY=channel.vexa.ai/vexa/channel/acme-stable/signatures \
 cosign verify --key channel.pub --insecure-ignore-tlog=true \
   channel.vexa.ai/vexa/channel/acme-stable/<image>@sha256:<digest>
 ```
+
+`COSIGN_REPOSITORY` is what points cosign at the signature repository instead of alongside the image; without it the command returns `no signatures found`. It is the same value your `install.sh --signature-repository` carries, and the entry's own `VERIFY.md` fills it in for you.
 
 ## On a PLATFORM ESTATE entry
 

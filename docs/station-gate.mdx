@@ -7,7 +7,7 @@ description: "Your specification, checked before a release reaches you — and a
 
 It is **one file with named sections** — profile, values, contract, receipts — each carrying the sha256 of its own text in a manifest at the foot. The checks below are the same checks they always were, expressed against sections instead of archive members.
 
-## Ingest, then gate — nine checks
+## Ingest, then gate — ten checks
 
 - **S1 report shape** — exactly one YAML document, a mapping, `schema_version: 1`, and under the size a person could have read before sending it. (There is no archive, so there is nothing to traverse out of: this is the same question in the new shape.)
 - **S2 completeness** — every section role this report *kind* requires is present and non-empty.
@@ -15,9 +15,10 @@ It is **one file with named sections** — profile, values, contract, receipts �
 - **S4 no plaintext secrets** — each section is parsed back into its own format (values as YAML, profile as an env file) and scanned for secret-shaped keys with real values, plus credential patterns anywhere in the bytes: PEM private keys, `sk-`, `ghp_`, `AKIA…`, `AIza…`, `xox…`, JWTs, `client-key-data`.
 - **S5 render** — `helm template` succeeds with your values over the chart defaults.
 - **S6 resources** — every container, init containers included, declares cpu **and** memory, requests **and** limits.
-- **S7 no hostPath** — nothing mounts a host path outside the tenancy your station declared.
+- **S7 no hostPath** — no workload mounts a hostPath volume, at all. There is no permitted path and no exception.
 - **S8 digest-pinned** — every image reference ends in `@sha256:`.
 - **S9 contract** — every `require:` item is matched by evidence this release produced, or explicitly waived.
+- **S10 report scope** — the report does not exceed the telemetry rung your own contract declares. This is us enforcing your policy against ourselves: you can read the packager and see it cannot collect above its rung, but only this check proves we would not **keep** a report that did. A contract with no `report_scope` is refused here as well as locally. See [the telemetry ladder](telemetry-ladder).
 
 Exit `0` on pass, **`3` on refusal**, dated report either way. A refusal prints file, line and rule — never the value — so it is safe to paste into a ticket. A second run the same day rotates the earlier report aside rather than overwriting it.
 
@@ -43,10 +44,17 @@ Item names are **your** vocabulary; the gate matches strings and refuses what it
 ## Sending it back
 
 ```bash
-python3 kit/validate/vexa_validate.py --customer-values my-values.yaml --submit
+export VEXA_CHANNEL_USER=<your-station> VEXA_CHANNEL_PASS=<your credential>
+
+python3 kit/validate/vexa_validate.py --namespace vexa-staging \
+  --customer-values my-values.yaml \
+  --contract ./contract.yaml --station <your-station> \
+  --submit --submit-dry-run          # prints the payload path; sends nothing
 ```
 
-Validates the report against `report.v1` and against your contract's `report_scope` before anything leaves, prints the path so you can open it first, and pushes with **your own** credential — scoped to your station's path and nothing else. The document validated is the document sent; there is no second payload assembled beside it. It returns `submitted: channel.vexa.ai/vexa/stations/<you>/bundles:<date>` and a `digest:`. **The digest is your receipt** — it names the exact bytes that left your perimeter, and we can be held to it.
+Drop `--submit-dry-run` to send. `--station` must equal the path segment the edge allows you to write to, which is the same string as `VEXA_CHANNEL_USER`. The destination comes from your contract's `report_scope.destination` — and that block is **commented out** in [`kit/verify/policy.example.yaml`](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/verify/policy.example.yaml), so uncomment it before your first submit: a contract with no `report_scope` is refused before a byte moves, at both ends.
+
+It validates the report against `report.v1` and against your contract's `report_scope` before anything leaves, prints the path so you can open it first, and pushes with **your own** credential — scoped to your station's path and nothing else. The document validated is the document sent; there is no second payload assembled beside it. It returns `submitted: channel.vexa.ai/vexa/stations/<you>/bundles:<date>` and a `digest:`. **The digest is your receipt** — it names the exact bytes that left your perimeter, and we can be held to it.
 
 Each gated publish then writes a report naming the station, the chart and its `sha256`, your values section's `sha256`, your contract id and hash, the evidence file, the timestamp, and a verdict per check and per contract item. Generated, not written.
 
