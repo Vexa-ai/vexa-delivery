@@ -32,7 +32,7 @@ Entries **expire**. A channel nobody has published to goes stale, and your verif
 A release found defective is named on a cosign-signed **revocation list** on the channel with a reason and a destination, and your verifier refuses it before the next sync. No list published at all is an **empty** list, not an error. **Your admission controller cannot read this list** — revocation is enforced by the verify gate, not by Kyverno.
 
 <Note>
-**Rung.** Both land with [PR #38](https://github.com/Vexa-ai/vexa-delivery/pull/38), open at the time of writing.
+**Rung.** Both are in the tree and neither has been exercised against a live subscriber yet — [what's proven, and where](tested).
 </Note>
 
 ## Worth knowing
