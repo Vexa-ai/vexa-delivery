@@ -1,0 +1,79 @@
+---
+title: "Acceptance"
+description: "What must be true before a version of this software is distributed to anyone."
+---
+
+**Nothing ships to a channel or gets announced until every line below has been executed and its output kept.** Each row names the command that proves it. "We checked" is not a proof; a pasted verdict is.
+
+Every failure this contract exists to prevent has already happened once, on 2026-08-27, in the hour before the first send.
+
+## 1 · The stranger test
+
+The only test that matters: someone with no relationship to us follows the docs and gets a working deployment.
+
+| Prove | How |
+|---|---|
+| A fresh anonymous clone works | `git clone https://github.com/Vexa-ai/vexa-delivery` from a machine with no credentials |
+| Every command in `install.mdx` and `upgrade.mdx` runs **as written**, in order, on a cluster provisioned for the purpose | run them; keep the console |
+| The reporter runs read-only against a real deployment | `python3 kit/report/vexa_state_report.py --namespace <ns> --dry-run`, then for real |
+| Preflight passes on that cluster | `python3 kit/preflight/vexa_preflight.py --namespace <ns>` → `VERDICT: PASS`, exit 0 |
+| The subscription installs and syncs | `./kit/install.sh …` with the exact flags the docs print — including every flag the docs omit at your peril |
+
+**A command that needs a flag the docs do not show has failed this section**, even if it works when you add the flag. The reader does not have your shell history.
+
+## 2 · Docs are true of the code
+
+| Prove | How |
+|---|---|
+| Every flag shown exists, spelled as shown | `--help` on each tool, diffed against the docs |
+| Every exit code stated matches the source | grep the exit paths |
+| Every verdict promised is the verdict produced | run the command and read the last line — a doc that promises `FAIL` and delivers `PASS` costs more than a missing page |
+| Every component the docs say runs, runs after the documented install | check the cluster, not the intent |
+| Every number cites a measurement in the tree or a receipt | no figure survives without a source |
+| Generated pages regenerate clean on **CI's interpreter** | `python3 docs/gen-cli-reference.py --check` under the version `.github/workflows/ci.yml` pins |
+
+## 3 · The channel serves what the repo says
+
+| Prove | How |
+|---|---|
+| The published kit is built from the tag being announced | pull it, unpack it, `diff -r` against the tree |
+| Its digest matches what the entry names | `oras pull` and compare |
+| Its signature verifies **against the real channel key, by someone who is not the publisher** | `cosign verify --key channel.pub …` |
+| Every subscriber channel carries the version being announced | list the tags |
+
+**A stale kit in a live channel is a shipped defect**, not a housekeeping item: the docs describe one artifact and the subscriber receives another.
+
+## 4 · Honesty
+
+| Prove | How |
+|---|---|
+| [What's proven, and where](/tested) reflects this version | every row's evidence link resolves and says what the row says |
+| No claim exceeds its evidence | anything unproven carries a Rung note naming what is missing |
+| Every known gap is listed with its issue | the gaps table, not a private list |
+| Nothing describes a service that is not running | grep the docs for what we wish were true |
+
+## 5 · Nothing leaks
+
+| Prove | How |
+|---|---|
+| No customer names, hostnames or identifiers | `grep -riE '<customer tokens>'` across the tree, including receipts and generated pages |
+| No private repository paths, no personal namespaces, no local machine paths | the same sweep — this class is separate from customer tokens and was missed by three earlier sweeps that only looked for the first |
+| No credentials, keys or `.env` files beyond examples | pattern sweep for PEM blocks, `AKIA`, `ghp_`, `sk-` |
+| No editor or build state | `git ls-files` for `.obsidian`, caches, backups |
+
+## 6 · Gates
+
+All green, on CI's interpreter, in one run:
+
+```bash
+make test
+python3 docs/check-docs.py
+python3 docs/gen-cli-reference.py --check
+cd docs && npx mint validate && npx mint broken-links
+```
+
+**A red gate is a stop, not a note.** On 2026-08-27 twenty commits landed past a docs gate that had been failing since the morning, because the failure was familiar.
+
+## What this does not cover
+
+Smoke with a human in a real meeting has never completed on any platform, so it is not yet a gate — it is the first thing that becomes one when it passes. Provider coverage beyond Linode LKE is the same: the contract requires the stranger test on *a* cluster, not on every cluster, and [what's proven, and where](/tested) carries the difference.
