@@ -42,8 +42,6 @@ Nine checks, fails closed, every finding names its remedy. See [Preflight](prefl
 
 Idempotent. Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. Production appears only with `--prod-pin <version>` — moving that pin is your gate. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster. Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-signed test registry, `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift). (*Station bundle* here means the machinery chart Vexa publishes into your cluster; the `station.tar.gz` of step 5 is the return leg, travelling the other way.)
 
-**Set your transcription endpoint before step 4.** The example values file does not carry one, and a cluster that is Synced and Healthy still cannot dispatch a bot until `transcriptionServiceUrl` and `transcriptionServiceToken` are set in `my-values.yaml` — [what's proven, and where](tested#install-and-adoption).
-
 ## Step 4 — Smoke, with a human in a real meeting
 
 ```bash
