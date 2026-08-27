@@ -26,11 +26,21 @@ location. Generate it, deliver it, do not commit it.
 ## Their first hour
 
     python3 kit/preflight/vexa_preflight.py --namespace <namespace>
+    export VEXA_CHANNEL_PASS=<their pull credential>
     bash kit/install.sh --provider <provider> \
         --registry <registry> --channel <channel-name> \
-        --channel-pubkey channel.pub --customer-values customer-values.yaml
+        --channel-pubkey channel.pub --customer-values customer-values.yaml \
+        --registry-user <their account> \
+        --signature-repository <registry>/vexa/channel/<channel-name>/signatures \
+        --verifier-image <verifier image ref>
     python3 kit/smoke/vexa_smoke.py --namespace <namespace> \
         --customer-values customer-values.yaml --flows
+
+Every flag in the second command is load-bearing. Without `--registry-user` Argo CD's
+repo-server gets a 401 and the subscription never syncs; without `--signature-repository`
+the installer strips the repository line from the admission policy and Kyverno reports
+`no signatures found` on correctly signed images; without `--verifier-image` the PreSync
+contract gate is never installed.
 
 The smoke receipt from the third command is the acceptance record.
 
