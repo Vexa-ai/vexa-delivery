@@ -3,7 +3,7 @@
 **Signed, pull-only delivery channels for self-hosted software.**
 
 Your cluster stays yours. vexa-delivery keeps a self-hosted deployment current through a
-channel your cluster pulls from — the open channel, or your private channel: every entry is
+channel your cluster pulls from — the open channel, or a private channel: every entry is
 digest-pinned and cosign-signed, verified
 inside your perimeter against keys you pin, rolled automatically on staging, and promoted
 to production only under your own attestation. The publisher holds no access to your
@@ -23,7 +23,7 @@ cloud production.
 1. **Bring your own cloud** — k8s, GCloud, AWS, OpenShift. A namespace in a cluster, or an
    entire fresh one.
 2. **Install Vexa Delivery.**
-3. **Set it to consume the public images — or your private channel.**
+3. **Set it to consume the public images — or a private channel.**
 4. **Cluster running, self-updating on new images published.**
 
 Already running Vexa? Start at [docs/upgrade](docs/upgrade.mdx).
@@ -45,17 +45,17 @@ charts and code in the open repositories.
 - **The open channel** delivers those public releases exactly as published — digest-pinned,
   signed, pulled from Docker Hub — so a self-hosted deployment stays current automatically.
   Community support.
-- **Your private channel** is operated with us for your company: releases arrive
+- **A private channel** is operated with us for your company: releases arrive
   attestation-complete with the full evidence set (gate reports, station verdicts from real
   environments), gated against your own specification before anything reaches you, with a
   support lane behind it.
 
 The channel is two-way, and the return path differs. On the open channel, the way back is
-GitHub issues — plus any station report you choose to share. On your private channel, the
+GitHub issues — plus any station report you choose to share. On a private channel, the
 return path is part of the contract: a ticket lane with response commitments, and the
 [telemetry rung you set](docs/telemetry-ladder.mdx) — from silent to receipts to health
 counters to diagnostics, never content. The more your side chooses to send back, the faster
-your deployment improves — that bandwidth is what your private channel is for.
+your deployment improves — that bandwidth is what a private channel is for.
 
 The software is identical on both paths, and switching paths is a subscription change, not a
 migration.

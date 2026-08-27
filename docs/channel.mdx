@@ -5,7 +5,7 @@ description: "Where your releases live, who may pull them, and how your credenti
 
 **A private OCI repository on `channel.vexa.ai` carrying signed entries, the digest-pinned Helm chart, image signatures, the kit, and a `current` pointer.** Your staging follows `current`; your production follows a pin only you move. Mirroring the whole channel into your own registry is first-class — the guarantees are in the signatures and digests, not the transport.
 
-| | **The open channel** | **Your private channel** |
+| | **The open channel** | **A private channel** |
 |---|---|---|
 | Who is on it | Many subscribers of one estate **shape** — an OpenShift-bank shape, an AKS shape, a generic shape such as `acme-stable` | One customer |
 | What it carries | The standard bundle for that shape | Releases gated by that customer's contract |
