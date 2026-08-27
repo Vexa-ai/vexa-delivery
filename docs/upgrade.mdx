@@ -5,35 +5,25 @@ description: "You already run Vexa: tell us your setup, get a bundle that fits i
 
 **You already run Vexa. Tell us about your setup and we give you a bundle that works with what you already have.** If you're on 0.10, that means you're ready for 0.12. ([Install](install) is the other door — a cluster with nothing in it yet.)
 
-## What we need to see
+## You
 
-Your environment and configuration — the shape a bundle has to fit.
-
-- **Your platform** — Kubernetes or OpenShift, which version, which cloud.
-- **How the pieces are connected** — database and transcription: in-cluster or external, how each is addressed, which versions, and whether transcription runs on GPU or CPU.
-- **What constrains the namespace** — resources and limits, quotas and LimitRanges, the node shapes you have.
-- **What you run today** — image tags and the digests actually running, which names the jump.
-- **What you have customised** — the values you set, so a bundle never overwrites a deliberate choice.
-- **What you can reach** — Docker Hub directly, or only a mirror.
-
-## The report
-
-`kubectl get` across one namespace, written to plain files.
+1. Run the report generator.
+2. Read the YAML file it writes.
+3. Send it to us by email.
 
 ```bash
+git clone https://github.com/Vexa-ai/vexa-delivery
+cd vexa-delivery
 python3 kit/report/vexa_state_report.py --namespace vexa --dry-run   # the commands it will run
-python3 kit/report/vexa_state_report.py --namespace vexa
+python3 kit/report/vexa_state_report.py --namespace vexa             # writes state-report.yaml
 ```
 
-`summary.txt` is the whole report in plain English. Read it, then send the archive.
+## Us
 
-The script is Apache-2.0 like everything here — if it misses something in your environment, patch it and send a PR.
-
-## What happens after
-
-Your channel is set up for the shape the report describes. Its first entry is the current release with its evidence attached; the channel is private to you, and its contents are Apache-2.0 like everything else. Your staging pulls it, you check it in a real meeting, and you promote to production yourself. After that you stay current automatically — each release checked against your configuration before it reaches you.
-
-Vexa converges its own schema when it starts, so your database stays a matter between you and your DBA.
+1. We build your bundle and give you a channel.
+2. You install Vexa Delivery in your cluster — Argo CD, Kyverno, cosign, the admission policy.
+3. You subscribe to the channel.
+4. It stays current from there, as we publish.
 
 ## How we moved our own production onto the channel
 
