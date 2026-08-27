@@ -7,9 +7,12 @@ description: "Where your releases live, who may pull them, and how your credenti
 
 | | **The open channel** | **A private channel** |
 |---|---|---|
-| Who is on it | Many subscribers of one estate **shape** — an OpenShift-bank shape, an AKS shape, a generic shape such as `acme-stable` | One customer |
-| What it carries | The standard bundle for that shape | Releases gated by that customer's contract |
-| Credentials | Per subscriber, independently revocable | Per subscriber |
+| What it answers | keep me current with what upstream publishes | I need something upstream does not have yet |
+| What it carries | the latest open-source release, exactly as published | that fix, built into your channel — and sent upstream as a pull request, so you converge back rather than carrying a fork |
+| Who is on it | many subscribers of one estate **shape** — an OpenShift-bank shape, an AKS shape, a generic shape such as `acme-stable` | one customer |
+| Gating | the standard bundle for that shape | rendered with your values, checked against your contract |
+| Support | community | a ticket lane with response commitments |
+| Credentials | per subscriber, independently revocable | per subscriber |
 
 The default is the open channel of your shape. Sharing one shares nothing else: your credential reads your channel only, your values never leave your cluster, your pin is yours.
 
