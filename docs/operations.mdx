@@ -9,10 +9,10 @@ description: "Day-2: how updates arrive, your production gate, rollback, break-g
 
 ```bash
 kubectl -n argocd patch applicationset vexa-channel-subscription --type=json \
-  -p '[{"op":"replace","path":"/spec/generators/0/list/elements/1/position","value":"0.12.24"}]'
+  -p '[{"op":"replace","path":"/spec/generators/0/list/elements/1/position","value":"0.12.23"}]'
 ```
 
-The pin is the release's chart version (`0.12.24`, no `v` prefix); staging holds `*`, the newest entry on your channel. That is the whole promotion ceremony — one change, in your cluster, in your window. Admission verification runs again in production regardless.
+The pin is the release's chart version (`0.12.23`, no `v` prefix); staging holds `*`, the newest entry on your channel. That is the whole promotion ceremony — one change, in your cluster, in your window. Admission verification runs again in production regardless.
 
 ## Before an upgrade, on a deployment with history
 
@@ -33,7 +33,7 @@ The same field, the same patch, the previous version:
 
 ```bash
 kubectl -n argocd patch applicationset vexa-channel-subscription --type=json \
-  -p '[{"op":"replace","path":"/spec/generators/0/list/elements/1/position","value":"0.12.23"}]'
+  -p '[{"op":"replace","path":"/spec/generators/0/list/elements/1/position","value":"0.12.22"}]'
 ```
 
 Entries never disappear and digests are immutable, so what you go back to is byte-identical to what you ran. **It rolls back code, not data** — one step back is safe because each release reads the previous release's schema; two steps back is a restore. **Check the migration notes** in the release's evidence bundle first.

@@ -20,6 +20,8 @@ The fake psql also asserts that the session was opened read-only, so the
 read-only claim is tested rather than asserted in a docstring.
 """
 import ast
+import contextlib
+import io
 import json
 import os
 import pathlib
@@ -48,23 +50,36 @@ def extract(archive, dest):
 
 
 class Run:
-    """One end-to-end invocation against a fixture directory."""
+    """One end-to-end invocation against a fixture directory.
 
-    def __init__(self, case, argv):
-        self.case, self.argv = case, argv
+    `probes_dir=None` runs the tool as if it had been copied somewhere on its
+    own, without its probes/ directory beside it — which is what an operator
+    who scp's one file to a jump box actually does.
+    """
+
+    def __init__(self, case, argv, probes_dir=""):
+        self.case, self.argv, self.probes_dir = case, argv, probes_dir
 
     def __enter__(self):
         self.tmp = tempfile.mkdtemp(prefix="vexa-report-test-")
         self.env = dict(os.environ)
+        self.here = sr.HERE
         os.environ["PATH"] = str(BIN) + os.pathsep + os.environ.get("PATH", "")
         os.environ["VEXA_TEST_FIXTURES"] = str(FIXTURES / self.case)
         os.environ.pop("VEXA_REPORT_DB_URL", None)
-        self.code = sr.main(self.argv + ["--out", self.tmp])
+        if self.probes_dir is None:
+            sr.HERE = pathlib.Path(self.tmp) / "lonely-copy"
+            sr.HERE.mkdir()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.code = sr.main(self.argv + ["--out", self.tmp])
+        self.out = buf.getvalue()
         self.archive = pathlib.Path(self.tmp) / "state-report.tar.gz"
         self.root = extract(self.archive, pathlib.Path(self.tmp) / "x")
         return self
 
     def __exit__(self, *exc):
+        sr.HERE = self.here
         os.environ.clear()
         os.environ.update(self.env)
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -389,10 +404,141 @@ class TestUsageExitsTwo(unittest.TestCase):
             sr.main(["--namespace", "vexa", "--db-container", "postgres"])
         self.assertEqual(cm.exception.code, 2)
 
-    def test_an_unknown_probe_set_names_the_ones_that_exist(self):
+    def test_a_probe_set_the_operator_named_and_that_is_missing_exits_two(self):
+        # They asked for something specific and did not get it. Reporting
+        # absent would answer a question nobody asked.
         with self.assertRaises(SystemExit) as cm:
-            sr.load_probe_set("v9.9.9-does-not-exist")
-        self.assertIn("v0.12.23", str(cm.exception))
+            sr.load_probe_set("v9.9.9-does-not-exist", explicit=True)
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_two_db_transports_at_once_is_a_usage_error(self):
+        for pair in (["--db-url", "postgres://x/y", "--db-host", "db.internal"],
+                     ["--db-host", "db.internal", "--db-pod", "postgres-0"]):
+            with self.assertRaises(SystemExit) as cm:
+                sr.main(["--namespace", "vexa"] + pair)
+            self.assertEqual(cm.exception.code, 2, pair)
+
+    def test_a_port_without_a_host_is_a_usage_error(self):
+        with self.assertRaises(SystemExit) as cm:
+            sr.main(["--namespace", "vexa", "--db-port", "5432"])
+        self.assertEqual(cm.exception.code, 2)
+
+
+class TestLonelyCopyStillReports(unittest.TestCase):
+    """The tool is one file and gets copied without its probes/ directory.
+
+    Regression: that used to raise SystemExit before anything was collected, so
+    a missing DATA FILE cost the operator the whole run — in a tool whose own
+    rule is that a broken section must not. It degrades now.
+    """
+
+    ARGV = ["--namespace", "vexa", "--db-pod", "postgres-0",
+            "--db-name", "vexa", "--db-user", "vexa"]
+
+    def test_it_exits_zero_and_still_writes_the_bundle(self):
+        with Run("healthy", self.ARGV, probes_dir=None) as r:
+            self.assertEqual(r.code, 0)
+            self.assertTrue(r.archive.is_file())
+
+    def test_every_other_section_was_still_collected(self):
+        with Run("healthy", self.ARGV, probes_dir=None) as r:
+            sections = r.json("report.json")["sections"]
+            self.assertEqual(sections["workloads.json"]["source"], "kubectl")
+            self.assertEqual(sections["db.json"]["source"], "psql")
+            self.assertEqual(sections["schema.sql"]["source"], "pg_dump --schema-only")
+            self.assertEqual(sections["probes.json"]["source"], "absent")
+
+    def test_the_probes_section_says_what_to_do_about_it(self):
+        with Run("healthy", self.ARGV, probes_dir=None) as r:
+            probes = r.json("probes.json")
+            reason = " ".join(a["reason"] for a in probes["absent"])
+            self.assertIn("--probe-set", reason)
+            self.assertIn("kit/report/probes/", reason)
+            self.assertEqual(probes["probes"], [])
+
+    def test_the_console_does_not_let_it_pass_quietly(self):
+        with Run("healthy", self.ARGV, probes_dir=None) as r:
+            self.assertIn("NO INVARIANT PROBES RAN", r.out)
+            self.assertIn("reads YOUR data", r.out)
+            # ...and it does not claim a count it does not have
+            self.assertNotIn("0 of 0", r.out)
+
+
+class TestClusterOnlyRunIsLoud(unittest.TestCase):
+    """A run with no database source succeeds and is nearly worthless.
+
+    Every probe reports `not run` in a column that reads as unremarkable, and
+    the probes are the only part of the report that reads the operator's data.
+    Exit stays 0 — a bundle was written and the cluster half is worth sending —
+    but it does not get to be quiet.
+    """
+
+    def test_the_warning_names_every_probe_that_did_not_run(self):
+        with Run("healthy", ["--namespace", "vexa"]) as r:
+            self.assertEqual(r.code, 0)
+            self.assertIn("DID NOT RUN", r.out)
+            self.assertIn("5 of 5", r.out)
+            for name in [p["name"] for p in r.json("probes.json")["probes"]]:
+                self.assertIn(name, r.out)
+
+    def test_it_says_why_it_matters_and_names_all_three_remedies(self):
+        with Run("healthy", ["--namespace", "vexa"]) as r:
+            self.assertIn("only part of this report that reads YOUR data", r.out)
+            self.assertIn("--db-host", r.out)
+            self.assertIn("--db-pod", r.out)
+            self.assertIn("kit/report/job.yaml", r.out)
+
+    def test_the_bundle_carries_the_same_verdict_as_the_console(self):
+        with Run("healthy", ["--namespace", "vexa"]) as r:
+            probes = r.json("probes.json")
+            self.assertEqual(probes["degraded"], "no-database-source")
+            self.assertEqual(len(probes["not_run"]), 5)
+            self.assertEqual(probes["violations"], [])
+
+    def test_a_run_with_a_database_carries_no_such_warning(self):
+        with Run("healthy", ["--namespace", "vexa", "--db-pod", "postgres-0",
+                             "--db-name", "vexa", "--db-user", "vexa"]) as r:
+            self.assertNotIn("DID NOT RUN", r.out)
+            self.assertIsNone(r.json("probes.json").get("degraded"))
+
+
+class TestDatabaseTransports(unittest.TestCase):
+    """Three ways in, and the docs now name the RBAC each one costs."""
+
+    def setUp(self):
+        self.kube = sr.Kube("vexa")
+
+    def test_db_host_puts_no_password_on_the_command_line(self):
+        pg = sr.Postgres(self.kube, host="db.internal", port=5432,
+                         dbname="vexa", user="vexa_report")
+        argv = pg.argv("psql", ["-c", "SELECT count(*) FROM meetings"])
+        self.assertEqual(argv[:9],
+                         ["psql", "-h", "db.internal", "-p", "5432",
+                          "-U", "vexa_report", "-d", "vexa"])
+        self.assertNotIn("exec", argv)
+        # the password reaches psql through the environment, never argv
+        self.assertTrue(all("PGPASSWORD" not in a for a in argv))
+        self.assertEqual(pg.transport, "--db-host")
+
+    def test_db_pod_is_the_only_transport_that_uses_exec(self):
+        exec_free = (sr.Postgres(self.kube, host="db.internal"),
+                     sr.Postgres(self.kube, url="postgres://db/x"))
+        for pg in exec_free:
+            self.assertNotIn("exec", pg.argv("psql", []))
+        pg = sr.Postgres(self.kube, pod="postgres-0")
+        self.assertIn("exec", pg.argv("psql", []))
+        self.assertEqual(pg.transport, "kubectl exec postgres-0")
+
+    def test_every_transport_opens_the_session_read_only(self):
+        for pg in (sr.Postgres(self.kube, host="db.internal"),
+                   sr.Postgres(self.kube, url="postgres://db/x"),
+                   sr.Postgres(self.kube, pod="postgres-0")):
+            self.assertIn("default_transaction_read_only=on", pg.pgoptions)
+
+    def test_no_source_at_all_is_simply_not_configured(self):
+        pg = sr.Postgres(self.kube)
+        self.assertFalse(pg.configured)
+        self.assertIsNone(pg.transport)
 
 
 class TestNoTransmitPath(unittest.TestCase):

@@ -18,9 +18,9 @@ Emitted from `python3 kit/report/vexa_state_report.py --help`.
 
 ```text
 usage: vexa-state-report [-h] --namespace NAMESPACE [--kubeconfig KUBECONFIG] [--context CONTEXT]
-                         [--out OUT] [--db-url DB_URL] [--db-pod DB_POD]
-                         [--db-container DB_CONTAINER] [--db-name DB_NAME] [--db-user DB_USER]
-                         [--alembic-table ALEMBIC_TABLE] [--exact-row-counts]
+                         [--out OUT] [--db-url DB_URL] [--db-host DB_HOST] [--db-port DB_PORT]
+                         [--db-pod DB_POD] [--db-container DB_CONTAINER] [--db-name DB_NAME]
+                         [--db-user DB_USER] [--alembic-table ALEMBIC_TABLE] [--exact-row-counts]
                          [--probe-set PROBE_SET] [--transcription-match TRANSCRIPTION_MATCH]
                          [--sql-timeout-ms SQL_TIMEOUT_MS] [--verify-redaction]
                          [--no-verify-redaction]
@@ -110,10 +110,23 @@ kit/report/probes/ rather than a function. See probes/README.md.
 ────────────────────────────────────────────────────────────────────────────
 
     python3 kit/report/vexa_state_report.py --namespace vexa \
-        [--db-pod postgres-0 --db-name vexa --db-user vexa]
+        [--db-host db.internal --db-name vexa --db-user vexa]
+
+Three ways to reach the database, in the order you should try them. `--db-host`
+(managed, external, or port-forwarded; the password comes from PGPASSWORD or
+~/.pgpass, never from argv). `--db-pod`, which runs psql inside the pod and
+therefore needs `create` on `pods/exec` — a privileged verb, declared as such
+in docs/upgrade-report.mdx. Or `kubectl apply -f kit/report/job.yaml`, which
+runs the database half from inside the cluster with a read-only ServiceAccount
+and no exec at all. With none of them the cluster half is still collected and
+the run still succeeds — but every probe reports `not run`, and the tool says
+so loudly, because the probes are the only part of this report that reads your
+data.
 
 Exit codes: 0 written · 2 usage · 3 redaction leak (the bundle is kept for
-inspection and must not be sent).
+inspection and must not be sent). A missing default probe set, an unreadable
+resource and an absent database are NOT usage errors: they degrade to `absent`
+with a reason and still write a bundle.
 
 options:
   -h, --help            show this help message and exit
@@ -125,8 +138,13 @@ options:
   --db-url DB_URL       postgres DSN, if you can reach the database directly. Prefer
                         VEXA_REPORT_DB_URL: a password on a command line lands in shell history
                         and in every process listing on the machine.
-  --db-pod DB_POD       database pod to run psql/pg_dump in via kubectl exec, when there is no
-                        route to Postgres from here
+  --db-host DB_HOST     database host, when Postgres is managed or otherwise outside the cluster.
+                        NO PASSWORD ON THE COMMAND LINE: it comes from PGPASSWORD or ~/.pgpass.
+                        Prefer this over --db-url and over --db-pod.
+  --db-port DB_PORT     port for --db-host (default: psql's own)
+  --db-pod DB_POD       database pod to run psql/pg_dump in via kubectl exec. This needs CREATE ON
+                        PODS/EXEC, which is a privileged verb in most estates — try --db-host
+                        first, or run kit/report/job.yaml in-cluster if exec is not grantable
   --db-container DB_CONTAINER
   --db-name DB_NAME
   --db-user DB_USER
@@ -139,7 +157,10 @@ options:
                         should not become an incident.
   --probe-set PROBE_SET
                         probe set name under kit/report/probes/, a path to one, or 'none' (default
-                        v0.12.23)
+                        v0.12.23). A set you NAME and that does not exist is a usage error (exit
+                        2); the default merely missing — this tool is one file and gets copied
+                        without its probes/ directory — degrades to absent and the run still
+                        produces a bundle.
   --transcription-match TRANSCRIPTION_MATCH
                         regex matching the transcription workloads whose runtime shape is captured
                         (default 'whisper|transcri|asr|diariz|stt')
