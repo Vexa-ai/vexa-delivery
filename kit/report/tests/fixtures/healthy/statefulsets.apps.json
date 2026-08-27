@@ -12,6 +12,7 @@
         "replicas": 1,
         "template": {
           "spec": {
+            "nodeSelector": {"kubernetes.io/hostname": "node-cpu-1"},
             "containers": [
               {
                 "name": "postgres",

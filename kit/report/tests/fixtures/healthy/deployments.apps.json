@@ -18,6 +18,11 @@
         "replicas": 2,
         "template": {
           "spec": {
+            "nodeSelector": {"vexa.ai/pool": "gpu"},
+            "tolerations": [
+              {"key": "nvidia.com/gpu", "operator": "Equal", "value": "true", "effect": "NoSchedule"},
+              {"key": "vexa.ai/pool", "operator": "Equal", "value": "gpu", "effect": "NoExecute"}
+            ],
             "containers": [
               {
                 "name": "whisperlive",

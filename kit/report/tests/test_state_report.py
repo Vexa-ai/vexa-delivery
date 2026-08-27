@@ -444,7 +444,7 @@ class TestHealthyRun(unittest.TestCase):
             reg = r.doc["registry"]
             self.assertIn("registry.corp.example", reg["reachability"])
             self.assertIn("mirror or a private registry", reg["reachability"])
-            self.assertEqual(reg["image_pull_credentials"], ["corp-registry"])
+            self.assertIn("corp-registry", reg["image_pull_credentials"])
 
     def test_nothing_in_the_document_was_redacted_after_the_fact(self):
         """Allowlist-first means REDACTED should never need to appear.
@@ -474,12 +474,19 @@ class TestHealthyRun(unittest.TestCase):
             self.assertTrue(doc["redaction"]["verified"])
             self.assertEqual(doc["redaction"]["leaks"], 0)
             self.assertGreater(doc["redaction"]["withheld_values"], 0)
-            # This estate grants nothing in the argocd and kyverno namespaces,
-            # which is the normal case: a namespace admin cannot read next
-            # door. Those two are the only gaps, and both name a reason.
+            # This estate grants nothing next door, which is the normal case:
+            # a namespace admin cannot read another namespace. All three of
+            # those share ONE row — three near-identical entries would spend
+            # six lines of a reader's attention on one fact.
+            #
+            # `routes` is a gap on plain Kubernetes because the kind and the
+            # grant are indistinguishable from here, and the QUESTION row is
+            # the other kind of entry: not a read that failed, but one no
+            # read-only call could make.
             self.assertEqual([row["what"] for row in doc["absent"]],
-                             ["Argo CD (namespace argocd)",
-                              "Kyverno (namespace kyverno)"])
+                             ["routes",
+                              "QUESTION: can this cluster pull a release image by digest",
+                              "delivery machinery in argocd, openshift-gitops, kyverno"])
             self.assertTrue(all(row["reason"] for row in doc["absent"]))
             self.assertIn("IT HAS NOT BEEN SENT ANYWHERE", r.text)
 
@@ -513,6 +520,183 @@ class TestNodeTaints(unittest.TestCase):
             self.assertNotIn("node_shapes", r.doc["platform"])
             self.assertIn("node shapes",
                           " ".join(row["what"] for row in r.doc["absent"]))
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class TestOpenShiftRoutes(unittest.TestCase):
+    """Exposure on OpenShift is a Route, and there is normally no Ingress.
+
+    A document that reads `ingresses.networking.k8s.io` and stops does not
+    leave a quiet gap on such an estate — it says positively that nothing is
+    exposed, which is the exact shape of answer this tool exists to refuse.
+    """
+
+    def test_a_route_is_reported_by_shape_and_never_by_host(self):
+        with Run("mirrored") as r:
+            routes = r.doc["wiring"]["routes"]
+            self.assertEqual(len(routes), 2)
+            self.assertIn("vexa · to vexa-api-gateway · TLS edge · no wildcard", routes)
+            self.assertIn("vexa-admin · to vexa-admin-api · no TLS · wildcard Subdomain",
+                          routes)
+
+    def test_the_host_is_a_public_dns_name_and_does_not_reach_the_document(self):
+        with Run("mirrored") as r:
+            for host in ("vexa.apps.corp.example", "admin.apps.corp.example"):
+                self.assertNotIn(host, r.text, host)
+            # nor does the redirect policy or anything else from the rule
+            self.assertNotIn("insecureEdgeTermination", r.text)
+
+    def test_on_plain_kubernetes_the_absent_kind_is_named_as_indistinguishable(self):
+        # Not-present and not-granted are the same read. Saying which one it
+        # is would be a guess, and the expensive direction of that guess is
+        # "nothing is exposed".
+        with Run("healthy") as r:
+            routes = r.doc["wiring"]["routes"]
+            self.assertTrue(routes.startswith("absent"))
+            self.assertIn("not-present and not-granted are the same read", routes)
+            gap = next(row for row in r.doc["absent"] if row["what"] == "routes")
+            self.assertIn("routes.route.openshift.io", gap["reason"])
+
+    def test_on_openshift_an_unreadable_route_list_is_called_a_missing_grant(self):
+        # Here the cluster ANSWERED as OpenShift, so the kind exists and the
+        # refusal is a grant we were not given — a different sentence, and the
+        # one that gets the operator to send the exposure or the grant.
+        with Run("openshift-locked-down") as r:
+            self.assertEqual(r.doc["platform"]["distribution"], "OpenShift")
+            routes = r.doc["wiring"]["routes"]
+            self.assertIn("MISSING GRANT", routes)
+            self.assertIn("not an absent kind", routes)
+
+    def test_it_is_never_read_as_nothing_is_exposed(self):
+        for case in ("healthy", "openshift-locked-down"):
+            with Run(case) as r:
+                self.assertNotIn("nothing is exposed", r.text, case)
+                self.assertTrue(str(r.doc["wiring"]["routes"]).startswith("absent"), case)
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class TestPlacement(unittest.TestCase):
+    """Taints say which nodes REPEL a workload; placement says where one is
+    PINNED. Transcription held to a GPU pool is the case that breaks a bundle
+    silently — everything else about the estate looks fine, and the delivered
+    pod simply never lands."""
+
+    def test_a_node_selector_and_its_tolerations_are_reported(self):
+        with Run("healthy") as r:
+            whisper = next(w for w in r.doc["workloads"]
+                           if w["name"] == "vexa-whisperlive")
+            self.assertIn("nodeSelector vexa.ai/pool=gpu", whisper["placement"])
+            self.assertIn("tolerates nvidia.com/gpu:NoSchedule", whisper["placement"])
+            self.assertIn("vexa.ai/pool:NoExecute", whisper["placement"])
+
+    def test_affinity_is_reported_by_kind_and_never_by_rule(self):
+        with Run("mirrored") as r:
+            whisper = next(w for w in r.doc["workloads"]
+                           if w["name"] == "vexa-whisperlive")
+            self.assertIn("affinity nodeAffinity, podAntiAffinity", whisper["placement"])
+            for token in ("matchExpressions", "nodeSelectorTerms", "preferredDuring",
+                          "labelSelector"):
+                self.assertNotIn(token, r.text, token)
+
+    def test_priority_runtime_and_topology_spread_are_reported(self):
+        with Run("mirrored") as r:
+            placement = next(w for w in r.doc["workloads"]
+                             if w["name"] == "vexa-whisperlive")["placement"]
+            self.assertIn("priorityClassName vexa-critical", placement)
+            self.assertIn("runtimeClassName nvidia", placement)
+            self.assertIn("topologySpread over topology.kubernetes.io/zone", placement)
+
+    def test_a_selector_pinned_to_a_hostname_keeps_the_key_and_drops_the_name(self):
+        # The KEY is shape and belongs here. The VALUE is a node name, which
+        # is the one piece of inventory this document refuses to carry — and
+        # an affinity rule in the mirrored estate names one too.
+        with Run("healthy") as r:
+            postgres = next(w for w in r.doc["workloads"]
+                            if w["name"] == "vexa-postgres")
+            self.assertEqual(postgres["placement"],
+                             "nodeSelector kubernetes.io/hostname=(node name, "
+                             "not collected)")
+            self.assertNotIn("node-cpu-1", r.text)
+        with Run("mirrored") as r:
+            self.assertNotIn("node-gpu-1", r.text)
+
+    def test_a_workload_that_pins_nothing_carries_no_empty_scaffolding(self):
+        with Run("healthy") as r:
+            admin = next(w for w in r.doc["workloads"] if w["name"] == "vexa-admin-api")
+            self.assertNotIn("placement", admin)
+            self.assertGreaterEqual(
+                sum(1 for w in r.doc["workloads"] if "placement" in w), 1)
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class TestPullCredentialsAndAllocatable(unittest.TestCase):
+    """Two gaps the sufficiency sweep found: a pull credential that lives on a
+    ServiceAccount rather than in a pod spec, and the difference between a
+    node's capacity and what a scheduler actually has left."""
+
+    def test_a_credential_on_a_service_account_is_found_and_named_as_such(self):
+        # It serves every pod that uses the account and appears in NO pod
+        # spec, so reading only pod specs reports a namespace with no pull
+        # credentials at all — a positive claim, and the wrong one.
+        with Run("mirrored") as r:
+            found = r.doc["registry"]["image_pull_credentials"]
+            self.assertIn("corp-registry-ca (on serviceaccount vexa)", found)
+            # `corp-registry` is attached BOTH ways in that estate. It is one
+            # credential, so it is named once, from the pod specs.
+            self.assertIn("corp-registry", found)
+            self.assertNotIn("corp-registry (on serviceaccount vexa)", found)
+
+    def test_no_service_account_credentials_is_not_the_same_as_no_read(self):
+        with Run("healthy") as r:
+            self.assertIsNone(r.doc["registry"]["image_pull_credentials"])
+            self.assertNotIn("service-account pull credentials",
+                             " ".join(row["what"] for row in r.doc["absent"]))
+        with Run("with-limitrange") as r:
+            gap = next(row for row in r.doc["absent"]
+                       if row["what"] == "service-account pull credentials")
+            self.assertIn("appears in no pod spec", gap["reason"])
+
+    def test_allocatable_sits_beside_capacity_because_it_is_what_schedules(self):
+        # The preflight measures the bot's 2560Mi limit and its 2Gi
+        # Memory-medium /dev/shm against allocatable, not capacity. One line,
+        # because it is one fact.
+        with Run("healthy") as r:
+            shapes = r.doc["platform"]["node_shapes"]
+            gpu = next(s for s in shapes if s["gpu"])
+            self.assertEqual(gpu["capacity"],
+                             "cpu 8 (7900m allocatable) · memory 32Gi "
+                             "(30Gi allocatable) · pods 110")
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class TestNamedQuestions(unittest.TestCase):
+    """The gaps that are not gaps in the READ — nothing read-only can answer
+    them, so they are asked by name rather than silently assumed."""
+
+    def test_whether_a_pull_by_digest_succeeds_is_asked_not_assumed(self):
+        with Run("healthy") as r:
+            gap = next(row for row in r.doc["absent"]
+                       if row["what"].startswith("QUESTION: can this cluster pull"))
+            self.assertIn("probe pod, which is a write", gap["reason"])
+
+    def test_a_private_registry_adds_the_ca_question(self):
+        with Run("mirrored") as r:
+            asked = [row["what"] for row in r.doc["absent"]]
+            self.assertIn("QUESTION: does the registry need a CA bundle, or plain HTTP",
+                          asked)
+        with Run("healthy") as r:
+            # public registries, no pull credentials: the question does not
+            # apply and is not asked. Noise trains a reader to skip the list.
+            self.assertFalse(any("CA bundle" in row["what"]
+                                 for row in r.doc["absent"]))
+
+    def test_restricted_egress_asks_what_is_actually_allowed(self):
+        with Run("mirrored") as r:
+            gap = next(row for row in r.doc["absent"]
+                       if row["what"].startswith("QUESTION: does policy allow DNS"))
+            self.assertIn("rule bodies", gap["reason"])
+        with Run("with-limitrange") as r:
+            self.assertFalse(any("DNS" in row["what"] for row in r.doc["absent"]))
 
 
 @unittest.skipIf(yaml is None, "PyYAML not installed")
@@ -630,19 +814,45 @@ class TestTheExistingInstall(unittest.TestCase):
 
     def test_a_namespace_we_cannot_read_is_absent_and_not_not_installed(self):
         # "not installed" and "no RBAC over there" look identical from inside
-        # one namespace, and only one of them is safe to act on.
+        # one namespace, and only one of them is safe to act on. All three
+        # unreadable namespaces collapse into ONE gap row naming them, rather
+        # than three rows and three near-identical lines in `install`.
         with Run("healthy") as r:
-            for key in ("argo_cd", "kyverno"):
-                self.assertTrue(r.doc["install"][key].startswith("absent"), key)
-                self.assertIn("look identical", r.doc["install"][key])
-            named = [row["what"] for row in r.doc["absent"]]
-            self.assertIn("Argo CD (namespace argocd)", named)
-            self.assertIn("Kyverno (namespace kyverno)", named)
+            for key in ("argo_cd", "openshift_gitops", "kyverno"):
+                self.assertNotIn(key, r.doc["install"], key)
+            gap = next(row for row in r.doc["absent"]
+                       if row["what"].startswith("delivery machinery"))
+            for namespace in ("argocd", "openshift-gitops", "kyverno"):
+                self.assertIn(namespace, gap["what"], namespace)
+            self.assertIn("same read from here", gap["reason"])
+
+    def test_the_openshift_gitops_operator_counts_as_argo_already_here(self):
+        # On OpenShift the supported Argo is the GitOps OPERATOR's instance,
+        # which lives in `openshift-gitops` and never in `argocd`. Checking
+        # only `argocd` reports Argo absent on the exact estate where
+        # installing a second one does the most damage.
+        with Run("mirrored") as r:
+            self.assertIn("present in namespace openshift-gitops",
+                          r.doc["install"]["openshift_gitops"])
+            self.assertIn("v1.12.4", r.doc["install"]["openshift_gitops"])
+
+    def test_cluster_scope_is_derived_from_what_this_run_could_read(self):
+        # It picks between the bundle's cluster-wide admission and its
+        # namespaced form, and it costs no extra read: the cluster-scoped
+        # reads already succeeded or already failed.
+        with Run("healthy") as r:
+            self.assertIn("admission can ship cluster-wide",
+                          r.doc["install"]["cluster_scope"])
+        with Run("empty") as r:
+            scope = r.doc["install"]["cluster_scope"]
+            self.assertIn("namespace tenant", scope)
+            self.assertIn("stay unknown rather than assumed", scope)
 
     def test_the_reads_next_door_are_scoped_to_those_namespaces(self):
         with Run("healthy") as r:
             executed = "\n".join(r.commands())
             self.assertIn("get deployments.apps -n argocd -o json", executed)
+            self.assertIn("get deployments.apps -n openshift-gitops -o json", executed)
             self.assertIn("get deployments.apps -n kyverno -o json", executed)
             # the namespace's own object is read BY NAME: the other namespaces
             # in the cluster are never listed

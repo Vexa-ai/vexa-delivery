@@ -21,17 +21,17 @@ Operator-facing page: [`docs/upgrade.mdx`](../../docs/upgrade.mdx).
 
 | | |
 |---|---|
-| **1 platform** | Kubernetes or OpenShift, version, the cloud underneath, node shapes **and the taints on them**, storage classes and volumes |
-| **2 wiring** | which components exist and how they are connected — the database and transcription especially: in-cluster or external, how each is addressed, versions, GPU or CPU |
+| **1 platform** | Kubernetes or OpenShift, version, the cloud underneath, node shapes **with the taints on them and what is allocatable**, storage classes and volumes |
+| **2 wiring** | which components exist and how they are connected — the database and transcription especially: in-cluster or external, how each is addressed, versions, GPU or CPU — and how the estate is **exposed: Ingress and, on OpenShift, `Route`** |
 | **3 resources** | requests and limits per container, and the namespace's ResourceQuotas and LimitRanges |
-| **4 versions** | the image tags and digests **actually running** |
+| **4 versions** | the image tags and digests **actually running**, and **where each workload is pinned** — node selector, affinity kinds, tolerations, priority and runtime class, topology spread |
 | **5 values** | the settings this deployment has customised |
-| **6 registry** | Docker Hub or a mirror — as observed, never inferred |
+| **6 registry** | Docker Hub or a mirror — as observed, never inferred; pull credentials on the pod specs **and on the ServiceAccounts** |
 | **7 admission** | the namespace's Pod Security labels and, on OpenShift, its SCC UID and group ranges — what it will let run at all |
 | **8 network** | the NetworkPolicies, by shape: whether anything default-denies egress. Rule bodies are not read |
-| **9 install** | the Helm release name already here, and whether Argo CD or Kyverno already run |
+| **9 install** | the Helm release name already here, and whether Argo CD — **including the OpenShift GitOps operator's own instance** — or Kyverno already run |
 
-The last three were added because the sibling preflight
+Rows 7–9 were added because the sibling preflight
 ([`kit/preflight/`](../preflight/)) checks all of them — P1 taints, P4 pod
 security, P5 NetworkPolicy — while the report collected none of them, so the
 document could not be built against. Each answers a question that changes what
@@ -42,6 +42,45 @@ capabilities, and whether they may pin a UID at all; a default-deny egress
 policy decides whether the cluster can reach a registry; and the release name
 decides whether an upgrade lands on the running estate or installs a **second
 copy of it beside the first, against the same database**.
+
+## The sufficiency sweep — how the list stopped being a guess
+
+Finding a missing lens one at a time is a losing game, so the list above is now
+backed by a **coverage argument** rather than by inspection. Every input that
+decides what goes in a bundle was enumerated from its source in this repo —
+[`kit/profiles/vexa/customer-values.example.yaml`](../profiles/vexa/customer-values.example.yaml),
+every [`kit/providers/*/profile.env`](../providers/), all nine checks in
+[`kit/preflight/vexa_preflight.py`](../preflight/vexa_preflight.py), every flag
+of [`kit/install.sh`](../install.sh), the station chart's
+[`values.yaml`](../../station/chart/values.yaml) and its templates' `.Values`
+references, and the contract fields in
+[`kit/verify/policy.example.yaml`](../verify/policy.example.yaml) — and each
+was marked *supplied by the report*, *the customer's own secret*, or *a gap*.
+
+The gaps it found, and what closed them:
+
+| Gap | Where it came from | Now |
+|---|---|---|
+| Exposure on OpenShift | an estate with `Route` and no `Ingress` reads as **nothing exposed** | `routes.route.openshift.io`, by shape |
+| `global.tolerations`, `floor.tolerations`, `receiptSender.tolerations`, `nodeSelector` | the values file ships them empty for the customer to fill | `placement`, per workload |
+| Node **allocatable** | P6 measures the bot's 2560Mi limit and its 2Gi `/dev/shm` against allocatable, not capacity | beside `capacity`, on the same line |
+| A pull credential on a **ServiceAccount** | it serves every pod and appears in no pod spec | read and merged into `image_pull_credentials` |
+| Argo CD in `openshift-gitops` | on OpenShift the supported Argo is the GitOps **operator's** instance; checking only `argocd` reports Argo absent where a second one does the most damage | a third machinery namespace |
+| `scope: cluster` vs `scope: namespace` | the station chart ships admission cluster-wide or namespaced | `cluster_scope`, derived from which cluster-scoped reads succeeded — no extra call |
+
+Three inputs turned out to be **unreadable by any read-only call**, and those
+are asked as **named questions** in `absent` rather than assumed: whether a
+pull by digest actually succeeds (proving it needs a probe pod, which is a
+write — P7), whether a restricted egress policy lets DNS and the registry out
+(the rule bodies carry internal addresses and are refused), and whether the
+registry needs a CA bundle or plain HTTP (TLS trust lives in the container
+runtime, in no API object). A stated gap beats a silent one; an unasked
+question is indistinguishable from an answered one.
+
+Everything else was either already supplied or is the customer's own secret —
+`secrets.*`, the channel public key, the registry credential, the contract
+terms in `policy.example.yaml` — which the report does not read and never
+should.
 
 **Never collected:** schema, rows, row counts, SQL of any kind, transcripts,
 meeting content, credentials. Also not collected, because they are inventory
@@ -81,6 +120,13 @@ tests/fixtures/<case>/<ns>/
                        has no RBAC next door
 ```
 
+The estates: `healthy` (an ordinary LKE namespace), `mirrored` (OpenShift
+behind a corporate mirror — Routes, SCC ranges, default-deny egress, the
+GitOps operator, two release names), `with-limitrange` (the quota finding's
+negative case), `empty` (every read refused), and `openshift-locked-down` (an
+OpenShift cluster that grants almost nothing, which is the one place a missing
+`Route` grant can be told apart from an absent kind).
+
 `make test-report` runs them. There is no cluster and no network anywhere in
 them: the fixture directory *is* the estate.
 
@@ -106,7 +152,11 @@ Three rules a patch has to respect:
   the person deciding whether to send it, so ~300 lines on a real estate is the
   ceiling, not a guideline. Prefer one line to five: shape over rule bodies,
   a grouped count over a list of names, one sentence in the section comment
-  over a field repeating it.
+  over a field repeating it. When a new lens pushes past it, **summarise rather
+  than split the file** — allocatable moved onto the capacity line, three
+  unreadable machinery namespaces collapsed into one gap row, and three
+  separate "addresses are not collected" notes became one. A second file would
+  turn a scroll back into a cross-referencing exercise.
 - **Do not name a field after a secret.** The redaction rule is deliberately
   blunt and empties anything under a key matching
   `password|token|secret|key|apikey`. Two fields shipped named that way and lost

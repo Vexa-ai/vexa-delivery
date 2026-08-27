@@ -10,7 +10,7 @@ Source: `kit/report/vexa_state_report.py` · audience: customer
 
 ## When you use this
 
-Run it FIRST on a deployment that already exists. It is a read-only `kubectl get` sweep of one namespace — no database connection, no `pods/exec`, no credentials of any kind, no SQL — and it writes one commented YAML file describing the shape of that environment: platform and version, how the database and transcription are wired, per-container resources against the namespace's quotas and LimitRanges, the image digests actually running, the settings you have customised, where your images come from, the taints on your nodes, what your namespace's Pod Security labels and NetworkPolicies will let run, and the name of the release already installed. Start with `--dry-run`, which connects to nothing and prints every command it would run. It prints a path and stops: nothing transmits.
+Run it FIRST on a deployment that already exists. It is a read-only `kubectl get` sweep of one namespace — no database connection, no `pods/exec`, no credentials of any kind, no SQL — and it writes one commented YAML file describing the shape of that environment: platform and version, how the database and transcription are wired, per-container resources against the namespace's quotas and LimitRanges, the image digests actually running, the settings you have customised, where your images come from, the taints on your nodes and where each workload is pinned, how the estate is exposed (Ingress and, on OpenShift, Route), what your namespace's Pod Security labels and NetworkPolicies will let run, and the name of the release already installed. The few questions no read-only call can answer — whether a pull by digest succeeds, whether your egress policy lets DNS out — are asked by name rather than assumed. Start with `--dry-run`, which connects to nothing and prints every command it would run. It prints a path and stops: nothing transmits.
 
 ## Usage
 
@@ -47,14 +47,22 @@ WHAT IT COLLECTS, and the list is complete:
                   the storage this cluster offers
   2. WIRING       which components exist and how they are connected — the
                   database and transcription especially: in-cluster or
-                  external, how each is addressed, versions, GPU or CPU
+                  external, how each is addressed, versions, GPU or CPU — and
+                  how the estate is EXPOSED: Ingress and, on OpenShift, Route,
+                  because an OpenShift estate normally has no Ingress at all
+                  and reading only one of them says "nothing is exposed"
   3. RESOURCES    requests and limits per container, plus the namespace's
                   ResourceQuotas and LimitRanges. This is not decoration: a
                   quota-controlled namespace stopped a subscriber's bot pods
                   being admitted, because they declare no resources of their
                   own and no LimitRange supplied a default
   4. VERSIONS     the image tags and digests ACTUALLY running, so the jump is
-                  known exactly rather than assumed
+                  known exactly rather than assumed, and the PLACEMENT each
+                  workload declares — node selector, affinity kinds,
+                  tolerations, priority and runtime class, topology spread.
+                  Taints say which nodes repel; these say where the workloads
+                  are pinned, and transcription pinned to a GPU pool is the
+                  case that breaks a bundle silently
   5. VALUES       the settings this deployment has customised, so what we ship
                   does not overwrite a deliberate choice
   6. REGISTRY     whether images come from Docker Hub or through a mirror —
@@ -69,9 +77,11 @@ WHAT IT COLLECTS, and the list is complete:
                   bodies are not read: they carry internal addresses and are
                   not needed to build
   9. INSTALL      the name of the Helm release already here, and whether Argo
-                  CD or Kyverno already run. A `--release-name` that matches
+                  CD — including the OpenShift GitOps operator's own instance
+                  — or Kyverno already run. A `--release-name` that matches
                   nothing installs a SECOND copy of the estate beside the
-                  running one, against the same database
+                  running one, against the same database, and installing our
+                  Argo beside an operator-managed one is the same footgun
 
 NEVER COLLECTED: schema, rows, row counts, SQL of any kind, transcripts,
 meeting content, credentials. The database appears here only as a COMPONENT —
@@ -102,6 +112,15 @@ ABSENT OVER ZERO, everywhere. A source that could not be read is recorded as
 absent with a reason. It is never defaulted to zero or to an empty list: zero
 is a claim, and a fabricated zero in a document whose whole purpose is to say
 what somebody already has is worse than a stated gap.
+
+The `absent` list carries a second kind of entry, and deliberately: NAMED
+QUESTIONS — the handful of things that decide what we build and that no
+read-only call can answer at all. Whether a pull of a release image by digest
+actually succeeds needs a probe pod, which is a write; whether a NetworkPolicy
+lets DNS out needs the rule bodies, which this refuses to read; whether the
+registry sits behind a corporate CA appears in no object here. Each is stated
+as a question with the reason it cannot be read, because an unasked question
+is indistinguishable from an answered one.
 
 ────────────────────────────────────────────────────────────────────────────
 ADDING A COLLECTOR — this file expects to be edited by people we have never met
@@ -182,22 +201,24 @@ why we ask for it
 
 what it collects
 
-  1 platform    Kubernetes or OpenShift, version, cloud, node shapes and the
-                taints on them, storage
+  1 platform    Kubernetes or OpenShift, version, cloud, node shapes with the
+                taints on them and what is allocatable, storage
   2 wiring      which components exist and how they are connected — database
                 and transcription especially: in-cluster or external, how each
-                is addressed, versions, GPU or CPU
+                is addressed, versions, GPU or CPU — and how the estate is
+                exposed: Ingress and, on OpenShift, Route
   3 resources   requests and limits per container, and the namespace's
                 ResourceQuotas and LimitRanges
-  4 versions    image tags and digests actually running
+  4 versions    image tags and digests actually running, and where each
+                workload is pinned
   5 values      the settings this deployment has customised
   6 registry    Docker Hub or a mirror — as observed, never inferred
   7 admission   the namespace's Pod Security labels and, on OpenShift, its SCC
                 ranges — what it will let run at all
   8 network     the NetworkPolicies, by shape: whether anything default-denies
                 egress. Rule bodies are not read
-  9 install     the Helm release name already here, and whether Argo CD or
-                Kyverno already run
+  9 install     the Helm release name already here, and whether Argo CD, the
+                OpenShift GitOps operator or Kyverno already run
 
 what you get
 

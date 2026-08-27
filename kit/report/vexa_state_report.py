@@ -25,14 +25,22 @@ WHAT IT COLLECTS, and the list is complete:
                   the storage this cluster offers
   2. WIRING       which components exist and how they are connected — the
                   database and transcription especially: in-cluster or
-                  external, how each is addressed, versions, GPU or CPU
+                  external, how each is addressed, versions, GPU or CPU — and
+                  how the estate is EXPOSED: Ingress and, on OpenShift, Route,
+                  because an OpenShift estate normally has no Ingress at all
+                  and reading only one of them says "nothing is exposed"
   3. RESOURCES    requests and limits per container, plus the namespace's
                   ResourceQuotas and LimitRanges. This is not decoration: a
                   quota-controlled namespace stopped a subscriber's bot pods
                   being admitted, because they declare no resources of their
                   own and no LimitRange supplied a default
   4. VERSIONS     the image tags and digests ACTUALLY running, so the jump is
-                  known exactly rather than assumed
+                  known exactly rather than assumed, and the PLACEMENT each
+                  workload declares — node selector, affinity kinds,
+                  tolerations, priority and runtime class, topology spread.
+                  Taints say which nodes repel; these say where the workloads
+                  are pinned, and transcription pinned to a GPU pool is the
+                  case that breaks a bundle silently
   5. VALUES       the settings this deployment has customised, so what we ship
                   does not overwrite a deliberate choice
   6. REGISTRY     whether images come from Docker Hub or through a mirror —
@@ -47,9 +55,11 @@ WHAT IT COLLECTS, and the list is complete:
                   bodies are not read: they carry internal addresses and are
                   not needed to build
   9. INSTALL      the name of the Helm release already here, and whether Argo
-                  CD or Kyverno already run. A `--release-name` that matches
+                  CD — including the OpenShift GitOps operator's own instance
+                  — or Kyverno already run. A `--release-name` that matches
                   nothing installs a SECOND copy of the estate beside the
-                  running one, against the same database
+                  running one, against the same database, and installing our
+                  Argo beside an operator-managed one is the same footgun
 
 NEVER COLLECTED: schema, rows, row counts, SQL of any kind, transcripts,
 meeting content, credentials. The database appears here only as a COMPONENT —
@@ -80,6 +90,15 @@ ABSENT OVER ZERO, everywhere. A source that could not be read is recorded as
 absent with a reason. It is never defaulted to zero or to an empty list: zero
 is a claim, and a fabricated zero in a document whose whole purpose is to say
 what somebody already has is worse than a stated gap.
+
+The `absent` list carries a second kind of entry, and deliberately: NAMED
+QUESTIONS — the handful of things that decide what we build and that no
+read-only call can answer at all. Whether a pull of a release image by digest
+actually succeeds needs a probe pod, which is a write; whether a NetworkPolicy
+lets DNS out needs the rule bodies, which this refuses to read; whether the
+registry sits behind a corporate CA appears in no object here. Each is stated
+as a question with the reason it cannot be read, because an unasked question
+is indistinguishable from an answered one.
 
 ────────────────────────────────────────────────────────────────────────────
 ADDING A COLLECTOR — this file expects to be edited by people we have never met
@@ -145,8 +164,8 @@ KIT = HERE.parent
 REPO = KIT.parent
 
 TOOL = "vexa-state-report"
-TOOL_VERSION = "0.5.0"
-SCHEMA_VERSION = 5
+TOOL_VERSION = "0.6.0"
+SCHEMA_VERSION = 6
 OUTPUT_NAME = "state-report.yaml"
 
 
@@ -532,6 +551,27 @@ def _human_qty(v):
     return s
 
 
+def _capacity(cap, alloc):
+    """Capacity, with what is actually ALLOCATABLE beside it on the same line.
+
+    Allocatable — not capacity — is what the scheduler has left after
+    kube-reserved, and it is the number the preflight measures the bot's 2560Mi
+    limit and its 2Gi Memory-medium /dev/shm against. Capacity alone reads
+    about ten percent too generous, which is enough to turn "it fits" into pods
+    that sit Pending. One line rather than two, because it is one fact; the
+    second half is dropped where the two are equal.
+    """
+    parts = []
+    for key in ("cpu", "memory", "pods"):
+        if key not in cap:
+            continue
+        row = "%s %s" % (key, _human_qty(cap[key]))
+        if key != "pods" and alloc.get(key) and str(alloc[key]) != str(cap[key]):
+            row += " (%s allocatable)" % _human_qty(alloc[key])
+        parts.append(row)
+    return " · ".join(parts) or None
+
+
 def _image_parts(image):
     """(registry host, repository, tag). The host is the registry-reachability
     fact, so it is split out rather than left buried inside a string."""
@@ -632,8 +672,7 @@ def _nodes(ctx, out):
             "instance_type": labels.get("node.kubernetes.io/instance-type")
             or labels.get("beta.kubernetes.io/instance-type"),
             "region": labels.get("topology.kubernetes.io/region"),
-            "capacity": _res({k: v for k, v in cap.items()
-                              if k in ("cpu", "memory", "pods")}),
+            "capacity": _capacity(cap, alloc),
             "taints": _taints(n),
             "gpu": _res(gpu) if gpu else None,
             "arch": info.get("architecture"),
@@ -666,9 +705,8 @@ def collect_platform(ctx):
     # is also what a missing ClusterRole looks like. Said in the document
     # rather than left for a reader to assume.
     out["distribution"] = "Kubernetes"
-    out["distribution_note"] = ("clusterversion.config.openshift.io was not readable, "
-                                "which is what plain Kubernetes and a missing "
-                                "ClusterRole both look like")
+    out["distribution_note"] = ("clusterversion unreadable — plain Kubernetes and a "
+                                "missing ClusterRole look the same")
     cv, _ = ctx.kube.get("clusterversions.config.openshift.io", namespace=False)
     if cv and cv.get("items"):
         out["distribution"] = "OpenShift"
@@ -682,9 +720,8 @@ def collect_platform(ctx):
         out["cloud_note"] = "no node providerID was readable; not guessed"
     if nodes is not None:
         out["node_shapes_note"] = (
-            "grouped by shape; node names are not collected. Every taint below needs a "
-            "matching toleration in the values we hand back, or the workload does not "
-            "fail — it stays Pending")
+            "a taint needs a matching toleration in the values we hand back, or the "
+            "pod stays Pending")
         out["node_shapes"] = nodes
 
     doc, err = ctx.kube.get("storageclasses.storage.k8s.io", namespace=False)
@@ -756,6 +793,58 @@ def _pod_template(obj, kind):
     if kind == "CronJob":
         spec = (spec.get("jobTemplate") or {}).get("spec") or {}
     return (spec.get("template") or {}).get("spec") or {}
+
+
+# A nodeSelector KEY is shape; this one's VALUE is a node name, and node names
+# are the one piece of inventory this document refuses to carry.
+NODE_NAME_SELECTOR_KEYS = ("kubernetes.io/hostname",)
+
+
+def _placement(template):
+    """Where this workload's pods are PINNED — presence and kind, never rules.
+
+    The taints in section 1 say which nodes REPEL a workload. These say where
+    the workload is HELD, which is the other half of the same question and the
+    one that breaks a bundle silently: transcription pinned to a GPU pool looks
+    like a perfectly ordinary Deployment right up to the moment the delivered
+    pod has nowhere to land. It is also what fills the `tolerations: []` and
+    `nodeSelector: {}` the values file hands back — those are empty because
+    guessing at somebody else's nodes is worse than asking.
+
+    SHAPE ONLY. Affinity is reported as which KINDS are set, never as the rule
+    bodies: a nodeAffinity term names nodes, zones and labels we do not need
+    and should not hold. Read from the workload TEMPLATE rather than from a
+    running pod, because the API server injects default tolerations onto every
+    pod and reporting those would bury the deliberate ones.
+
+    Returns None when a workload pins nothing, so the row is omitted rather
+    than carrying empty scaffolding on every entry in the document.
+    """
+    bits = []
+    selector = template.get("nodeSelector") or {}
+    if selector:
+        bits.append("nodeSelector " + " · ".join(
+            "%s=%s" % (k, "(node name, not collected)"
+                       if k in NODE_NAME_SELECTOR_KEYS else v)
+            for k, v in sorted(selector.items())))
+    affinity = template.get("affinity") or {}
+    kinds = [k for k in ("nodeAffinity", "podAffinity", "podAntiAffinity")
+             if affinity.get(k)]
+    if kinds:
+        bits.append("affinity " + ", ".join(kinds))
+    tolerations = template.get("tolerations") or []
+    if tolerations:
+        bits.append("tolerates " + " · ".join(sorted(
+            {"%s:%s" % (t.get("key") or "(any key)", t.get("effect") or "(any effect)")
+             for t in tolerations})))
+    for field in ("priorityClassName", "runtimeClassName"):
+        if template.get(field):
+            bits.append("%s %s" % (field, template[field]))
+    spread = template.get("topologySpreadConstraints") or []
+    if spread:
+        bits.append("topologySpread over " + ", ".join(sorted(
+            {str(c.get("topologyKey")) for c in spread})))
+    return " · ".join(bits) or None
 
 
 def _settings(container, withheld):
@@ -846,6 +935,9 @@ def collect_workloads(ctx):
             elif kind == "CronJob":
                 row["schedule"] = spec.get("schedule")
                 row["suspended"] = bool(spec.get("suspend"))
+            placement = _placement(template)
+            if placement:
+                row["placement"] = placement
             # NAMED `..._credentials`, not `..._secrets`, and that is not
             # squeamishness: the redaction rule is deliberately blunt and
             # empties anything under a key matching
@@ -1030,8 +1122,8 @@ def collect_wiring(ctx):
                              "resources": c.get("requests")}
         if found is None:
             found = {"where": "external or managed", "version": None,
-                     "note": "not running in this namespace. Nothing here connects to "
-                             "it, so its version is not known — a gap, not a zero."}
+                     "note": "not in this namespace, and nothing connects to it — so "
+                             "its version is a gap, not a zero"}
         found["addressed_by"] = _addressed_by(ctx, name) or None
         out[name] = found
 
@@ -1069,7 +1161,8 @@ def collect_wiring(ctx):
     if doc is None:
         ctx.absent(out, "services", err or "not readable")
     else:
-        out["services_note"] = "type and ports; addresses are not collected"
+        out["exposure_note"] = ("type, class, ports and TLS below; no address, "
+                                "host or DNS name")
         out["services"] = [
             "%s · %s · %s" % ((s.get("metadata") or {}).get("name"),
                               (s.get("spec") or {}).get("type"),
@@ -1081,7 +1174,6 @@ def collect_wiring(ctx):
     if doc is None:
         ctx.absent(out, "ingresses", err or "not readable")
     else:
-        out["ingresses_note"] = "class, TLS and backends; hostnames are not collected"
         out["ingresses"] = [
             "%s · class %s · %s · %d rule(s) to %s" % (
                 (i.get("metadata") or {}).get("name"),
@@ -1093,7 +1185,49 @@ def collect_wiring(ctx):
                                   for path in (((rule.get("http") or {}).get("paths")) or [])}
                                  - {None})) or "none")
             for i in doc.get("items", [])]
+
+    _routes(ctx, out)
     return out
+
+
+def _routes(ctx, out):
+    """OpenShift `Route` objects — the other half of "is anything exposed".
+
+    ON OPENSHIFT THERE IS USUALLY NO INGRESS AT ALL. Exposure is a Route, so a
+    document that reads `ingresses.networking.k8s.io` and stops does not report
+    a quiet gap — it reports, positively and wrongly, that nothing is exposed,
+    which is exactly the shape of answer this tool exists to refuse.
+
+    Shape only, and the host is the point of the refusal: name, the service it
+    targets, the TLS termination type, and whether a wildcard policy is set. A
+    Route's host is the estate's public DNS name and is inventory, not shape.
+
+    A failed read is `absent` with a reason. On plain Kubernetes the kind does
+    not exist and on OpenShift a missing RBAC grant looks identical from here,
+    so both are named — the same discipline the other OpenShift reads use.
+    """
+    doc, err = ctx.kube.get("routes.route.openshift.io")
+    if doc is None:
+        openshift = (ctx.sections.get("platform") or {}).get("distribution") == "OpenShift"
+        out["routes"] = ("absent — OpenShift, so a MISSING GRANT and not an absent kind"
+                         if openshift else
+                         "absent — an OpenShift kind; not-present and not-granted are "
+                         "the same read here")
+        ctx.absent(out, "routes", "%s — how an OpenShift estate is exposed"
+                   % (err or "not readable"))
+        return
+    out["routes"] = [
+        " · ".join([
+            str((r.get("metadata") or {}).get("name")),
+            "to %s" % (((r.get("spec") or {}).get("to") or {}).get("name")
+                       or "no service named"),
+            "TLS %s" % (((r.get("spec") or {}).get("tls") or {}).get("termination")
+                        or "termination not stated")
+            if (r.get("spec") or {}).get("tls") else "no TLS",
+            "wildcard %s" % (r.get("spec") or {}).get("wildcardPolicy")
+            if (r.get("spec") or {}).get("wildcardPolicy") not in (None, "", "None")
+            else "no wildcard",
+        ]) for r in doc.get("items", [])]
 
 
 # ── 5 · registry reachability ───────────────────────────────────────────────
@@ -1118,6 +1252,25 @@ def collect_registry(ctx):
         secrets.update(n for n in (w.get("image_pull_credentials") or []) if n)
     out["registries_referenced"] = ["%s (%d containers)" % (h, n)
                                     for h, n in sorted(hosts.items())] or None
+    # A pull credential attached to a SERVICEACCOUNT serves every pod that uses
+    # it and appears in NO pod spec. Reading only the pod specs would report a
+    # namespace with no pull credentials at all — a positive claim, and the
+    # wrong one. `global.imagePullSecrets` in the values file we hand back is
+    # filled from both halves, so both are read, into one list.
+    doc, err = ctx.kube.get("serviceaccounts")
+    if doc is None:
+        ctx.absent(out, "service-account pull credentials",
+                   "%s; one attached there appears in no pod spec" % (err or "no read"))
+    else:
+        on_pods = set(secrets)
+        for sa in doc.get("items", []):
+            for ref in (sa.get("imagePullSecrets") or []):
+                # Only the ones the pod specs do NOT already name. A credential
+                # attached both ways is one credential, and listing it twice
+                # spends a line saying nothing.
+                if ref.get("name") and ref["name"] not in on_pods:
+                    secrets.add("%s (on serviceaccount %s)"
+                                % (ref["name"], (sa.get("metadata") or {}).get("name")))
     out["image_pull_credentials"] = sorted(secrets) or None
     if secrets:
         out["image_pull_credentials_note"] = (
@@ -1127,10 +1280,10 @@ def collect_registry(ctx):
     if doc is None:
         out["cluster_mirror_config"] = None
         out["cluster_mirror_note"] = (
-            "ImageDigestMirrorSet is an OpenShift, cluster-scoped resource and was not "
-            "readable (%s) — which is what a non-OpenShift cluster and a missing "
-            "ClusterRole both look like. A mirror configured at the container runtime "
-            "would not be visible to any kubectl read either." % (err or "not readable"))
+            "ImageDigestMirrorSet is OpenShift and cluster-scoped, and was not readable "
+            "(%s) — what a non-OpenShift cluster and a missing ClusterRole both look "
+            "like. A runtime-level mirror is invisible to every kubectl read anyway."
+            % (err or "not readable"))
     else:
         out["cluster_mirror_config"] = [
             {"name": (m.get("metadata") or {}).get("name"),
@@ -1152,6 +1305,17 @@ def collect_registry(ctx):
     else:
         ctx.absent(out, "registry reachability", "no image reference was readable")
         out["reachability"] = None
+
+    # TWO NAMED QUESTIONS, not two gaps in the read. Neither is answerable by
+    # any read-only call, and both decide whether an install pulls at all — so
+    # they are asked in the document rather than left to be discovered on the
+    # day. Proving a pull needs a pod; a registry's TLS trust lives in a node's
+    # container runtime, not in an API object.
+    ctx.absent(out, "QUESTION: can this cluster pull a release image by digest",
+               "proving it needs a probe pod, which is a write")
+    if private or secrets:
+        ctx.absent(out, "QUESTION: does the registry need a CA bundle, or plain HTTP",
+                   "TLS trust is in no object readable from here")
     return out
 
 
@@ -1259,6 +1423,16 @@ def collect_network_policy(ctx):
         out["egress"] = "no policy here restricts egress; these are ingress-side only"
     else:
         out["egress"] = "no NetworkPolicies in this namespace — nothing here isolates it"
+
+    # A NAMED QUESTION, and the refusal above is why it has to be one. Whether
+    # DNS on 53 and the registry are actually allowed out is decided inside the
+    # rule bodies, which carry internal CIDRs and are not read here by design.
+    # The preflight's P5 is where a default-denied namespace with no DNS rule
+    # turns into every delivered pod failing name resolution, and looking like
+    # an application bug while it does.
+    if any("Egress" in row for row in rows):
+        ctx.absent(out, "QUESTION: does policy allow DNS (53) and the registry out",
+                   "the rule bodies carry internal addresses and are not read")
     return out
 
 
@@ -1268,8 +1442,17 @@ def collect_network_policy(ctx):
 # worth naming. Conventional locations only: a controller installed somewhere
 # else is recorded as absent, because a cluster-wide search for one is a much
 # larger read than the fact is worth.
+#
+# `openshift-gitops` is the third for a specific reason. On OpenShift the
+# supported Argo CD is the GitOps OPERATOR's instance, which lives there and
+# never in `argocd` — so a report that checks only `argocd` says Argo is absent
+# on the exact estate where installing a second one does the most damage. It is
+# the release-name footgun again, one layer up: our install would apply
+# upstream manifests beside an operator-managed instance and succeed.
 MACHINERY = (
     ("argo_cd", "argocd", "Argo CD", re.compile(r"argocd-server|argocd-application")),
+    ("openshift_gitops", "openshift-gitops", "OpenShift GitOps",
+     re.compile(r"gitops-server|argocd-server|argocd-application")),
     ("kyverno", "kyverno", "Kyverno", re.compile(r"kyverno")),
 )
 
@@ -1321,13 +1504,30 @@ def collect_install(ctx):
     if ctx.managed_by:
         out["managed_by"] = " · ".join(sorted(ctx.managed_by))
 
+    # WHICH SHAPE OF BUNDLE FITS, derived from what this run was allowed to
+    # read rather than from a second read. The station bundle ships either
+    # cluster-wide admission or a namespaced policy per station, and that
+    # choice is the same question as "does whoever runs this hold more than
+    # namespace access". The cluster-scoped reads already answered it.
+    platform = ctx.sections.get("platform") or {}
+    granted = [name for name, key in (("nodes", "node_shapes"),
+                                      ("storage classes", "storage_classes"))
+               if key in platform]
+    out["cluster_scope"] = (
+        "%s readable — admission can ship cluster-wide" % " and ".join(granted)
+        if granted else
+        "no cluster-scoped read succeeded — a namespace tenant, so admission ships "
+        "namespaced and cluster facts stay unknown rather than assumed")
+
+    # The unreadable ones share ONE line and ONE gap row rather than three of
+    # each. A namespace admin cannot read next door, so on most estates all
+    # three are refused, and three near-identical entries would spend six lines
+    # of the reader's attention on one fact.
+    unreadable = []
     for key, namespace, label, match in MACHINERY:
         doc, err = ctx.kube.get("deployments.apps", in_namespace=namespace)
         if doc is None:
-            out[key] = ("absent — namespace %s not readable; not-installed and "
-                        "no-RBAC-there look identical" % namespace)
-            ctx.absent(out, "%s (namespace %s)" % (label, namespace),
-                       err or "not readable")
+            unreadable.append(namespace)
             continue
         items = doc.get("items", [])
         named = next((d for d in items
@@ -1339,6 +1539,9 @@ def collect_install(ctx):
             out[key] = "present in namespace %s · %d deployment%s · version %s" % (
                 namespace, len(items), "" if len(items) == 1 else "s",
                 version or "not stated on the deployment")
+    if unreadable:
+        ctx.absent(out, "delivery machinery in %s" % ", ".join(unreadable),
+                   "not-installed and no-grant-there are the same read from here")
     return out
 
 
@@ -1364,7 +1567,9 @@ settings it carries. The digest is what says 0.10 exactly rather than roughly.
 Settings are allowlist-first: a name matching password|token|secret|key|apikey
 is dropped, and so is anything not on the allowlist, so what is here is the
 customisation and nothing else. `provided_externally` names the settings that
-come from a Secret or ConfigMap — the name only, never the value.
+come from a Secret or ConfigMap — the name only, never the value. `placement`
+is where a workload is PINNED: the taints above say which nodes repel it, this
+says where it is held. Shape only, and no line means it pins nothing.
 """),
     ("running_outside_any_workload", collect_unowned, """
 2b · IMAGES RUNNING UNDER NO WORKLOAD. Vexa creates a bot pod per meeting and
@@ -1385,13 +1590,16 @@ is present only when all three conditions hold at once.
 4 · WIRING — which components exist and how they are connected. The database
 and transcription especially: in-cluster or external, how each is ADDRESSED
 (the setting's name, never its value), version, and GPU or CPU. Every fact
-here was read from the cluster. Nothing connected to the database.
+here was read from the cluster. Nothing connected to the database. Exposure is
+read as Ingress AND as OpenShift `Route`, because an OpenShift estate has no
+Ingress and reading one alone would say positively that nothing is exposed.
 """),
     ("registry", collect_registry, """
 5 · REGISTRY — where images actually come from, so an upgrade does not sit in
 ImagePullBackOff behind a corporate mirror. Observed from image references,
-pull secrets and any readable mirror configuration. Stated as observed, never
-inferred.
+pull credentials on the pod specs AND on the ServiceAccounts, and any readable
+mirror configuration — never inferred. Whether a pull SUCCEEDS is unreadable
+and is asked as a QUESTION at the end.
 """),
     ("admission", collect_admission, """
 6 · ADMISSION — what this namespace will LET run: its Pod Security labels and,
@@ -1411,8 +1619,10 @@ carry internal addresses and building a bundle does not need them.
 the labels the workloads carry: no helm binary was run, no Secret was read. An
 upgrade under a release name that matches nothing does not fail — it installs a
 SECOND copy of the estate beside the running one, against the same database,
-and reports success. Argo CD or Kyverno already here makes this an adoption
-rather than a fresh install, which is a different procedure.
+and reports success. Argo CD or Kyverno already here makes this an adoption;
+`openshift-gitops` is checked too, because on OpenShift the supported Argo is
+the operator's and a second beside it is that same footgun. `cluster_scope` is
+derived from what this run was ALLOWED to read.
 """),
 )
 
@@ -1439,10 +1649,11 @@ do not.
 
 FOOTER_COMMENTS = {
     "absent": """
-WHAT COULD NOT BE READ. Recorded rather than defaulted to zero or to an empty
-list: a fabricated zero in a document whose whole purpose is to say what you
-already have is worse than a stated gap. An empty list here means everything
-was readable.
+WHAT COULD NOT BE READ, AND WHAT CANNOT BE. Recorded rather than defaulted to
+zero or an empty list: a fabricated zero in a document whose whole purpose is
+to say what you already have is worse than a stated gap. Most rows are reads
+this run was not granted; a row marked QUESTION is one no read-only call can
+answer at all, so the answer is a sentence from you.
 """,
     "refuses": """
 WHAT THE TOOL REFUSES, each enforced by code rather than intent. Read the
@@ -1537,6 +1748,12 @@ def cluster_reads(kube):
          kube.get_argv("services")),
         ("ingresses — class and TLS; hostnames are never collected",
          kube.get_argv("ingresses.networking.k8s.io")),
+        ("OpenShift routes — how an OpenShift estate is exposed, since it has no "
+         "Ingress. Target service and TLS only; the host is never collected",
+         kube.get_argv("routes.route.openshift.io")),
+        ("service accounts — only whether one carries a pull credential, and its "
+         "name. One attached there appears in no pod spec",
+         kube.get_argv("serviceaccounts")),
         ("image mirror configuration, where the cluster exposes any",
          kube.get_argv("imagedigestmirrorsets.config.openshift.io", namespace=False)),
         ("this namespace's own object, by name — its Pod Security labels and, on "
@@ -1578,23 +1795,25 @@ def dry_run(a, kube, argv=None):
         "  no apply, no patch, no delete, no port-forward, no logs.",
         "",
         "  Nothing else is contacted. There is no database client in this tool, no SQL,",
-        "  and no flag that would take a password. Seven of the reads above look outside",
-        "  this namespace — nodes, storage classes, the two OpenShift resources, the",
-        "  namespace's own object, and the deployments in the argocd and kyverno",
-        "  namespaces. If you cannot grant those, each is recorded as absent with the",
-        "  reason and the rest still runs.",
+        "  and no flag that would take a password. Eight of the reads above look outside",
+        "  this namespace — nodes, storage classes, the two cluster-scoped OpenShift",
+        "  resources, the namespace's own object, and the deployments in the argocd,",
+        "  openshift-gitops and kyverno namespaces. If you cannot grant those, each is",
+        "  recorded as absent with the reason and the rest still runs.",
         "",
         "WHAT IT WRITES — one file, and nothing else",
         "",
         "  %s" % out_path,
         "      Roughly 200-300 lines of commented YAML: platform and version, node",
-        "      shapes and their taints, component wiring for the database and",
-        "      transcription, per-container resources, the namespace's quotas and",
-        "      LimitRanges, the image tags and digests actually running, the settings",
-        "      this deployment has customised, where its images come from, what this",
-        "      namespace's admission and network policies will let run, and the name of",
-        "      the release already installed. Each block carries a plain-English comment",
-        "      above it.",
+        "      shapes with their taints and allocatable, component wiring for the",
+        "      database and transcription, how the estate is exposed (Ingress and",
+        "      Route), per-container resources, the namespace's quotas and LimitRanges,",
+        "      the image tags and digests actually running, where each workload is",
+        "      pinned, the settings this deployment has customised, where its images",
+        "      come from, what this namespace's admission and network policies will let",
+        "      run, and the name of the release already installed. Each block carries a",
+        "      plain-English comment above it, and the few questions no read-only call",
+        "      can answer are asked by name rather than assumed.",
         "",
         "  No directory, no archive, nothing to extract. Nothing outside that one path",
         "  is created, moved or deleted.",
@@ -1754,22 +1973,24 @@ why we ask for it
 
 what it collects
 
-  1 platform    Kubernetes or OpenShift, version, cloud, node shapes and the
-                taints on them, storage
+  1 platform    Kubernetes or OpenShift, version, cloud, node shapes with the
+                taints on them and what is allocatable, storage
   2 wiring      which components exist and how they are connected — database
                 and transcription especially: in-cluster or external, how each
-                is addressed, versions, GPU or CPU
+                is addressed, versions, GPU or CPU — and how the estate is
+                exposed: Ingress and, on OpenShift, Route
   3 resources   requests and limits per container, and the namespace's
                 ResourceQuotas and LimitRanges
-  4 versions    image tags and digests actually running
+  4 versions    image tags and digests actually running, and where each
+                workload is pinned
   5 values      the settings this deployment has customised
   6 registry    Docker Hub or a mirror — as observed, never inferred
   7 admission   the namespace's Pod Security labels and, on OpenShift, its SCC
                 ranges — what it will let run at all
   8 network     the NetworkPolicies, by shape: whether anything default-denies
                 egress. Rule bodies are not read
-  9 install     the Helm release name already here, and whether Argo CD or
-                Kyverno already run
+  9 install     the Helm release name already here, and whether Argo CD, the
+                OpenShift GitOps operator or Kyverno already run
 
 what you get
 

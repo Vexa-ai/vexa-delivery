@@ -169,10 +169,13 @@ vexa-state-report: >-
   database and transcription are wired, per-container resources against the
   namespace's quotas and LimitRanges, the image digests actually running, the
   settings you have customised, where your images come from, the taints on your
-  nodes, what your namespace's Pod Security labels and NetworkPolicies will let
-  run, and the name of the release already installed. Start with `--dry-run`,
-  which connects to nothing and prints every command it would run. It prints a
-  path and stops: nothing transmits.
+  nodes and where each workload is pinned, how the estate is exposed (Ingress
+  and, on OpenShift, Route), what your namespace's Pod Security labels and
+  NetworkPolicies will let run, and the name of the release already installed.
+  The few questions no read-only call can answer — whether a pull by digest
+  succeeds, whether your egress policy lets DNS out — are asked by name rather
+  than assumed. Start with `--dry-run`, which connects to nothing and prints
+  every command it would run. It prints a path and stops: nothing transmits.
 
 kit-bootstrap: >-
   The first command a new station ever runs: fetch the kit tree from the
