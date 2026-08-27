@@ -190,16 +190,16 @@
   },
   "active": "41836c34afc69212",
   "lastOpenFiles": [
-    "publisher/tests/__pycache__/test_verify_gate_injection.cpython-313-pytest-9.0.2.pyc",
-    "publisher/__pycache__/vexa_subscriber.cpython-313.pyc",
-    "publisher/tests/__pycache__/test_subscriber.cpython-313-pytest-9.0.2.pyc",
-    "publisher/__pycache__/vexa_stations.cpython-313.pyc",
-    "publisher/tests/__pycache__/test_stations.cpython-313-pytest-9.0.2.pyc",
-    "publisher/tests/__pycache__/test_station_subscription_gate.cpython-313-pytest-9.0.2.pyc",
-    "publisher/tests/__pycache__/test_station_placement.cpython-313-pytest-9.0.2.pyc",
-    "publisher/tests/__pycache__/test_station.cpython-313-pytest-9.0.2.pyc",
-    "publisher/tests/__pycache__/test_signing_toolchain.cpython-313-pytest-9.0.2.pyc",
-    "publisher/tests/__pycache__/test_report_scope_tier.cpython-313-pytest-9.0.2.pyc",
-    "publisher/tests/__pycache__/test_receipt_sender_chart.cpython-313-pytest-9.0.2.pyc"
+    "stations/rehearsal/station-report.yaml",
+    "kit/report/tests/fixtures/with-limitrange/version.json",
+    "kit/report/tests/fixtures/with-limitrange/storageclasses.storage.k8s.io.json",
+    "kit/report/tests/fixtures/with-limitrange/statefulsets.apps.json",
+    "kit/report/tests/fixtures/with-limitrange/services.json",
+    "kit/report/tests/fixtures/with-limitrange/resourcequotas.json",
+    "kit/report/tests/fixtures/with-limitrange/pods.json",
+    "kit/report/tests/fixtures/with-limitrange/persistentvolumeclaims.json",
+    "kit/report/tests/fixtures/with-limitrange/nodes.json",
+    "kit/report/tests/fixtures/with-limitrange/limitranges.json",
+    "kit/report/tests/fixtures/with-limitrange/ingresses.networking.k8s.io.json"
   ]
 }

@@ -34,3 +34,5 @@ station/profiles/*/
 
 # editor state
 .obsidian/
+.pytest_cache/
+__pycache__/
