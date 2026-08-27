@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "metadata": {"name": "openshift-gitops-server", "namespace": "openshift-gitops",
+                   "labels": {"app.kubernetes.io/version": "v1.12.4"}},
+      "spec": {"template": {"spec": {"containers": [
+        {"name": "argocd-server",
+         "image": "registry.redhat.io/openshift-gitops-1/argocd-rhel8:v1.12.4"}
+      ]}}}
+    },
+    {
+      "metadata": {"name": "openshift-gitops-repo-server", "namespace": "openshift-gitops"},
+      "spec": {"template": {"spec": {"containers": [
+        {"name": "argocd-repo-server",
+         "image": "registry.redhat.io/openshift-gitops-1/argocd-rhel8:v1.12.4"}
+      ]}}}
+    }
+  ]
+}

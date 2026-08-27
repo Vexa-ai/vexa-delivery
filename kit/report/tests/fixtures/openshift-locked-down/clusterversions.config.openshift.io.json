@@ -1,0 +1,8 @@
+{
+  "items": [
+    {
+      "metadata": {"name": "version"},
+      "status": {"desired": {"version": "4.16.21"}}
+    }
+  ]
+}

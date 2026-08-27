@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "metadata": {"name": "vexa", "namespace": "vexa"},
+      "spec": {
+        "host": "vexa.apps.corp.example",
+        "to": {"kind": "Service", "name": "vexa-api-gateway", "weight": 100},
+        "port": {"targetPort": 8000},
+        "tls": {"termination": "edge", "insecureEdgeTerminationPolicy": "Redirect"},
+        "wildcardPolicy": "None"
+      }
+    },
+    {
+      "metadata": {"name": "vexa-admin", "namespace": "vexa"},
+      "spec": {
+        "host": "admin.apps.corp.example",
+        "to": {"kind": "Service", "name": "vexa-admin-api", "weight": 100},
+        "wildcardPolicy": "Subdomain"
+      }
+    }
+  ]
+}
