@@ -15,7 +15,7 @@ Emitted from `python3 publisher/vexa_station.py --help`.
 ```text
 usage: vexa-station [-h] [--stations-dir STATIONS_DIR] {ingest,gate} ...
 
-vexa-station — ingest a customer's station bundle, then gate publishes on
+vexa-station — ingest a customer's station report, then gate publishes on
 the station's own contract.
 
 The channel publisher (`vexa_channel.py`) answers "may this release exist?".
@@ -23,10 +23,10 @@ This tool answers the other half: "may this release be published AT this
 customer's station, given what that station's contract requires?" — the
 per-release guarantees document, made executable.
 
-  ingest  unpack a station bundle (profile.env, values.redacted.yaml,
-          contract.yaml, preflight-receipt, smoke-receipt, station.json) into
-          stations/<name>/ after checking it is complete, self-consistent and
-          free of plaintext secrets
+  ingest  read a station report (ONE commented YAML file: the provider
+          profile, the redacted values, the contract, the phase receipts, and
+          a manifest of section digests) into stations/<name>/ after checking
+          it is complete, self-consistent and free of plaintext secrets
   gate    render a packaged chart with the station's values and refuse the
           publish unless the render survives the station's environment and
           every `require:` item in its contract is met by evidence or
@@ -37,25 +37,38 @@ the channel publisher's C1..C9. There is no silent path: an unmet contract
 item needs an explicit, loudly recorded waiver, which becomes visible data in
 the gate report.
 
-  S1 bundle shape        archive members are safe, one bundle root
-  S2 completeness        the file roles this bundle KIND requires are present
-  S3 manifest identity   station.json names this station and its digests match
+  S1 report shape        one YAML document, a mapping, report.v1, bounded size
+  S2 completeness        the section roles this report KIND requires are present
+  S3 manifest identity   the report names this station, its section digests
+                         match the text, and nothing undeclared rides along
   S4 no plaintext secrets  defense in depth over the customer's redaction
   S5 render              helm template succeeds with the station's values
   S6 resources           every container declares cpu+memory requests+limits
   S7 no hostPath         no workload mounts a host path
   S8 digest-pinned       every image reference carries @sha256:
   S9 contract            every require: item is evidenced or waived
-  S10 report scope       the bundle does not exceed the station's declared
+  S10 report scope       the report does not exceed the station's declared
                          telemetry tier — WE ENFORCE THEIR POLICY AGAINST
                          OURSELVES, which is the half of the promise worth
                          anything: a customer can read the packager and see
                          that it cannot collect above its rung, but only this
-                         check proves we would not KEEP a bundle that did.
+                         check proves we would not KEEP a report that did.
+
+WHAT CHANGED WITH THE SINGLE FILE, since a check that quietly stopped checking
+is the failure this file exists to prevent. S1 no longer walks archive members
+for traversal, links and a single root, because there is no archive: it bounds
+the file's size and refuses anything that is not exactly one YAML mapping. S2
+and S3 hold unchanged in substance and are expressed against SECTIONS instead
+of files — a declared section must be present, its sha256 must match the text
+that is there to read, and a top-level key that is neither a manifest field nor
+a declared section is a refusal. S4 gained reach rather than losing it: it
+scans the whole document AND parses the values and profile sections back into
+their own formats, so a credential inside a section is caught by the same two
+scans that used to run over files.
 
 positional arguments:
   {ingest,gate}
-    ingest              validate and unpack a customer station bundle
+    ingest              validate and record a customer station report
     gate                gate a packaged chart on the station's contract
 
 options:
@@ -65,25 +78,27 @@ options:
 
 ## `ingest`
 
-Take the `station.tar.gz` a customer sent back and unpack it into `stations/<name>/` after checking it is complete, self-consistent and free of plaintext secrets. Until a station is ingested we cannot gate a release against it, so an un-ingested bundle is an un-represented customer.
+Take the `station-report.yaml` a customer sent back and record it under `stations/<name>/` after checking it is complete, self-consistent and free of plaintext secrets. Until a station is ingested we cannot gate a release against it, so an un-ingested report is an un-represented customer.
 
 ```text
-usage: vexa-station ingest [-h] [--bundle BUNDLE] --station STATION [--force]
+usage: vexa-station ingest [-h] [--bundle STATION_REPORT_YAML] --station STATION [--force]
                            [--from-registry REGISTRY] [--bundle-tag BUNDLE_TAG]
                            [--channel CHANNEL] [--ledger LEDGER] [--plain-http] [--insecure]
 
 options:
   -h, --help            show this help message and exit
-  --bundle BUNDLE       station bundle tar.gz produced by kit validate (or use --from-registry)
-  --station STATION     station name; must match station.json
+  --bundle STATION_REPORT_YAML
+                        the station report (station-report.yaml) produced by kit validate (or use
+                        --from-registry)
+  --station STATION     station name; must match the report
   --force               replace an already-ingested station
   --from-registry REGISTRY
-                        pull the bundle from <REGISTRY>/vexa/stations/<station>/bundles instead of
+                        pull the report from <REGISTRY>/vexa/stations/<station>/bundles instead of
                         reading --bundle from disk (the submit path's return leg)
   --bundle-tag BUNDLE_TAG
-                        which submitted bundle; default the newest
+                        which submitted report; default the newest
   --channel CHANNEL     the channel this station subscribes to; required with --ledger
-  --ledger LEDGER       checkout of the vexa-stations ledger; on a successful ingest the bundle
+  --ledger LEDGER       checkout of the vexa-stations ledger; on a successful ingest the report
                         and its receipt are stored verbatim under
                         channels/<channel>/stations/<station>/receipts/ and state.yaml is
                         recomputed. Defaults to $VEXA_STATIONS_DIR.

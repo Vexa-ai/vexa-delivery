@@ -10,7 +10,7 @@ Source: `kit/validate/vexa_validate.py` · audience: customer
 
 ## When you use this
 
-The one command an operator runs end to end: preflight, optionally install, smoke, then bundle it all into a secret-free `station.tar.gz`. Reach for it at onboarding and at every upgrade you want a receipt for; reach for the individual tools only when you are debugging one leg of it.
+The one command an operator runs end to end: preflight, optionally install, smoke, then write it all into one secret-free `station-report.yaml` you read before you send it. Reach for it at onboarding and at every upgrade you want a receipt for; reach for the individual tools only when you are debugging one leg of it.
 
 ## Usage
 
@@ -39,42 +39,71 @@ to "here is my signed-off evidence, and here is my contribution back".
 It chains the two tools that already exist and adds the thing neither produces:
 a portable, secret-free record of the station as it actually stands.
 
-    preflight  (will it run here)      -> preflight-receipt.txt
-    install    (optional, --install)   -> install-log.txt
-    smoke      (did it work here)      -> smoke-receipt-<ts>.md
-    bundle                             -> station.tar.gz
+    preflight  (will it run here)      -> the preflight verdict, verbatim
+    install    (optional, --install)   -> the install log
+    smoke      (did it work here)      -> the smoke verdict and its console
+    report                             -> station-report.yaml
 
-`station.tar.gz` is what the operator sends back to Vexa. It carries the
-provider profile, their values file with every secret-looking value replaced by
-REDACTED, the contract the environment verifies against, both receipts, and
-station.json (date, kit revision, Kubernetes server version, provider,
-namespaces, phase verdicts). It carries no credentials — and `--verify-redaction`
-(on by default) refuses to finish if any plaintext value that redaction removed
-still appears anywhere in the archive that was actually written.
+ONE FILE, AND THAT IS THE DESIGN. `station-report.yaml`. Not a directory, not
+an archive, nothing to extract. The person who has to approve this before it
+leaves their perimeter must read ALL of it, and six files in a tarball is a
+review task where one commented document is a read. This one goes back on
+every release rather than once, so the cost of a document nobody reads
+compounds. YAML because the reader is a Kubernetes engineer who reads it all
+day, and because it carries comments — so the explanation of each section sits
+above the section instead of in a second document that can drift from it.
+
+WHAT IS IN IT, and the list is complete:
+
+  1. PROFILE       the provider profile this run used, verbatim — substrate
+                   facts (k8s version, storage class, PSA mode, mirror host),
+                   never credentials
+  2. VALUES        the operator's own values file, structurally intact, with
+                   every secret-looking value replaced by REDACTED. The SHAPE
+                   is the contribution
+  3. CONTRACT      the contract this environment verifies against, verbatim,
+                   beside its id and sha256 — the document states the policy
+                   it was produced under
+  4. PREFLIGHT     the P-check receipt, verbatim
+  5. SMOKE         the smoke receipt, and the raw console TAIL — evidence of a
+                   crash is still evidence, and it is the half a receipt never
+                   gets to write
+  6. THE MANIFEST  station identity, section digests, kit revision, phase
+                   verdicts and the redaction verdict, as top-level keys
+
+It carries no credentials, and `--verify-redaction` (on by default) refuses to
+finish if any plaintext value that redaction removed still appears anywhere in
+the finished file — the check reads the bytes that would be sent, not the
+values we believe we assembled.
+
+ABSENT OVER ZERO. A section that could not be produced is recorded as absent
+with a reason, never as an empty string: an empty receipt in a document whose
+whole purpose is to say what happened is worse than a stated gap.
 
 Naming note: the *station bundle* on the channel (ADR-0007) is the machinery
-chart Vexa publishes. This archive is the return leg — the operator's station
-record travelling the other way. Different direction, different artifact.
+chart Vexa publishes INTO a cluster. `station-report.yaml` is the return leg —
+the operator's station record travelling the other way. Different direction,
+different artifact, and now different words for each.
 
 Run on the operator's machine with kubectl access:
 
     python3 kit/validate/vexa_validate.py         --namespace vexa-staging         --customer-values my-values.yaml         --flows [--meeting-url URL | --non-interactive]
 
 Exit codes: 0 all phases passed · 1 a phase failed · 2 usage · 3 redaction leak
-(the bundle is kept for inspection but must not be sent).
+(the file is kept so it can be inspected, and it must not be sent).
 
 options:
   -h, --help            show this help message and exit
   --namespace NAMESPACE
   --kubeconfig KUBECONFIG
   --customer-values CUSTOMER_VALUES
-                        the values file you edit and keep; redacted into the bundle. Required for
+                        the values file you edit and keep; redacted into the report. Required for
                         a validation run; a --report or --export-diagnostics run carries no values
                         file and does not take one.
   --contract CONTRACT   contract this environment verifies against (default
                         kit/verify/policy.example.yaml)
   --provider PROVIDER   provider profile name under kit/providers/
-  --out OUT             where station.tar.gz is written
+  --out OUT             directory to write station-report.yaml into (default: here)
   --manifests MANIFESTS
   --station STATION     station name recorded in station.json; the publisher's ingest --station
                         must match it (default: the namespace)
@@ -102,11 +131,11 @@ options:
   --submit-destination SUBMIT_DESTINATION
                         registry host; default report_scope.destination, then --registry
   --submit-tag SUBMIT_TAG
-                        bundle tag; default today's UTC date
+                        the tag this report is pushed under; default today's UTC date
   --submit-dry-run      validate and print the payload; send nothing
   --submit-plain-http
   --submit-insecure
-  --continue-on-fail    build the bundle even if a phase FAILs (a failing run is still evidence —
+  --continue-on-fail    write the report even if a phase FAILs (a failing run is still evidence —
                         and often the most useful kind to send)
   --report              TELEMETRY MODE: skip the phases and emit a ladder submission at the tier
                         your contract's report_scope declares (T1 receipts / T2 health / T3

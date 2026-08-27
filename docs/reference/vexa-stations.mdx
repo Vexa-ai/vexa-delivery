@@ -84,7 +84,7 @@ options:
 
 ## `record-ingest`
 
-Reduce an already-unpacked station directory into its `state.yaml` and store its receipt. Also rarely typed directly — `vexa-station ingest --ledger` calls it — but it is how you backfill a station that was ingested before the ledger, without asking the customer to send the bundle again.
+Reduce an already-ingested station directory into its `state.yaml` and store its receipt. Also rarely typed directly — `vexa-station ingest --ledger` calls it — but it is how you backfill a station that was ingested before the ledger, without asking the customer to send the report again.
 
 ```text
 usage: vexa-stations record-ingest [-h] --channel CHANNEL --station STATION
@@ -96,7 +96,7 @@ options:
   --station STATION
   --station-dir STATION_DIR
                         stations/<name>/ as written by vexa_station.py ingest
-  --bundle BUNDLE       the bundle tarball, stored verbatim in receipts/
+  --bundle BUNDLE       the station report, stored verbatim in receipts/
 ```
 
 ## `pin`

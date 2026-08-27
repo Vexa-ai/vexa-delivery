@@ -143,7 +143,7 @@ the two questions a regulated buyer asks first, in both directions:
 | | Section | Enforced by |
 |---|---|---|
 | **out** | `delivery_scope` — namespaces · cluster-scoped objects yes/no · Pod Security Standards level · image-source allowlist · sum-of-requests ceiling | publisher station gate **S10–S14** on the rendered chart · PreSync re-checks the *claim* · the customer's own PSA + Kyverno check what runs |
-| **in** | `report_scope` — [`report.v1`](report.v1.schema.json) · explicit trigger · single destination · enumerated file roles | `kit/validate --submit`, locally, before a byte moves |
+| **in** | `report_scope` — [`report.v1`](report.v1.schema.json) · explicit trigger · single destination · enumerated section roles, in one file | `kit/validate --submit`, locally, before a byte moves |
 
 Vocabulary is borrowed wherever one exists — **PSS/SCC**, the cluster-scoped/namespaced split OLM
 install modes turn on, registry allowlisting — so a reviewer who recognises the standard can stop

@@ -371,43 +371,54 @@ one's deliverable is a receipt rather than an assertion:
 ones**: the deliverable of a pilot is what it is actually like to keep a bank
 current from outside.
 
-### 3.1 What a bundle is
+### 3.1 What a station report is
 
-Five files plus a manifest, produced by the subscriber's own
-`kit/validate/vexa_validate.py`: `profile.env` (substrate facts — provider,
-k8s version, scope, namespace, storage class, PSA mode, LimitRange and quota
-presence, mirror host; **never credentials**) · `values.redacted.yaml` (only
-the *shape* travels) · `contract.yaml` (**their file**) · `preflight-receipt.txt`
-· `smoke-receipt.json` · `station.json` (schema version, station, customer,
-environment, kit version, timestamp, and the `sha256` of every file).
-`station.json` is what makes it a bundle rather than a folder.
+**One file** — `station-report.yaml`, produced by the subscriber's own
+`kit/validate/vexa_validate.py`, with named sections instead of archive
+members: `profile` (substrate facts — provider, k8s version, scope, namespace,
+storage class, PSA mode, LimitRange and quota presence, mirror host; **never
+credentials**) · `values` (only the *shape* travels) · `contract_document`
+(**their file**) · `preflight_receipt` · `smoke_receipt` · `smoke_console` and
+`install_log` when a run produced them. The head carries the manifest facts —
+station, kit revision, Kubernetes version, provider, namespaces, contract id
+and sha256, phase verdicts — and `sections[]` carries the `sha256` of every
+section's text. That manifest is what makes it a report rather than a note.
 
-Redaction is verified from the finished archive, not from intent: any value
+One file because **the operator has to approve it before it leaves their
+perimeter**, and six files in a tarball is a review task where one commented
+document is a read. It goes back on every release, so the cost of a document
+nobody finishes compounds.
+
+Redaction is verified from the finished document, not from intent: any value
 under a key matching `password|token|secret|key|apikey` is replaced, then the
-archive is re-extracted and scanned, exiting **3** if a removed value still
-appears — **naming files, never values**.
+rendered file — the exact bytes that would be sent — is scanned, exiting **3**
+if a removed value still appears, **naming a count, never a value**.
 
 ### 3.2 Ingest
 
 ```bash
-python3 publisher/vexa_station.py ingest --bundle <station.tar.gz> --station <name> \
+python3 publisher/vexa_station.py ingest --bundle <station-report.yaml> --station <name> \
   --channel <chan> --ledger <stations-ledger> [--force]
 ```
 
-**S1..S4** run before anything is unpacked: bundle shape, completeness,
-manifest identity, and a plaintext-secret scan that is defence in depth over
-the customer's own redaction. S4 prints file, line and rule and **never the
-value**, so a refusal is safe to paste into a ticket. It writes
-`stations/<name>/ingest-receipt.json` with the ingest stamp, the bundle's own
-digest and every file digest.
+**S1..S4** run before anything is kept: report shape (one YAML document, a
+mapping, report.v1, bounded size), completeness of the section roles this
+report *kind* requires, manifest identity (every declared section hashes to
+the text that is there, nothing undeclared rides along), and a plaintext-secret
+scan that is defence in depth over the customer's own redaction — each section
+parsed back into its own format so a credential inside a block scalar is caught
+exactly as one inside a file was. S4 prints section, line and rule and **never
+the value**, so a refusal is safe to paste into a ticket. It writes
+`stations/<name>/ingest-receipt.json` with the ingest stamp, the report's own
+digest and every section digest, beside the report itself, verbatim.
 
 Until a station is ingested we cannot gate a release against it, so an
-un-ingested bundle is an **un-represented customer** — their contract is not
+un-ingested report is an **un-represented customer** — their contract is not
 consulted on any publish.
 
 `stations/<name>/` here is a **scratch directory** — gitignored, one laptop,
-gone with the laptop. `--ledger` is what makes the receipt durable: the bundle
-verbatim, its manifest and its ingest receipt land in
+gone with the laptop. `--ledger` is what makes the receipt durable: the report
+verbatim, its reduced manifest and its ingest receipt land in
 `channels/<chan>/stations/<name>/receipts/<timestamp>/`, and `state.yaml` is
 recomputed with the station's observed position, last verdict, and flags
 (`stale`, `contract-breach`, `revoked`). `ingest` is the sole writer of that

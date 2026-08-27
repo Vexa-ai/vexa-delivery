@@ -18,7 +18,7 @@ NOT THE SENDER'S CONTRACT, and the two were conflated until 1.0.6. These carry
 `policy.json` — publication mode, required evidence kinds, required
 attestations — into the ARGOCD namespace. The receipt sender reads a different
 document entirely: the station's own report contract, carrying `report_scope`
-(tier · trigger · destination · allowed_files), as `contract.yaml` from a
+(tier · trigger · destination · allowed_sections), as `contract.yaml` from a
 ConfigMap in the station namespace. Same word, two documents, two readers, two
 namespaces. See `_receipt-sender.tpl`.
 */}}
