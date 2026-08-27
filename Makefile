@@ -1,9 +1,9 @@
 # vexa-delivery — test and validation entry points. No target here touches a
 # cluster or a registry with credentials; everything runs on fixtures.
 
-.PHONY: test test-publisher test-preflight test-smoke test-validate test-kit test-verify validate-goldens docs-reference check-docs lint
+.PHONY: test test-publisher test-preflight test-smoke test-validate test-report test-kit test-verify validate-goldens docs-reference check-docs lint
 
-test: test-publisher test-preflight test-smoke test-validate test-kit test-verify validate-goldens check-docs
+test: test-publisher test-preflight test-smoke test-validate test-report test-kit test-verify validate-goldens check-docs
 
 test-publisher:
 	python3 -m unittest discover -s publisher/tests -v
@@ -17,6 +17,12 @@ test-smoke:
 
 test-validate:
 	@if [ -d kit/validate/tests ]; then python3 -m unittest discover -s kit/validate/tests -v; else echo "kit/validate/tests not present yet; skipped"; fi
+
+# The upgrade state reporter, end to end against fake kubectl/psql/pg_dump in
+# kit/report/tests/bin. No cluster, no database, no network — the fixture
+# directory IS the estate.
+test-report:
+	@if [ -d kit/report/tests ]; then python3 -m unittest discover -s kit/report/tests -v; else echo "kit/report/tests not present yet; skipped"; fi
 
 # install.sh's dry-run contract, exercised against a stub kubectl.
 test-kit:

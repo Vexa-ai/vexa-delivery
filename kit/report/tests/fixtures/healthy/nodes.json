@@ -1,0 +1,65 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "node-gpu-1",
+        "labels": {
+          "node.kubernetes.io/instance-type": "g6-gpu-rtx6000-1",
+          "topology.kubernetes.io/region": "us-sea",
+          "nvidia.com/gpu.product": "Quadro-RTX-6000"
+        }
+      },
+      "status": {
+        "capacity": {"cpu": "8", "memory": "32Gi", "pods": "110", "nvidia.com/gpu": "1"},
+        "allocatable": {"cpu": "7900m", "memory": "30Gi", "pods": "110", "nvidia.com/gpu": "1"},
+        "nodeInfo": {
+          "architecture": "amd64",
+          "osImage": "Ubuntu 22.04.4 LTS",
+          "kernelVersion": "5.15.0-101-generic",
+          "containerRuntimeVersion": "containerd://1.7.13",
+          "kubeletVersion": "v1.28.9"
+        }
+      }
+    },
+    {
+      "metadata": {
+        "name": "node-cpu-1",
+        "labels": {
+          "node.kubernetes.io/instance-type": "g6-standard-4",
+          "topology.kubernetes.io/region": "us-sea"
+        }
+      },
+      "status": {
+        "capacity": {"cpu": "4", "memory": "8Gi", "pods": "110"},
+        "allocatable": {"cpu": "3900m", "memory": "7Gi", "pods": "110"},
+        "nodeInfo": {
+          "architecture": "amd64",
+          "osImage": "Ubuntu 22.04.4 LTS",
+          "kernelVersion": "5.15.0-101-generic",
+          "containerRuntimeVersion": "containerd://1.7.13",
+          "kubeletVersion": "v1.28.9"
+        }
+      }
+    },
+    {
+      "metadata": {
+        "name": "node-cpu-2",
+        "labels": {
+          "node.kubernetes.io/instance-type": "g6-standard-4",
+          "topology.kubernetes.io/region": "us-sea"
+        }
+      },
+      "status": {
+        "capacity": {"cpu": "4", "memory": "8Gi", "pods": "110"},
+        "allocatable": {"cpu": "3900m", "memory": "7Gi", "pods": "110"},
+        "nodeInfo": {
+          "architecture": "amd64",
+          "osImage": "Ubuntu 22.04.4 LTS",
+          "kernelVersion": "5.15.0-101-generic",
+          "containerRuntimeVersion": "containerd://1.7.13",
+          "kubeletVersion": "v1.28.9"
+        }
+      }
+    }
+  ]
+}

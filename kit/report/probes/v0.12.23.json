@@ -1,0 +1,51 @@
+{
+  "probe_set": "v0.12.23",
+  "description": "Invariant probes for the hazards an upgrade to 0.12.23 has to clear. Every probe is a single aggregate count and its SQL is printed verbatim in probes.json, so you can read exactly what was asked of your database beside the answer it gave. Sources: MIGRATION-0002 (core/identity/services/admin-api/src/admin_api/schema/MIGRATION-0002-meeting-active-dedup-index.md) and the schema-convergence hardening in Vexa-ai/vexa#1186.",
+  "context": [
+    "Vexa runs no Alembic. The admin-api converges the database to its SQLAlchemy metadata at startup (ensure_schema), so there is no alembic_version table and no revision to compare. These probes stand in for one: they ask the database directly what state it is in.",
+    "Before 0.12.23, a failed CREATE UNIQUE INDEX during convergence was logged at WARNING and startup continued. Verified in production on 2026-08-17: the index had NEVER existed, blocked by 4 stale duplicate rows, silently re-attempted and re-swallowed on every restart, with the lone warning log-rotating away inside a day. From 0.12.23 the same failure raises SchemaInvariantError and admin-api never binds.",
+    "So on any database last converged by 0.12.22 or earlier, the index may legitimately be absent while the service reported itself healthy. Absence is the expected pre-0.12.23 state, not an anomaly — but it is exactly what turns an upgrade into an outage, which is why it is probed here rather than discovered at startup."
+  ],
+  "probes": [
+    {
+      "name": "meeting-active-duplicate-keys",
+      "migration": "MIGRATION-0002",
+      "hazard": "MIGRATION-0002 adds a UNIQUE index on meetings (user_id, platform, platform_specific_id) restricted to non-terminal rows: WHERE status NOT IN ('completed','failed'). Any key with more than one non-terminal row today blocks that index, and from 0.12.23 a blocked index aborts admin-api startup instead of warning. This counts the colliding key groups.",
+      "expect": {"equals": 0},
+      "if_violated": "Each group named here must be resolved before the upgrade — terminate the stale rows (set them to 'completed' or 'failed') or delete them, per the MIGRATION-0002 runbook. Send us the count; the rehearsal reproduces it and we resolve it against your data shape, not a guess at it.",
+      "sql": "SELECT count(*) FROM (SELECT user_id, platform, platform_specific_id FROM meetings WHERE status NOT IN ('completed', 'failed') GROUP BY user_id, platform, platform_specific_id HAVING count(*) > 1) AS colliding_keys"
+    },
+    {
+      "name": "meeting-active-duplicate-rows",
+      "migration": "MIGRATION-0002",
+      "hazard": "The same collision counted as ROWS rather than as key groups — how much data an operator actually has to touch before the index can be built. Reported separately because one key with forty stale rows and forty keys with two are the same number of groups and very different afternoons.",
+      "expect": {"equals": 0},
+      "if_violated": "Non-zero here with a non-zero count above is the size of the cleanup, not a second fault.",
+      "sql": "SELECT count(*) FROM meetings m WHERE m.status NOT IN ('completed', 'failed') AND EXISTS (SELECT 1 FROM meetings o WHERE o.status NOT IN ('completed', 'failed') AND o.user_id = m.user_id AND o.platform = m.platform AND o.platform_specific_id = m.platform_specific_id AND o.ctid <> m.ctid)"
+    },
+    {
+      "name": "meeting-active-index-present-and-valid",
+      "migration": "MIGRATION-0002",
+      "hazard": "Whether uq_meeting_active_user_platform_native exists, is unique AND is valid. Schema convergence matches indexes BY NAME ONLY, so an index present under the right name is never checked for a matching predicate, and CREATE INDEX CONCURRENTLY can leave an INVALID index behind that satisfies a name check while enforcing nothing.",
+      "expect": {"equals": 1},
+      "if_violated": "0 means the index was never built — the expected state on a pre-0.12.23 estate, and the thing the two probes above tell you the cost of. A count of 1 with a violation on either probe above is contradictory and worth telling us about.",
+      "sql": "SELECT count(*) FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid JOIN pg_class tc ON tc.oid = i.indrelid WHERE tc.relname = 'meetings' AND ic.relname = 'uq_meeting_active_user_platform_native' AND i.indisunique AND i.indisvalid AND i.indislive"
+    },
+    {
+      "name": "meeting-active-index-invalid",
+      "migration": "MIGRATION-0002",
+      "hazard": "An index by that name that exists but is INVALID — the residue of an interrupted CREATE INDEX CONCURRENTLY. It enforces nothing, and it makes the next build attempt fail on the name rather than on the data.",
+      "expect": {"equals": 0},
+      "if_violated": "Drop the invalid index before the upgrade and let convergence rebuild it. The MIGRATION-0002 runbook has the exact statements; this tool will not run them.",
+      "sql": "SELECT count(*) FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid WHERE ic.relname = 'uq_meeting_active_user_platform_native' AND NOT i.indisvalid"
+    },
+    {
+      "name": "meetings-non-terminal-total",
+      "migration": "MIGRATION-0002",
+      "hazard": "Not an invariant — the denominator. How many non-terminal meeting rows exist at all, so the counts above can be read as a proportion rather than as bare integers.",
+      "expect": {"at_least": 0},
+      "if_violated": "n/a — this probe cannot fail; it is context for the ones that can.",
+      "sql": "SELECT count(*) FROM meetings WHERE status NOT IN ('completed', 'failed')"
+    }
+  ]
+}

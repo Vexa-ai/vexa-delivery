@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "metadata": {"name": "vexa-admin-api", "labels": {"app.kubernetes.io/name": "admin-api"}},
+      "spec": {
+        "replicas": 1,
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "admin-api",
+                "image": "vexaai/admin-api:leaky-value-123456",
+                "resources": {},
+                "env": [
+                  {"name": "DATABASE_PASSWORD", "value": "leaky-value-123456"},
+                  {"name": "WORKERS", "value": "4"}
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "status": {"readyReplicas": 1}
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+---
+title: "Upgrade report"
+description: "Step one for a deployment that already has history: tell us the state your upgrade has to survive."
+---
+
+**A deployment with history does not get upgraded, it gets rehearsed.** You send us the state you are actually in; we reproduce it on a throwaway environment, rehearse your upgrade against it until it is green, and publish the rehearsed upgrade as the first entry of [your channel](channel), evidence attached. This page is how you send the state. ([Install](install) is the other path — a fresh cluster with nothing in it yet.)
+
+```bash
+python3 kit/report/vexa_state_report.py --namespace vexa \
+  --db-pod postgres-0 --db-name vexa --db-user vexa
+```
+
+It writes **`state-report.tar.gz`**, prints the path, and stops.
+
+## What it captures
+
+| | |
+|---|---|
+| `workloads.json` | image refs and the digests **actually running**, replicas, resources, chart labels, Kubernetes version, node shapes (instance type, GPU) |
+| `db.json` | engine and version, migration revision, extensions, per-table row counts, total size |
+| `schema.sql` | DDL only |
+| `probes.json` | one aggregate count per known upgrade hazard — e.g. rows that would block 0.12.23's active-meeting uniqueness index — each with **the exact SQL printed beside its answer** |
+| `runtime.json` | the transcription reproduction surface: model, size, device, GPU-vs-CPU, and the non-secret environment behind them |
+| `report.json` | tool version, date, the source of every section, the redaction verdict |
+
+**No rows, no meeting content, no transcripts, no credentials.** Environment capture is allowlist-first — a variable is excluded unless it describes how the model runs — so redaction is the second net, not the only one. Values under keys matching `password|token|secret|key|apikey` become `REDACTED`; `--verify-redaction` (on by default) re-extracts the finished archive and exits `3` if one survived, naming files, never values. Exit codes: `0` written · `2` usage · `3` redaction leak.
+
+## Read-only, and not by promise
+
+Every cluster read is `kubectl get -o json`. Every database session opens with `default_transaction_read_only=on`, and every probe is refused before it reaches a connection unless it is a single `SELECT count(...)`. There is no transmit path in the tool at all — no submit flag, no destination, no endpoint.
+
+The minimal access it needs: **cluster** — `get`/`list` on pods, deployments, statefulsets, daemonsets and cronjobs in your namespace, plus `get`/`list` on `nodes` cluster-wide (skip it and the node inventory is reported absent; nothing else changes). **Database** — `CONNECT` on the database, `USAGE` on the schema, `SELECT` on its tables. Nothing else, and no `--db-*` flags at all if you would rather send the cluster half only.
+
+## Then you send it
+
+Open the files. They are plain JSON and plain SQL, and they are meant to be read before anything leaves your perimeter — that is why the tool stops instead of offering to help. Send the archive by whatever means your policy allows, and the rehearsal starts from it.
+
+The kit is Apache-2.0, and this tool will meet estates we have never seen. If it misses something in yours, the collector you want is about twenty lines — see *Adding a collector* at the top of `kit/report/vexa_state_report.py`, or add a hazard to `kit/report/probes/` — and a pull request (with a DCO sign-off) is worth more to us than a support ticket.
+
+Next: [Operations](operations) · [Install](install) · [The channel](channel)

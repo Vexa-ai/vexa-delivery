@@ -1,0 +1,73 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "vexa-whisperlive",
+        "labels": {
+          "app.kubernetes.io/name": "whisperlive",
+          "app.kubernetes.io/version": "0.10.4",
+          "helm.sh/chart": "vexa-0.10.4"
+        },
+        "annotations": {
+          "meta.helm.sh/release-name": "vexa",
+          "kubectl.kubernetes.io/last-applied-configuration": "{...}"
+        }
+      },
+      "spec": {
+        "replicas": 2,
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "whisperlive",
+                "image": "vexaai/whisperlive:0.10.4",
+                "resources": {
+                  "requests": {"cpu": "2", "memory": "8Gi", "nvidia.com/gpu": "1"},
+                  "limits": {"cpu": "4", "memory": "16Gi", "nvidia.com/gpu": "1"}
+                },
+                "env": [
+                  {"name": "WHISPER_MODEL_SIZE", "value": "medium"},
+                  {"name": "DEVICE", "value": "cuda"},
+                  {"name": "BEAM_SIZE", "value": "5"},
+                  {"name": "LANGUAGE", "value": "en"},
+                  {"name": "MODEL_API_KEY", "value": "mk-not-in-the-report-0001"},
+                  {"name": "REDIS_URL", "value": "redis://redis.vexa.svc:6379/0"},
+                  {"name": "ADMIN_API_TOKEN", "valueFrom": {"secretKeyRef": {"name": "vexa"}}}
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "status": {"readyReplicas": 2, "availableReplicas": 2}
+    },
+    {
+      "metadata": {
+        "name": "vexa-admin-api",
+        "labels": {"app.kubernetes.io/name": "admin-api", "helm.sh/chart": "vexa-0.10.4"}
+      },
+      "spec": {
+        "replicas": 1,
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "admin-api",
+                "image": "vexaai/admin-api:0.10.4",
+                "resources": {
+                  "requests": {"cpu": "100m", "memory": "256Mi"},
+                  "limits": {"cpu": "1", "memory": "512Mi"}
+                },
+                "env": [
+                  {"name": "DATABASE_URL", "value": "postgresql://vexa:hunter2please@pg:5432/vexa"},
+                  {"name": "WORKERS", "value": "4"}
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "status": {"readyReplicas": 1, "availableReplicas": 1}
+    }
+  ]
+}

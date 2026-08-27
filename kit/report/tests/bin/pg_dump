@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""A fake pg_dump: prints <fixtures>/schema.sql, or exits 1 when there is none
+so the information_schema fallback path is exercised."""
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(os.environ["VEXA_TEST_FIXTURES"]) / "schema.sql"
+if not path.is_file():
+    sys.stderr.write("pg_dump: server version mismatch\n")
+    sys.exit(1)
+sys.stdout.write(path.read_text())

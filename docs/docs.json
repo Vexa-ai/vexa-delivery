@@ -15,6 +15,7 @@
           "index",
           "how-it-works",
           "install",
+          "upgrade-report",
           "channel",
           "station-gate",
           "preflight",
@@ -33,6 +34,7 @@
           "reference/vexa-preflight",
           "reference/vexa-smoke",
           "reference/vexa-validate",
+          "reference/vexa-state-report",
           "reference/kit-bootstrap",
           "reference/kit-install",
           "reference/kit-self-update"
