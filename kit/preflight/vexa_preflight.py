@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""vexa-preflight — cluster conformance preflight for the Vexa enterprise channel.
+"""vexa-preflight — cluster conformance preflight for your enterprise channel.
 
 Answers, BEFORE first sync and on every upgrade, in plain language: will this
 cluster run what the conveyor delivers? Every check is anchored to a failure
@@ -787,7 +787,7 @@ def render(checks, as_json=False):
                            "verdict": overall(checks)}, indent=1)
     lines = []
     width = 78
-    lines.append("vexa-preflight — cluster conformance for the Vexa enterprise channel")
+    lines.append("vexa-preflight — cluster conformance for your enterprise channel")
     lines.append("=" * width)
     for c in checks:
         badge = {"PASS": "PASS", "WARN": "WARN", "FAIL": "FAIL", "SKIP": "skip"}[c.status]

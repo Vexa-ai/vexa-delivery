@@ -91,7 +91,7 @@ Three ways to reach the database, in the order you should try them. `--db-host`
 (managed, external, or port-forwarded; the password comes from PGPASSWORD or
 ~/.pgpass, never from argv). `--db-pod`, which runs psql inside the pod and
 therefore needs `create` on `pods/exec` — a privileged verb, declared as such
-in docs/upgrade-report.mdx. Or `kubectl apply -f kit/report/job.yaml`, which
+in docs/upgrade.mdx. Or `kubectl apply -f kit/report/job.yaml`, which
 runs the database half from inside the cluster with a read-only ServiceAccount
 and no exec at all. With none of them the cluster half is still collected and
 the run still succeeds — but every probe reports `not run`, and the tool says
@@ -405,7 +405,7 @@ class Postgres:
                 cmd += ["-d", self.dbname]
             return cmd + extra
         # kubectl exec — `create` on pods/exec, which is a privileged verb and
-        # is declared as such in docs/upgrade-report.mdx. It is the last resort
+        # is declared as such in docs/upgrade.mdx. It is the last resort
         # of the three on purpose: reach for --db-host first, and for the
         # in-cluster Job (kit/report/job.yaml) when exec is not grantable.
         cmd = self.kube.base() + ["exec", "-n", self.kube.namespace, self.pod]
@@ -611,7 +611,7 @@ def _node_classes(ctx, out):
         Ctx.absent_section(
             out, "node inventory",
             (err or "nodes not readable") + " — needs cluster-scoped node read; the "
-            "minimal RBAC is in docs/upgrade-report.mdx. The rest of the report is "
+            "minimal RBAC is in docs/upgrade.mdx. The rest of the report is "
             "unaffected.")
         return None
     classes = {}

@@ -19,11 +19,13 @@ cloud production.
 
 **Your running self-hosted Vexa service that stays up to date:**
 
-1. **Bring your own cloud** — Kubernetes anywhere: GKE, AWS, OpenShift; a namespace in an
-   existing cluster or an entire fresh one. Nothing Vexa-specific.
+1. **Bring your own cloud** — k8s, GCloud, AWS, OpenShift. A namespace in a cluster, or an
+   entire fresh one.
 2. **Install Vexa Delivery.**
 3. **Set it to consume the public images — or your enterprise channel.**
-4. **Your cluster runs and self-updates as new images are published.**
+4. **Cluster running, self-updating on new images published.**
+
+Already running Vexa? Start at [docs/upgrade](docs/upgrade.mdx).
 
 ## How it works
 
@@ -97,9 +99,12 @@ receipts — is general.
 
 ## Getting started
 
-Start at [docs/install](docs/install.mdx) — five steps from a kit you verify with your own
-key. Channels are credentialed today, both paths — [request access](mailto:dmitry@vexa.ai)
-and your credential, channel key and bootstrap parameters arrive by mail.
+Two doors. **Already running Vexa?** Start at [docs/upgrade](docs/upgrade.mdx) — one read-only
+script writes the report your upgrade gets rehearsed against; that is the whole first step.
+**Nothing running yet?** Start at [docs/install](docs/install.mdx) — five steps from a kit you
+verify with your own key. Channels are credentialed today, both paths —
+[request access](mailto:dmitry@vexa.ai) and your credential, channel key and bootstrap
+parameters arrive by mail.
 
 ## Contributing
 

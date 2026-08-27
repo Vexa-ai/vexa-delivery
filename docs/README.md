@@ -1,6 +1,6 @@
 # docs — one site, two tabs
 
-Everything documented about Vexa Enterprise renders in one Mintlify site:
+Everything documented about Vexa Delivery renders in one Mintlify site:
 
 ```bash
 cd docs && npx -y mint@latest dev --port 3333

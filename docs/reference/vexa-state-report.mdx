@@ -116,7 +116,7 @@ Three ways to reach the database, in the order you should try them. `--db-host`
 (managed, external, or port-forwarded; the password comes from PGPASSWORD or
 ~/.pgpass, never from argv). `--db-pod`, which runs psql inside the pod and
 therefore needs `create` on `pods/exec` — a privileged verb, declared as such
-in docs/upgrade-report.mdx. Or `kubectl apply -f kit/report/job.yaml`, which
+in docs/upgrade.mdx. Or `kubectl apply -f kit/report/job.yaml`, which
 runs the database half from inside the cluster with a read-only ServiceAccount
 and no exec at all. With none of them the cluster half is still collected and
 the run still succeeds — but every probe reports `not run`, and the tool says

@@ -10,12 +10,12 @@
   "navigation": {
     "groups": [
       {
-        "group": "Vexa Enterprise",
+        "group": "Guide",
         "pages": [
           "index",
           "how-it-works",
           "install",
-          "upgrade-report",
+          "upgrade",
           "channel",
           "station-gate",
           "preflight",

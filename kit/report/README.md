@@ -9,7 +9,7 @@ reads the files and sends them by hand; we reproduce that state on a throwaway
 environment, rehearse their upgrade against it until it is green, and publish
 the rehearsed upgrade as the first entry of their channel.
 
-Operator-facing page: [`docs/upgrade-report.mdx`](../../docs/upgrade-report.mdx),
+Operator-facing page: [`docs/upgrade.mdx`](../../docs/upgrade.mdx),
 including the minimal read-only RBAC.
 
 ```
