@@ -1,0 +1,61 @@
+vexa-preflight — cluster conformance for the Vexa enterprise channel
+==============================================================================
+[FAIL] P1 · Every delivered workload can schedule despite node taints
+       2/2 nodes carry taints: node-rhxvk: vexa-test/dedicated=true:NoSchedule; node-szdgs: vexa-test/dedicated=true:NoSchedule
+       Deployment/undeclared-addon cannot schedule on any node — no toleration for taint vexa-test/dedicated:NoSchedule (and possibly others). Its pods will sit Pending exactly like the LKE addon pods did for 6 hours.
+       DynamicPod/vexa-bot (spawned per meeting; not in any render) cannot schedule on any node — no toleration for taint vexa-test/dedicated:NoSchedule (and possibly others). Its pods will sit Pending exactly like the LKE addon pods did for 6 hours.
+       remedy: add matching tolerations to the delivered values (kit overlay), or remove/scope the taint
+       (anchor: vexa-platform#337 (6h addon strand); argocd spike finding 5)
+------------------------------------------------------------------------------
+[FAIL] P2 · Declared resources on every container, and they fit the LimitRange
+       namespace has 1 LimitRange(s)
+       Deployment/undeclared-addon container 'addon' does not declare requests.memory, limits.memory, requests.cpu, limits.cpu — the LimitRange would silently assign it 64Mi (the exact 64Mi-squeeze class). Every workload the conveyor delivers declares resources explicitly.
+       DynamicPod/vexa-bot (spawned per meeting; not in any render) 'bot' declares limits.memory 2560Mi above the LimitRange max 1Gi — admission will refuse the pod.
+       remedy: raise the LimitRange max or deliver a smaller profile for this environment
+       (anchor: vexa#1005 (a customer LimitRange squeezed undeclared bots to 64Mi); vexa-platform#338 (sizing env vars dead code))
+------------------------------------------------------------------------------
+[PASS] P3 · ResourceQuota headroom covers the declared totals
+       no ResourceQuota in the namespace
+       (anchor: handoff §6.1)
+------------------------------------------------------------------------------
+[FAIL] P4 · SCC restricted-v2 / PodSecurity 'restricted' admission
+       PodSecurity enforce=restricted on the namespace
+       Deployment/undeclared-addon 'addon': runAsNonRoot is not true — PSA restricted refuses the pod (SCC would have mutated other fields, but never this one).
+       Deployment/undeclared-addon 'addon': allowPrivilegeEscalation must be false under PSA restricted.
+       Deployment/undeclared-addon 'addon': capabilities.drop must include ALL under PSA restricted.
+       Deployment/undeclared-addon 'addon': seccompProfile RuntimeDefault required under PSA restricted.
+       DynamicPod/vexa-bot (spawned per meeting; not in any render) 'bot': runAsNonRoot is not true — PSA restricted refuses the pod (SCC would have mutated other fields, but never this one).
+       DynamicPod/vexa-bot (spawned per meeting; not in any render) 'bot': allowPrivilegeEscalation must be false under PSA restricted.
+       DynamicPod/vexa-bot (spawned per meeting; not in any render) 'bot': capabilities.drop must include ALL under PSA restricted.
+       DynamicPod/vexa-bot (spawned per meeting; not in any render) 'bot': seccompProfile RuntimeDefault required under PSA restricted.
+       (anchor: openshift readiness audit 2026-08-19: SCC mutates, then REJECTS explicit UIDs outside the namespace range; the hardened workloads are the rejected ones)
+------------------------------------------------------------------------------
+[FAIL] P5 · NetworkPolicy lets the delivered workloads resolve DNS and reach the registry
+       default-deny egress policy 'default-deny-egress' selects every pod
+       egress is default-denied and no policy allows DNS (port 53) — every delivered pod will fail name resolution, and the failure will look like application errors, not policy.
+       remedy: allow UDP/TCP 53 to kube-dns and 443 to the channel registry from the vexa namespace
+       (anchor: handoff §6.1 (netpol reachability); spike finding 9 (the only defence was an unenforced hostAliases sink))
+------------------------------------------------------------------------------
+[FAIL] P6 · The bot's Memory-backed /dev/shm fits the limits and the nodes
+       vexa-bot (spawned per meeting; not in any render): /dev/shm 2Gi (Memory medium) + memory limit 2.5Gi; shm writes count against the limit
+       vexa-bot (spawned per meeting; not in any render): memory limit 2.5Gi exceeds LimitRange max 1Gi — the bot pod will be refused at admission.
+       remedy: raise the LimitRange max in the vexa namespace to at least 2560Mi
+       (anchor: openshift audit: 2Gi shm counts against the 2560Mi container limit; production's actual configuration)
+------------------------------------------------------------------------------
+[PASS] P8 · A default StorageClass exists for the delivered PVCs
+       delivered set carries no PVCs
+       (anchor: spike teardown lesson: Retain PVs strand)
+------------------------------------------------------------------------------
+[PASS] P9 · Kubernetes version floor
+       server v1.36.3
+       (anchor: kit pins Argo CD + Kyverno versions)
+------------------------------------------------------------------------------
+[WARN] P5-live · In-cluster probe: DNS resolution and registry reachability
+       probe pod did not run to completion: error: timed out waiting for the condition
+       (anchor: handoff §6.1 — static analysis cannot prove reachability; a pod can)
+------------------------------------------------------------------------------
+[WARN] P7 · The cluster pulls a release image by digest with this namespace's pull secrets
+       pull of docker.io/vexaai/v012-mcp@sha256:00000000000000000000000000000000000000000000000000000000deadbeef still not complete after 90s — slow network or large image; rerun with a longer --pull-timeout
+       (anchor: argocd spike finding 8 — images 'pulled' only because nodes had them cached)
+------------------------------------------------------------------------------
+VERDICT: FAIL — fix the findings above before first sync

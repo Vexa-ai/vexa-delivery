@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: Apache-2.0
+# The customer-owned admission layer: independently verifies OUR artifacts
+# before a byte runs (P11 — the policy is the customer's; we cannot override
+# it). Two rules:
+#
+# WHAT THIS LAYER DOES NOT DO, said here so nobody assumes otherwise:
+#
+#   * It does not read the channel's REVOCATION LIST. An admission controller
+#     verifies signatures on the images in front of it; it does not fetch a
+#     vendor document and reason about it, and no amount of policy YAML makes
+#     it. A revoked release whose images are correctly signed is ADMITTED here.
+#     The enforcement point for revocation is the PreSync verifier
+#     (kit/verify/vexa-verify.sh), which runs before the sync and refuses it.
+#
+#   * It does not check ENTRY FRESHNESS. `expires` lives in the channel entry,
+#     which admission never sees. Same enforcement point.
+#
+#   * It does not enforce DELIVERY_SCOPE. What this layer CAN do about blast
+#     radius is what Kubernetes does natively and better: Pod Security
+#     admission at `baseline` or `restricted`, which is exactly the vocabulary
+#     the contract's `delivery_scope.pod_security` is written in, precisely so
+#     the customer can switch it on and get the same answer from a party that
+#     is not us. Do that — it is the only check that sees what actually runs.
+#
+# Two gates, two jobs. Neither is a superset of the other.
+#
+#   1 require-digest-pinning  every vexaai/* image reference is @sha256:...
+#                             (NO_MUTABLE_TAGS carried to the customer side)
+#   2 verify-channel-signature every vexaai/* image is cosign-signed by the
+#                             channel key; signatures live in the channel
+#                             registry, so verification needs no reachability
+#                             to Docker Hub and no call to Vexa
+#
+# ${...} placeholders are filled by kit/install.sh (channel public key,
+# signature repository). Kyverno is stock upstream; this file is config.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: vexa-require-digest-pinning
+spec:
+  validationFailureAction: Enforce
+  background: false
+  admission: true
+  emitWarning: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: vexa-images-by-digest-only
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces:
+                - ${STAGING_NAMESPACE}
+                - ${PROD_NAMESPACE}
+      validate:
+        allowExistingViolations: true
+        message: >-
+          Vexa images must be pinned by digest (@sha256:...). A mutable tag is
+          not an identity; the channel entry names exact digests.
+        foreach:
+          - list: request.object.spec.containers[] || `[]`
+            deny:
+              conditions:
+                all:
+                  - key: "{{ regex_match('^.*vexaai/.*', element.image) }}"
+                    operator: Equals
+                    value: true
+                  - key: "{{ regex_match('^.*@sha256:[a-f0-9]{64}$', element.image) }}"
+                    operator: Equals
+                    value: false
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: vexa-verify-channel-signature
+spec:
+  validationFailureAction: Enforce
+  background: false
+  admission: true
+  emitWarning: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: vexa-images-signed-by-channel
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces:
+                - ${STAGING_NAMESPACE}
+                - ${PROD_NAMESPACE}
+      verifyImages:
+        - imageReferences:
+            - "*vexaai/*"
+          # signatures live in the channel registry (cosign COSIGN_REPOSITORY
+          # convention), so admission verifies without reaching the image's
+          # home registry and without calling Vexa.
+          #
+          # On channel.vexa.ai these read paths are served ANONYMOUSLY —
+          # signatures are verification material, not secrets, and a reviewer
+          # who can check them without holding a credential is the point.
+          # Measured 2026-08-25 on Kyverno 1.19.0 with no registry credential
+          # of any kind: correctly signed ADMITTED, unsigned DENIED, wrong key
+          # DENIED. If you point `repository:` at your OWN mirror instead,
+          # give Kyverno a credential for it (`install.sh --registry-user`).
+          repository: ${SIGNATURE_REPOSITORY}
+          mutateDigest: false
+          verifyDigest: true
+          required: true
+          useCache: true
+          failureAction: Enforce
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: |-
+${CHANNEL_PUBLIC_KEY_INDENTED}
+                    signatureAlgorithm: sha256
+                    rekor:
+                      ignoreTlog: true
+                    ctlog:
+                      ignoreSCT: true
+                  signatureAlgorithm: sha256

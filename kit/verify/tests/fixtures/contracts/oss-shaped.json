@@ -1,0 +1,19 @@
+{
+  "contract_id": "fixture-oss-2026-01",
+  "require_evidence_kinds": [
+    "candidate_map",
+    "delivery_receipt",
+    "source_provenance",
+    "trusted_root"
+  ],
+  "forbid_absent_evidence": [
+    "candidate_map",
+    "delivery_receipt",
+    "source_provenance",
+    "trusted_root"
+  ],
+  "require_publication_mode": "candidate",
+  "require_vendor_approval": false,
+  "allow_break_glass": false,
+  "min_entry_seq": 1
+}

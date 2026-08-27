@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# The kit runtime image is built from the repository root (it needs kit/ and
+# station/chart/Chart.yaml). Everything else is context the build never reads —
+# and __pycache__ in particular would ship a developer's machine's bytecode.
+.git
+**/__pycache__
+**/*.pyc
+docs
+onboarding
+publisher
+spec
+stations

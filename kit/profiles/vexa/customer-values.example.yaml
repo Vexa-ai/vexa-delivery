@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# EXAMPLE customer-local values — the only file the customer edits. It never
+# leaves their cluster and survives every upgrade unchanged.
+secrets:
+  # Production: point existingSecretName at your own pre-created Secret and
+  # delete the inline values below (they exist so a first evaluation boots).
+  existingSecretName: ""
+  adminApiToken: "CHANGE_ME_admin_token"
+  internalApiSecret: "CHANGE_ME_internal"
+  nextauthSecret: "CHANGE_ME_nextauth"
+  # transcriptionServiceToken: ""     # from your subscription pack
+  # anthropicApiKey: ""               # model auth, if agents are used
+global:
+  imagePullSecrets: []                # e.g. [{name: your-registry-cred}]
+  tolerations: []                     # your node taints, if any (preflight P1 names them)

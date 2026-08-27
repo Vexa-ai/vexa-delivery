@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vexa.ai/schemas/ee/revocations.v1.json",
+  "title": "Vexa channel revocation list",
+  "description": "The channel's recall notice. We can publish and we cannot un-publish: an immutable tag stays resolvable and a cached chart stays installable, so withdrawing a release has to be a POSITIVE, signed statement rather than a deletion. One list per channel, cosign-signed with the same channel key that signs entries, published at <channel-ref>/revocations:latest and replaced wholesale on every revocation. ABSENT IS NOT AN ERROR: a channel that predates this capability has no list, and a verifier treats that as an empty list — stated here so nobody implements the fail-closed reading, which would brick every install made before the list existed. The list carries its own `expires` for the same reason entries do: a verifier that can reach the channel but keeps getting a months-old list is being fed a stale answer, and freshness is the only defence against that. NOT READABLE BY KYVERNO — admission controllers verify signatures on images, they do not fetch vendor documents; the PreSync verifier is the enforcement point.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "channel", "updated_at", "expires", "entries"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "channel": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+      "description": "The channel this list governs. A verifier refuses a list naming a channel other than the one it pulled from."
+    },
+    "updated_at": { "$ref": "#/$defs/timestamp" },
+    "expires": {
+      "$ref": "#/$defs/timestamp",
+      "description": "After this instant the list itself is stale and the verifier says so rather than trusting it. Re-published on every revocation and by `revoke --refresh` in between."
+    },
+    "entries": {
+      "type": "array",
+      "description": "Every withdrawal ever made on this channel, oldest first. Never pruned: a list that forgets is a list that re-admits.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "severity", "date"],
+        "anyOf": [
+          { "required": ["digest"] },
+          { "required": ["version"] }
+        ],
+        "properties": {
+          "digest": {
+            "$ref": "#/$defs/digest",
+            "description": "An exact artifact or image digest. The precise form: it survives re-tagging and names one immutable set of bytes."
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "description": "A release version, withdrawing every entry that names it. The blunt form, for when the defect is in the release rather than in one artifact."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 8,
+            "description": "Why it was withdrawn, in words an operator can act on. Not optional and not a code: this text is what a customer reads at the moment their sync stops."
+          },
+          "severity": {
+            "enum": ["low", "medium", "high", "critical"],
+            "description": "low/medium withdraw the release from new installs; high/critical mean a running install should be moved off it. The verifier refuses regardless of severity — the field tells the operator how fast to act, it does not soften the refusal."
+          },
+          "date": { "$ref": "#/$defs/timestamp" },
+          "supersedes": {
+            "type": ["string", "null"],
+            "description": "The release an operator should move to instead, when one exists. Null when the answer is 'no version yet'."
+          },
+          "advisory": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Link to the fuller writeup — a CVE, an advisory, a receipt in this repository."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }
+  }
+}

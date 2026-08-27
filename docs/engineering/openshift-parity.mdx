@@ -1,0 +1,114 @@
+---
+title: "OpenShift setup and target parity"
+description: "How the delivery station lands on a tenant-scoped OpenShift, how we reproduce that environment for validation, and where each property matches the target"
+---
+
+Target environment: a regulated financial institution running Vexa on a shared
+OpenShift estate — the app team holds a project, a separate operations
+department runs the cluster. Everything below is grounded in evidence — the
+subscriber's own measurements on their development cluster, their fork's CI,
+and our rig validations of 2026-08-21 — not in assumptions.
+
+<Note>
+The subscriber is deliberately not named here, and their registry hostnames,
+project names and dates are not in this repository. Access to this repository
+is granted per person and the next person may be another customer's engineer —
+see [ADR-0008](/adr/0008-repository-apache-2). Every technical finding below is
+intact; only the identity is gone.
+</Note>
+
+## The target setup, in their own terms
+
+| Property | Their reality |
+|---|---|
+| Clusters | Three (dev → test → prod); dev is "the most permissive of the three" |
+| SCC | `restricted-v2` enforced; admission injects a random per-namespace UID (measured on a real admitted bot pod: `runAsUser 1000920000`, `runAsNonRoot true`, `capabilities drop ALL`, `seccompProfile RuntimeDefault`, `fsGroup` set); **never set a securityContext the platform will inject — a spec that supplies its own is more likely to be rejected** |
+| Tenancy | App team holds a **project**, not the cluster; a separate operations department runs OpenShift; a platform team grants runtime RBAC, LimitRange, ResourceQuota |
+| Deploys | **No CLI for the app team.** Git commit → Argo CD sync (two-repo GitOps, Kustomize overlays per environment; helm sources enabled on dev). Their CI commits image bumps to the config repo; Argo does the rest |
+| Registry | Harbor as a **pull-through cache of Docker Hub** (`dockerhub-proxy/...`, any tag, no pull secret, purely mechanical) plus internal projects for their own builds. Cluster workloads pull only from Harbor |
+| Quotas | ResourceQuota + LimitRange enforced in the project |
+| Egress | Workload pulls: Harbor only. General egress: deliberately unanswered by them so far |
+| GPU / models | Separate model-serving project; cross-project traffic firewalled |
+
+## How the station lands there
+
+One merge into their config repo — the same motion as every deploy they make:
+
+1. **Bootstrap by commit**: an Argo `Application` (the station root) + a repo
+   secret for the Harbor-proxied OCI helm repo. Site facts (Harbor paths,
+   pinned channel public key) ride inline. See `station/profiles/TEMPLATE/` for
+   the profile shape; filled per-customer profiles are not committed (ADR-0008).
+2. The root pulls the **station bundle** (`scope: namespace`,
+   `admission.enabled: false`): the subscription ApplicationSet, their
+   contract ConfigMap, the substrate floor CronJob. No Kyverno exists there —
+   the **verify gate is the enforcement point**; cluster admission is the
+   later ops-hardening step.
+3. The subscription pulls Vexa releases **through their Harbor**. Staging tier
+   follows automatically; the prod pin moves only when their approver moves it.
+4. The **floor** re-checks the tenant preconditions every 10 minutes and
+   reports cluster-level facts as UNKNOWN rather than guessing — a tenant
+   never pretends to see the substrate.
+
+One-time platform-team asks (their bucket, pre-authorized as "special
+configuration later"): namespace + runtime RBAC + LimitRange + ResourceQuota
+(already requested by the customer's own engineer), and — only for the private
+channel lane — one Harbor registry endpoint holding our read-only subscriber
+token plus a proxy-cache project. The public lane (`vexaai` on Docker Hub)
+needs nothing.
+
+## How we reproduce the environment for validation
+
+Two rigs plus the standing station:
+
+- **Transport rig** — a literal Harbor (v2.15.2) configured exactly as theirs:
+  an anonymous `dockerhub-proxy` and a **credentialed proxy-cache project** in
+  front of an authenticated private registry playing our channel host. The
+  endpoint + project are four Harbor API calls (recorded in the runbook).
+- **Tenant rig** — a restricted platform with their constraint shape: enforced
+  ResourceQuota + LimitRange (their defaults), a ServiceAccount kubeconfig
+  scoped to one namespace (every app action as tenant), Argo installed with a
+  strict ledger of ops-acts vs tenant-acts, a config repo served over git-http,
+  bootstrap by commit. Platform ladder: k3s + PSA-restricted (always
+  available) → MicroShift (real SCC admission, no VM) → genuine OKD (needs
+  KVM; cloud VMs without nested virtualization cannot run it — validated the
+  hard way).
+- **The standing station** — the channel's own staging/prod pair, running the
+  same bundle in cluster scope with admission enabled.
+
+## Parity matrix — where validation matches the target
+
+| Target property | Our stand-in | Status | Evidence |
+|---|---|---|---|
+| Harbor pull-through, credentialed private upstream | Literal Harbor v2.15.2 proxy-cache | **MATCHED** | 9/9 checks: entry, chart, sig tags, attestations, full verifier ELIGIBLE through the proxy; wrong key refused |
+| Revocation behavior | Upstream credential rotated | **MATCHED, fails closed** | ORAS artifacts are never cached: entries/attestations stop instantly; cached images keep serving |
+| Anonymous Docker Hub lane | `dockerhub-proxy` project | **MATCHED** | Pull through proxy without login |
+| Deploy-by-commit, no CLI | Config repo + Argo sync, tenant-only kubeconfig | **MATCHED** (tenant-rig leg) | Bootstrap Application is the single hand-applied object |
+| ResourceQuota + LimitRange | Same shape, their defaults | **MATCHED** | Spawn admission carries LimitRange defaults; #1005 documents the seam gap |
+| `restricted-v2` SCC injection | **MicroShift 4.18 — genuine OpenShift SCC admission** | **MATCHED** | All 25 chart objects admitted stock, zero SCC rejects; admission injected random-UID contexts on all 21 pods; independently measured by the customer on their cluster |
+| Random-UID runtime behavior | Image config audit + their measurements | **CONFIRMED DEFECT** | `HOME` absent in bot + agent-worker images at v0.12.23 digests; `HOME=/tmp` is the one-variable fix |
+| Argo CD as house engine | Same engine, namespace-install | **MATCHED** (packaging/version to confirm) | `valuesObject` needs Argo ≥2.8; string-values fallback exists |
+| Three-cluster promotion | Channel stations + pins | **MATCHED by design** | dev auto-follows candidates; test/prod = contracts + approval pins; their promotion gates become contract terms |
+| Cluster admission (signatures) | Kyverno cluster/namespaced profiles | **DEFERRED at the target** | No Kyverno there; verify gate enforces until the ops hardening step |
+| Egress beyond Harbor | Floor reachability check | **UNKNOWN — theirs to answer** | Deliberately left vague by their side; survey item |
+| GPU/STT separate project | Not reproduced | **OPEN architecture item** | Cross-project firewall is the historic blocker; transcription placement is a joint decision |
+
+## Findings the genuine-OpenShift run added (2026-08-21)
+
+- **HOME under a random UID is a convergence blocker, not just a spawn defect**:
+  the minio-init sync hook fails (`mkdir /.mc: permission denied`), so the
+  Application never converges and no later release can be delivered — the
+  single gating fix for OpenShift GitOps delivery, tracked upstream.
+- **Upstream Argo CD's own images hard-code UIDs** (dex 1001, redis 999) and
+  are rejected by restricted-v2 — use the OpenShift GitOps operator (the house
+  standard in regulated estates) or strip `runAsUser` in a namespace install.
+- **Namespace-scoped Argo needs a namespaced `*/*/*` Role beyond `admin`**,
+  created by the platform team (escalation prevention blocks the tenant), and
+  its ~7 pods consume real quota — size the project for app + Argo, or run
+  Argo in its own namespace.
+
+## What only their cluster can prove
+
+Honesty boundary: test/prod policy deltas, egress, and the cross-project
+firewall behavior exist only there — survey items. Everything else on this page is
+reproduced and validated on our side, and re-verified continuously by the
+floor after install.

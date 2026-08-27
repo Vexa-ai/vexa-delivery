@@ -1,0 +1,48 @@
+---
+title: "Engineering"
+description: "How Vexa Enterprise is built, decided and proven — internal, not published."
+---
+
+<Note>
+This tab is **internal**. Publication ships the Product tab only (`docs.public.json`); nothing
+here reaches a customer.
+</Note>
+
+## Where things stand
+
+| | |
+|---|---|
+| [MVP0 implementation state](/receipts/2026-08-21-mvp0-implementation) | What is built, what was proven live on the Akamai cluster, what is not done. **Start here.** |
+| [M2 kit test](/receipts/2026-08-21-m2-throwaway-test) | The kit proven end-to-end: install, pull, admit, deny, the prod gate, every preflight failure class. |
+
+## Decisions
+
+| | |
+|---|---|
+| [ADR-0001](/adr/0001-repo-charter) | Repository charter — EE, supersedes the vexa-platform promotion tooling. |
+| [ADR-0002](/adr/0002-channel-format) | Channel format — signed OCI entries; the signing model is still open. |
+| [ADR-0003](/adr/0003-customer-kit-shape) | Customer kit — stock Argo CD + Kyverno + preflight; we ship configuration, not an agent. |
+| [ADR-0004](/adr/0004-node-model) | The node model — every station consumes, deploys, validates, signs. |
+| [ADR-0005](/adr/0005-kit-license-split) | The kit is Apache-2.0; the factory stays proprietary. **Superseded by ADR-0008.** |
+| [ADR-0006](/adr/0006-internal-channel) | The internal channel — candidate entries and station-verdict accumulation. |
+| [ADR-0007](/adr/0007-station-bundle) | The station bundle — the machinery packaged like a release. |
+| [ADR-0008](/adr/0008-repository-apache-2) | The whole repository is Apache-2.0; customer material moves out. **Visibility superseded by ADR-0009.** |
+| [ADR-0009](/adr/0009-public-visibility) | The repository goes public — the decision ADR-0008 explicitly deferred. |
+
+## Plans
+
+| | |
+|---|---|
+| [Prod migration](/plans/2026-08-25-prod-migration) | `vexa-production` onto the internal channel as subscriber #1: pinned subscription, SSA adoption, pin-move rollback, the ceremony. **Not executed.** |
+
+## Design
+
+| | |
+|---|---|
+| [Ticketing](/design/ticketing) | Evidence-bound support: the sink and what sits behind it, the customer lanes, automated events, metering. |
+
+## Not in this site
+
+The [runbook](https://github.com/Vexa-ai/vexa-delivery/blob/main/RUNBOOK.md) (the per-release
+crank), [SUPERSEDES.md](https://github.com/Vexa-ai/vexa-delivery/blob/main/SUPERSEDES.md) (what
+this factory retires in vexa-platform), and the code itself live in the repository.

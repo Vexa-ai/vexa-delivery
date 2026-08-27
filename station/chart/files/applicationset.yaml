@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: vexa-channel-subscription
+  namespace: argocd
+spec:
+  generators:
+  - list:
+      elements:
+      - automated: 'true'
+        env: vexa-internal-staging
+        namespace: vexa-staging
+        position: '*'
+      - automated: 'false'
+        env: vexa-internal-prod
+        namespace: vexa-prod
+        position: UNPINNED
+  goTemplate: true
+  template:
+    metadata:
+      labels:
+        vexa.ai/channel: ${CHANNEL_NAME}
+        vexa.ai/env: '{{ .env }}'
+      name: vexa-{{ .env }}
+    spec:
+      destination:
+        namespace: '{{ .namespace }}'
+        server: https://kubernetes.default.svc
+      ignoreDifferences:
+      - group: apps
+        jqPathExpressions:
+        - .spec.volumeClaimTemplates
+        kind: StatefulSet
+      project: default
+      source:
+        chart: vexa
+        helm:
+          releaseName: vexa
+          valuesObject:
+            global:
+              imagePullSecrets: []
+              tolerations: []
+            meetingApi:
+              transcriptionServiceUrl: http://transcription.invalid.local/v1/audio/transcriptions
+            secrets:
+              adminApiToken: CHANGE_ME_admin_token
+              existingSecretName: ''
+              internalApiSecret: CHANGE_ME_internal
+              nextauthSecret: CHANGE_ME_nextauth
+              transcriptionServiceToken: spawn-path-dummy
+        repoURL: ${APP_CHART_REPO}
+        targetRevision: '{{ .position }}'
+      syncPolicy:
+        syncOptions:
+        - CreateNamespace=true
+        - ServerSideApply=true
+  templatePatch: "{{- if eq .automated \"true\" }}\nspec:\n  syncPolicy:\n    automated:\n\
+    \      prune: true\n      selfHeal: true\n{{- end }}\n"
+

@@ -1,0 +1,39 @@
+---
+title: "For your auditors"
+description: "What each subscription artifact answers in a change-control review."
+---
+
+Vexa's software is Apache-2.0 and its images are public. The subscription supplies the
+evidence your governance requires — signatures, change records, named approvals — per release,
+instead of assembled by your team every week.
+
+## Artifact to question
+
+| Your review asks | Answered by |
+|---|---|
+| *Is this the software the vendor released?* | Every image digest-pinned and cosign-signed, verified by your admission layer before anything runs |
+| *What changed, on what evidence?* | The **evidence bundle** — validation receipts, soak record, build provenance. A change record that exists before you deploy |
+| *Who approved it?* | Two named humans: Vexa's publication approval inside the signed entry, your approver in your cluster's audit log |
+| *Against what agreed standard?* | The **contract file** — your requirements as a hashed document, named by every verdict |
+| *Was it proven against **our** environment?* | The **[gate report](station-gate)** — your values rendered against the chart, every `require:` item met or waived with a reason. Generated, not written |
+| *Does it capture meetings correctly here?* | The **smoke receipt** — a dated live meeting a named operator admitted the bot into, with chart revision, digests, segment count |
+| *Does a third party stand behind it?* | The subscription: support with severities, advisories, an accountable vendor |
+| *Can we prove it without the vendor?* | Yes — verification is offline; the bundle carries its own trust material |
+
+## Framework mapping
+
+Mapping, not legal advice; your compliance function owns the interpretation.
+
+- **Change management** (ISO 27001 A.8.32, SOX ITGC, PCI DSS) — the evidence bundle plus the
+  two approval records, machine-collected per release.
+- **Software integrity** (NIST SP 800-53 SI-7, SSDF) — digest pinning and signature
+  verification at admission, by your own policy engine.
+- **ICT third-party risk** (DORA, EBA outsourcing, NIS2) — a contracted provider with
+  monitoring, incident support and exit clarity. Everything you run is open source and your
+  evidence verifies offline, so exit leaves you with working software and records.
+- **Air-gapped networks** — releases, evidence and signatures move as OCI content through
+  your own mirror ([what is proven](security#isolated-networks)).
+
+Evidence kinds that do not yet exist are declared absent, with reasons, inside each signed
+entry — today, per-image build attestations. [Verify](verify) shows how to read the boundary
+of any claim.

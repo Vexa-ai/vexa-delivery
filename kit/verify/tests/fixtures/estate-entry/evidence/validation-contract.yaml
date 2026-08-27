@@ -1,0 +1,12 @@
+## SYNTHETIC FIXTURE — not a real validation contract.
+schema_version: 1
+id: fixture-estate-contract
+estate: fixture
+authored_at: "2026-08-25T00:00:00Z"
+rule: real by default; each double carries a justification; an unjustifiable double is a contract violation
+dependencies:
+  - id: postgres
+    kind: datastore
+    fidelity: real
+    proves: the estate ran against the managed instance it runs against in production
+    does_not_prove: nothing about restore or failover

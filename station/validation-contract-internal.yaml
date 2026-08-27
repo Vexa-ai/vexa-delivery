@@ -1,0 +1,168 @@
+schema_version: 1
+id: vexa-internal-estate-2026-08-25
+estate: "vexa-platform production estate, as published to the vexa-internal channel"
+authored_at: "2026-08-25T00:00:00Z"
+rule: "real by default; each double carries a justification; an unjustifiable double is a contract violation"
+
+# WHAT THIS DOCUMENT IS FOR
+#
+# The clean-pull proof asserts that the production estate materializes on an
+# empty cluster from signed channel artifacts alone. That claim is worth
+# nothing on its own, because an estate does not run in isolation — it runs
+# against a database, a payment processor, a transcription tier. "It came up
+# green" is a statement about the estate AND about what the estate was talking
+# to, and only one of those two is usually written down.
+#
+# So this file writes down the other one. For every external dependency: what
+# stood in, why, what that establishes, and — the field that matters most —
+# what a reader must not conclude from it.
+#
+# THE RULE, and it is not a formality. Real by default. A double is permitted
+# only where real is IMPOSSIBLE (a third-party stateful service we cannot spin
+# up) or HARMFUL (moving real money). "It was easier" is not a justification,
+# and the publisher refuses an entry whose contract contains a double with no
+# justification field.
+
+dependencies:
+
+  - id: managed-postgres
+    kind: datastore
+    fidelity: "double(in-cluster postgres:16-alpine, chart schema applied by the release's own migration hook, data empty)"
+    justification: >-
+      Real is HARMFUL, not merely inconvenient. The production database is a
+      single Akamai managed instance holding live customer transcripts. A
+      validation run that pointed at it would let a migration hook from a
+      pulled chart execute DDL against production data. Standing up a second
+      managed instance is possible but takes ~20 minutes and a paid resource
+      per run; the in-cluster double runs the SAME migrations from the SAME
+      chart, so the schema is real even though the rows are not.
+    proves: >-
+      Every workload's DB wiring is correct — connection strings, secret keys,
+      TLS mode, migration ordering — and the migration hook the chart ships
+      applies cleanly to an empty database.
+    does_not_prove: >-
+      Anything about production DATA: query performance at real row counts,
+      migration duration against a populated table, or that a migration is
+      safe for existing rows. A migration that is fast and clean here can
+      still lock a production table for minutes.
+    endpoint_shape: "postgres.<ns>.svc.cluster.local:5432, credentials from a seeded Secret"
+
+  - id: stripe
+    kind: payment
+    fidelity: "real(Stripe test mode, sandbox account)"
+    justification: >-
+      DEVIATION FROM THE BRIEF, STATED SO IT CAN BE OVERRULED. The brief named
+      stripe-mock. A Stripe TEST-MODE sandbox is the real Stripe API, real
+      request signing, real webhook shapes and real error semantics, and it
+      moves no money by construction — so it satisfies "real is harmful"
+      without being harmful. It is strictly higher fidelity than stripe-mock,
+      which reimplements a subset of the API surface. The credential is
+      `STRIPE_TEST_SECRET_KEY` from the existing witness sandbox.
+    proves: >-
+      The billing workers authenticate, construct well-formed API calls, parse
+      real Stripe responses, and handle real Stripe error codes.
+    does_not_prove: >-
+      That live-mode behaviour matches. Test mode has different rate limits, no
+      real card networks, and some live-only failure modes (disputes, radar
+      blocks, bank declines) cannot be produced.
+    endpoint_shape: "https://api.stripe.com, test-mode secret key"
+
+  - id: transcription-tier
+    kind: transcription
+    fidelity: real
+    proves: >-
+      The transcription gateway reaches a genuine transcription tier over the
+      network, authenticates with a real token, and the estate's egress
+      policies permit the call.
+    does_not_prove: >-
+      Transcription QUALITY or throughput at production concurrency — the dev
+      tier is not sized like production and no GPU is attached to the
+      throwaway cluster.
+    endpoint_shape: "the dev transcription tier at *.dev.vexa.ai; URL and token from the operator's secrets vault"
+
+  - id: model-gateway
+    kind: model_gateway
+    fidelity: real
+    proves: >-
+      Components that call a model provider do so with a working credential
+      against the real provider API.
+    does_not_prove: >-
+      Cost or latency at production request volume.
+    endpoint_shape: "OpenRouter; credential from the operator's secrets vault"
+
+  - id: object-storage
+    kind: object_storage
+    fidelity: "double(a dedicated throwaway Linode Object Storage bucket)"
+    justification: >-
+      Real is HARMFUL. The production buckets hold customer recordings and the
+      database backups. A pulled estate whose backup CronJob fires against the
+      real bucket could write into, or expire objects from, the production
+      backup path. A separate bucket is the same S3 API and the same driver.
+    proves: "S3 wiring: endpoint, region, credentials, path prefixes, and that the backup jobs can actually write."
+    does_not_prove: "Anything about the contents or retention of the production buckets."
+    endpoint_shape: "https://us-sea-1.linodeobjects.com, throwaway bucket"
+
+  - id: dns-and-load-balancer
+    kind: dns
+    fidelity: real
+    proves: >-
+      Real by construction — the throwaway cluster provisions its own Linode
+      NodeBalancer from the same LoadBalancer Service the estate ships, so the
+      cloud-provider integration path is genuinely exercised.
+    does_not_prove: >-
+      Certificate issuance for the production hostnames. The estate's edge
+      requests certificates for names that resolve to production; on the
+      throwaway those names are not pointed here, so ACME is expected to fail
+      and that failure is not a defect.
+    endpoint_shape: "Linode NodeBalancer, allocated per LoadBalancer Service"
+
+  - id: mail
+    kind: mail
+    fidelity: absent
+    justification: >-
+      Real is impossible without sending mail to real recipients from a
+      validation run, which is the exact failure the send-gate rule exists to
+      prevent. A dummy SMTP sink was considered and rejected: it would make
+      "mail works" look proven when nothing was proven.
+    proves: nothing
+    does_not_prove: "Any claim that outbound mail is delivered, formatted correctly, or authenticated (SPF/DKIM)."
+    endpoint_shape: "not configured"
+
+  - id: dockerhub-and-upstream-registries
+    kind: other
+    fidelity: absent
+    justification: >-
+      DELIBERATELY ABSENT, AND THIS ABSENCE IS THE POINT OF THE PROOF. The
+      whole premise of a mirrored channel is that a customer allows ONE host
+      through their firewall. If the clean-pull run can reach Docker Hub, a
+      missing mirror is invisible — the pull succeeds from upstream and looks
+      green. The proof is only meaningful if upstream is unreachable or
+      unused, so image pulls are constrained to channel.vexa.ai.
+    proves: "That every image the estate needs is genuinely IN the channel."
+    does_not_prove: "n/a — this is a constraint, not a stand-in."
+    endpoint_shape: "channel.vexa.ai only"
+
+  - id: gpu-transcription-workers
+    kind: other
+    fidelity: absent
+    justification: "No GPU node pool on the throwaway cluster; a GPU pool is a paid resource and the estate's shape does not depend on one being present."
+    proves: nothing
+    does_not_prove: "Any end-to-end meeting-transcription claim. Bots may be dispatchable but no meeting is transcribed."
+    endpoint_shape: "not present"
+
+unproven_claims:
+  - "Outbound mail from the estate works."
+  - "A meeting can be joined and transcribed end to end."
+  - "Migrations are safe against populated production tables."
+  - "TLS certificates issue for production hostnames."
+  - "The estate performs adequately at production data volume or concurrency."
+
+customer_note: >-
+  This mechanism is not internal-only. Every channel a subscriber pulls from
+  carries the validation contract its releases were proven against, hashed
+  into the signed entry. That answers a question a customer cannot otherwise
+  ask us: not "did it pass" but "passed against what". A subscriber running a
+  shape we validated with a database double knows to run their own migration
+  rehearsal; a subscriber whose contract says the transcription tier was real
+  knows they do not have to. The contract travels with the release, so the
+  answer cannot drift from the artifact it describes.

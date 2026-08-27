@@ -1,0 +1,20 @@
+Vexa Enterprise delivery factory (vexa-delivery)
+Copyright 2026 Vexa Inc.
+
+This repository is licensed under the Apache License, Version 2.0 — see the
+LICENSE file at the repository root. The license covers the whole repository:
+the vendor-side factory (publisher, channel spec, station lane, release
+machinery) and the customer-side kit alike.
+
+The repository is public (docs/adr/0009-public-visibility.md). Customer
+confidentiality is protected by exclusion, not by access control:
+customer-identifying material does not live in this repository at all (see
+docs/adr/0008-repository-apache-2.md and the .gitignore rules for stations/
+and onboarding/).
+
+kit/ carries its own copy of the same license (kit/LICENSE, kit/NOTICE) because
+it is distributed as a standalone signed tarball by kit/release.sh; the license
+has to travel with those bytes.
+
+Apache-2.0 material copied from Vexa-ai/vexa remains under its original
+copyright and attribution.

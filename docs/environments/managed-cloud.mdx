@@ -1,0 +1,21 @@
+---
+title: "Managed cloud"
+description: "EKS, AKS, GKE, LKE — per-provider requirements and their tested status"
+---
+
+The generic [Kubernetes requirements](/environments/kubernetes) apply everywhere; this page
+adds the per-provider deltas — and states plainly which profiles have been
+exercised end-to-end and which are declared and awaiting their first real
+install.
+
+| Provider | Status | Deltas to the generic requirements |
+|---|---|---|
+| **Linode LKE** | **exercised end-to-end** | default StorageClass is Retain-class — flip volumes to Delete before teardown or they strand; LoadBalancers provision automatically |
+| **AWS EKS** | declared | EBS CSI addon required for a default StorageClass (gp3); LoadBalancer needs the AWS Load Balancer Controller; ECR pull-through cache is the natural channel mirror |
+| **Azure AKS** | declared | default StorageClass present; the Azure Policy add-on may enforce its own admission alongside ours — review both |
+| **GCP GKE** | declared | use Standard, not Autopilot (Autopilot mutates workloads and skews the preflight); default StorageClass present |
+
+A **declared** profile means the differences are named from each provider's
+documentation but not yet proven by a real install; the preflight checks the
+same facts on every provider, so a wrong assumption surfaces before deployment,
+not after. Each first install upgrades its row to exercised.

@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+.DS_Store
+*.env
+!*.example.env
+# Provider profiles are declarations, not credentials — they are the product.
+# Without this exception `*.env` silently ate every kit/providers/*/profile.env,
+# and install.sh exits "unknown provider '<name>'" on a fresh clone.
+!kit/providers/*/profile.env
+*.key
+*.pem
+cosign.key
+scratch/
+work/
+*.kubeconfig
+kubeconfig*
+
+# Station bundles (see stations/README.md): only the SYNTHETIC rehearsal
+# station is committed. A real customer's station stays local — redacted
+# values are still their environment, and receipts name their clusters.
+stations/*/
+!stations/rehearsal/
+# A station profile.env is provider configuration (k8s version, storage class,
+# Argo/Kyverno pins) and never credentials: the ingest secret scan (S4)
+# refuses a bundle that carries any.
+!stations/rehearsal/profile.env
+
+# Per-customer onboarding packs and station profiles — same rule as stations/,
+# extended (ADR-0008, ADR-0009). This repository is PUBLIC: a pack names a
+# customer's estate, their registry hosts, a delivery date and things said on
+# a call. The license restrains nobody who has the tree; absence does.
+# Only the TEMPLATE directories are committed. Generate a real pack, deliver
+# it, keep it with the account — never here.
+onboarding/*/
+!onboarding/TEMPLATE/
+station/profiles/*/
+!station/profiles/TEMPLATE/

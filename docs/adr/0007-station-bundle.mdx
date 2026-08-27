@@ -1,0 +1,84 @@
+---
+title: "ADR-0007: The station bundle — deterministic station state"
+description: "The station's own machinery ships as a signed chart on the channel; one bootstrap object installs the app that installs Vexa"
+---
+
+**Status:** accepted · 2026-08-21 · proven on the standing station (1.0.0 → 1.0.3)
+
+## Context
+
+ADR-0006 made the app layer deterministic and honestly named what remained by
+hand: the station machinery itself (subscription, contracts, admission
+policies) was installed imperatively and patched by operator hands, and the
+substrate (nodes, volumes, storage) drifted silently until something broke.
+The founder's requirement: "control the station state deterministically — not
+only the image side," ending in the install shape a customer actually wants:
+**they install one app, and that app installs Vexa.**
+
+## Decision
+
+Three layers, each deterministic in its own mode:
+
+| Layer | Contents | Mode |
+|---|---|---|
+| App | Vexa itself | reconciled from channel entries (ADR-0001..0006) |
+| Station machinery | ApplicationSet, contracts, admission policies, floor | **reconciled from a signed `vexa-station` chart on the channel** |
+| Substrate | nodes, k8s version, CSI, storage classes, volumes | **declared floor, continuously verified** — drift turns the station RED |
+
+**The bootstrap object** (`station/root-app.yaml`) is the one thing applied by
+hand, once, together with the channel credentials: an Argo Application whose
+`targetRevision` is the **station pin** and whose inline values carry the only
+site-specific facts (mirror location, pinned public key, tool image digest).
+Everything below it is pulled from the channel, signature-verified, and
+reconciled. Changing the station = publishing a new signed bundle version and
+moving the pin — the same deliberate human act as the app's prod pin.
+`prune: false` (machinery is never auto-deleted), `selfHeal: true` (a hand
+patch to any bundle-managed object reverts — that is the point).
+
+**The floor** is a CronJob from the bundle re-checking the substrate on a
+schedule: nodes Ready, Released PVs (the stranded-volume cost class), required
+storage class, VolumeAttachments stuck deleting (the CSI-wedge class), admission
+policies present, every Argo app Synced/Healthy — with `UNPINNED` recognized as
+*parked, awaiting approval*, not broken — and channel reachability. Verdict
+lands in the `station-floor` ConfigMap; RED is visible instead of latent.
+
+**Scope modes**, because BYOC includes shared clusters where the customer's
+team holds a namespace and a separate operations department holds the cluster
+(the first pilot subscriber's exact shape):
+
+- `scope: cluster` — admission as Kyverno ClusterPolicy; floor reads the substrate.
+- `scope: namespace` — admission as **namespaced Kyverno Policy** per station
+  namespace; floor checks what a tenant can see and reports cluster facts as
+  UNKNOWN rather than guessing. No cluster-admin anywhere in the install path.
+
+The floor job is SCC-restricted-compliant (non-root, no fixed UID, no
+capabilities, RuntimeDefault seccomp) so it runs unchanged under OpenShift
+restricted-v2.
+
+## Lessons already encoded
+
+- **Declared state carries what the API server would default.** Kyverno
+  defaults fields into live policy specs (`admission`, `emitWarning`,
+  `skipBackgroundRequests`, `allowExistingViolations`, `useCache`,
+  `signatureAlgorithm` at two depths); until the files stated them explicitly,
+  GitOps showed permanent phantom drift. The kit policy file now states them.
+- **Raw files for foreign template languages.** Kyverno's JMESPath `{{ }}` and
+  Argo's goTemplate ride as `.Files.Get` raw includes with `${}` placeholder
+  substitution — they never meet Helm's renderer.
+- **Bundle images are channel-served** (mirrored + signed beside the app
+  images) so a station pulls tooling with the same provenance as the app. On
+  clusters whose kubelet cannot reach the channel host, the digest-pinned
+  upstream reference is the fallback — same digest, same signature.
+- The proof run itself: the floor's first execution caught two genuinely
+  stranded Released PVs from the day's teardown, and the 1.0.1→1.0.3
+  self-updates (label fix, explicit defaults, parked-station handling) each
+  landed by pin move alone.
+
+## Consequences
+
+- `install.sh` becomes bootstrap-only over time: credentials + root
+  Application; the bundle owns the rest.
+- The channel registry itself must be persistent and replicated before the
+  bundle model is offered externally (the test station's registry is volatile
+  — rebuildable, but named here as a known gap).
+- Station keys vs channel keys remain unified until the key ceremony.

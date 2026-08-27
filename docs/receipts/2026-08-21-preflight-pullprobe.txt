@@ -1,0 +1,8 @@
+vexa-preflight — cluster conformance for the Vexa enterprise channel
+==============================================================================
+[FAIL] P7 · The cluster pulls a release image by digest with this namespace's pull secrets
+       cannot pull docker.io/vexaai/v012-mcp@sha256:00000000000000000000000000000000000000000000000000000000deadbeef: rpc error: code = NotFound desc = failed to pull and unpack image "docker.io/vexaai/v012-mcp@sha256:00000000000000000000000000000000000000000000000000000000deadbeef": failed to resolve image: docker.io/vexaai/v012-mcp@sha256:00000000000000000000000000000000000000000000000000000000deadbeef: not found
+       remedy: create/attach an imagePullSecret for the registry in this namespace and reference it in the delivered values
+       (anchor: argocd spike finding 8 — images 'pulled' only because nodes had them cached)
+------------------------------------------------------------------------------
+VERDICT: FAIL — fix the findings above before first sync

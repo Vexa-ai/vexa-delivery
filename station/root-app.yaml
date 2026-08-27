@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+# The bootstrap object — "the app that installs Vexa."
+# The ONE thing applied by hand, once, together with the channel credentials.
+# It pulls the station bundle from the channel; the bundle carries the
+# subscription, contracts, admission, and floor; the subscription pulls Vexa.
+# Site-specific facts (mirror location, pinned key, tool digest) ride inline
+# here — everything below this object is reconciled, signed, digest-pinned.
+#
+# targetRevision is the STATION PIN: moving it is the deliberate human act
+# that changes the station (same two-door discipline as the app's prod pin).
+# prune: false — station machinery is never auto-deleted; removal is explicit.
+# selfHeal: true — a hand-patch to any bundle-managed object reverts. That is
+# the point.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vexa-station
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: registry.channel-registry.svc:5000/vexa/channel/vexa-internal/station
+    chart: vexa-station
+    targetRevision: 1.0.5
+    helm:
+      valuesObject:
+        scope: cluster
+        appChartRepo: registry.channel-registry.svc:5000/vexa/channel/vexa-internal/charts
+        signatureRepository: registry.channel-registry.svc:5000/vexa/channel/enterprise-stable/sigs
+        registryHost: registry.channel-registry.svc
+        registryPort: '5000'
+        floor:
+          image: docker.io/bitnami/kubectl@sha256:02a8b4cd036d7bd4572798a87215edf061cc59533873aa668bbe795685cd770a
+        channelPublicKey: '-----BEGIN PUBLIC KEY-----
+
+          MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5fmaemu0EtzmMbUE0JSPzo3Iq+eS
+
+          ddu5IZVBIKnfUyoP+JbcP4/golcKMb8Sz1jvP09cw9jVTdFyLX+BZBXRNA==
+
+          -----END PUBLIC KEY-----
+
+          '
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true

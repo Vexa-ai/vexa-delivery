@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+{{- /*
+THE ENTRY-VERIFICATION CONTRACTS — the machine-readable half of each station's
+subscription contract, read by the PreSync verify gate that the SUBSCRIPTION's
+Applications carry. The verifier renders every verdict against the contract's
+id + sha256, so the file rides byte-exact — never templated.
+
+GATED ON `subscription.enabled`, NOT ON A SWITCH OF THEIR OWN, and the choice
+is cohesion: these ConfigMaps have exactly one consumer, the PreSync gate of
+the Applications the ApplicationSet above generates. A station with no
+subscription generates no Applications, runs no PreSync gate, and these two
+objects would sit in the argocd namespace forever with nothing reading them —
+a second switch would only let an operator produce that state on purpose.
+One concept, one gate: *this station follows this channel and verifies its
+entries.*
+
+NOT THE SENDER'S CONTRACT, and the two were conflated until 1.0.6. These carry
+`policy.json` — publication mode, required evidence kinds, required
+attestations — into the ARGOCD namespace. The receipt sender reads a different
+document entirely: the station's own report contract, carrying `report_scope`
+(tier · trigger · destination · allowed_files), as `contract.yaml` from a
+ConfigMap in the station namespace. Same word, two documents, two readers, two
+namespaces. See `_receipt-sender.tpl`.
+*/}}
+{{- if .Values.subscription.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vexa-contract-staging
+  namespace: {{ .Values.argocdNamespace }}
+data:
+  policy.json: |-
+{{ .Files.Get "files/contracts/internal-staging.json" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vexa-contract-prod
+  namespace: {{ .Values.argocdNamespace }}
+data:
+  policy.json: |-
+{{ .Files.Get "files/contracts/internal-prod.json" | indent 4 }}
+{{- end }}

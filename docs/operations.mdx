@@ -1,0 +1,100 @@
+---
+title: "Operations"
+description: "Day-2: how updates arrive, your production gate, rollback, break-glass."
+---
+
+Your **staging** follows the channel pointer: a new entry is pulled, verified at admission
+and applied on the next poll. Your **production** does nothing until you move its pin.
+
+## Promote to production
+
+When your staging soak satisfies your change process:
+
+```bash
+kubectl -n argocd patch applicationset vexa-channel-subscription --type=json \
+  -p '[{"op":"replace","path":"/spec/generators/0/list/elements/1/position","value":"0.12.24"}]'
+```
+
+The pin is the release's chart version (`0.12.24`, no `v` prefix); staging holds `*`, the
+newest entry on your channel. That is the whole promotion ceremony — one change, in your
+cluster, in your window. Admission verification runs again in production regardless.
+
+## Accept the upgrade
+
+Same standard as a first install — a human watches it capture a real meeting:
+
+```bash
+python3 kit/smoke/vexa_smoke.py --namespace vexa-staging \
+  --customer-values my-values.yaml --flows
+```
+
+The dated receipt names the chart revision and image digests, so "we accepted 0.12.24 on the
+19th" is a file, not a memory. Run
+[`vexa_validate.py`](install#step-5-send-the-station-bundle-back) instead to also refresh the
+station bundle — an upgrade is when your station's shape is most likely to have moved.
+
+## Roll back
+
+The same field, the same patch, the previous version:
+
+```bash
+kubectl -n argocd patch applicationset vexa-channel-subscription --type=json \
+  -p '[{"op":"replace","path":"/spec/generators/0/list/elements/1/position","value":"0.12.23"}]'
+```
+
+Argo rolls the workloads in reverse; admission verifies the older digests against the same
+key. Entries never disappear and digests are immutable, so what you go back to is
+byte-identical to what you ran.
+
+**It rolls back code, not data.** One step back is safe because each release reads the
+previous release's schema. Two steps back is a restore. **Check the migration notes** in the
+release's evidence bundle first.
+
+## Break-glass in your cluster
+
+Your cluster, your admin, your audit log — there is no path from Vexa into it.
+
+Staging syncs automatically and self-heals, so an out-of-band change there is reverted on the
+next poll: suspend that Application's automated sync before you touch anything. Production has
+no automated sync at all.
+
+Declare it, suspend, act — then **reconverge through the gate**: resume the sync and let
+admission verify what is now running. Drift is visible in your own Argo. A residue that
+violates your contract is refused, not quietly baked in; you clear it by redoing the change as
+a release, amending your values, or recording a waiver. There is no fourth path where the
+cluster keeps running something nothing verified.
+
+What reaches Vexa is a status-shaped report of what happened. Never a command.
+
+## Update the kit
+
+```bash
+./vexa-kit/self-update.sh --check   # what would move
+./vexa-kit/self-update.sh           # move it
+```
+
+Resolves `latest` to a digest, verifies it against your pinned key, swaps the tree
+atomically. On a signature failure nothing is written and the running tree is untouched.
+
+## If the channel goes away
+
+Your pinned release keeps running. Argo CD reconciles against digests it has
+already pulled, so an unreachable channel stops upgrades, not workloads.
+
+On our side the channel's contents are a distribution copy: the entries,
+charts and signatures it serves are rebuilt from tagged releases, and the
+record of what was published — release, sequence, chart digest — is held in
+git, replicated, and independent of the registry. A total loss of the channel
+storage costs us hours of republishing and costs you nothing: no re-install,
+no re-pinning, no re-verification. Signatures verify against the key you
+pinned, which does not change.
+
+## Also worth knowing
+
+- **Drift** — an out-of-band change is reverted on the next sync, not merely reported. A
+  permanent local difference belongs in your values.
+- **Break-glass entries** — an entry with an incomplete evidence chain carries a `break_glass` record
+  (person, reason, timestamp) your verifier sees before you decide. Refusing all break-glass
+  entries is a supported policy.
+- **Withdrawal** — a release found defective after publication is marked withdrawn and stops
+  being promotable. Your pinned release keeps running; withdrawal never touches your cluster.

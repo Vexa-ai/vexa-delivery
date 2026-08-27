@@ -1,0 +1,445 @@
+---
+title: "Prod migration plan — vexa-production onto the internal channel"
+description: "How vexa-production stops being helm-cranked and becomes subscriber #1 at a pinned position. Written 2026-08-25. NOT EXECUTED."
+---
+
+<Warning>
+**NOTHING IN THIS DOCUMENT HAS BEEN EXECUTED.** Production was not migrated, adopted,
+patched, scaled, annotated or restarted while this was written. Every fact below came
+from `kubectl get` / `describe` against `lke590708` and from files in this repo and
+`~/dev/vexa-platform`. Argo CD and Kyverno are **not installed** on that cluster and this
+document does not install them. This is a plan awaiting the ceremony in
+[§ 8](#8-the-ceremony); it is not a receipt.
+</Warning>
+
+## COMMITMENTS IN THIS DOCUMENT
+
+Each is a separate yes/no. Silence on any one of them means the corresponding step does
+not happen, and this document is not a go for any of them.
+
+1. **Argo CD becomes a permanent cluster component of `lke590708`** — the production
+   cluster, today running 47 pods in `vexa-production` with no GitOps controller of any
+   kind. Installing it is not reversible in practice: once prod is adopted, Argo is the
+   deploy path. **Yes / no.**
+2. **Kyverno becomes a permanent admitting webhook on `lke590708`** — a failing or
+   misconfigured admission webhook can block pod creation cluster-wide, including
+   runtime-spawned bot pods. **Yes / no.**
+3. **The prod pin set becomes a signed, published channel entry** built from digests
+   currently observable **only in the live cluster** (§ 3). Publishing it makes those
+   digests a durable artifact we can be held to. **Yes / no.**
+4. **The Helm release `vexa-platform` in `vexa-production` (currently revision 138) is
+   retired as the deploy mechanism** after adoption — `helm upgrade` against it stops
+   being a supported action and the `drift-detector` CronJob that reads it is turned off
+   (§ 6.7). **Yes / no.**
+5. **A precedent: prod deploys become pin moves.** This is the first environment we
+   operate this way; whatever shape it takes becomes how we do it and how we describe it
+   to subscribers. **Yes / no.**
+
+No date is committed here. No spend is committed here: the plan adds no LoadBalancer, no
+NodeBalancer, no storage and no third-party service. No customer-facing term, SLA or
+right is created or changed.
+
+## Why this is a document and not a RUNBOOK section
+
+[`RUNBOOK.md`](https://github.com/Vexa-ai/vexa-delivery/blob/main/RUNBOOK.md) § 4 and § 5
+are **cranks** — the per-release internal-channel crank and the station crank, repeated
+every release, identical each time. This is a **one-time, dated, ceremony-gated
+transition** with a before-state that will never recur, and it is specific to our own
+estate (namespaces, release names, volume ids) rather than to any subscriber. Putting it
+in the RUNBOOK would either bloat the crank with a step nobody runs twice, or shrink the
+plan to a size that hides its hazards. It composes with the RUNBOOK by reference: § 4
+publishes the entry this plan pins, § 5 installs the station this plan subscribes.
+`RUNBOOK.md` § 4 carries a one-line pointer here.
+
+## 1 · What `vexa-production` is today — verified 2026-08-25, read-only
+
+| | |
+|---|---|
+| Cluster | LKE `lke590708`, Kubernetes **v1.35.7**, 3 nodes |
+| Namespace | `vexa-production` — **47 pods** |
+| **Helm release name** | **`vexa-platform`** in namespace `vexa-production`, **revision 138**, status `deployed`, last deployed 2026-08-19T23:58:14+01:00 |
+| Chart | `vexa-platform` 0.1.0, appVersion 0.6.0, depending on subchart **`vexa` 0.12.16** |
+| Workloads | 13 Deployments · 12 CronJobs · **0 StatefulSets** · 10 Services (1 `LoadBalancer`) · 6 ConfigMaps · 22 Secrets · 7 ServiceAccounts · 5 Roles · 8 RoleBindings · **48 NetworkPolicies** · 7 PodDisruptionBudgets · 3 PVCs |
+| Data plane | Postgres is **external** — an Akamai-managed instance, hostname in `~/dev/vexa-platform/chart/vexa-platform/values-production.yaml`. Not in this cluster, not in the blast radius of any adoption step. |
+| Argo CD | **absent** — no `argocd` namespace, no `argoproj.io` CRDs, no Argo Deployment anywhere in the cluster |
+| Kyverno | **absent** — no `kyverno` namespace, no Kyverno CRDs |
+
+Every prod resource carries Helm's ownership metadata:
+
+```
+labels:      app.kubernetes.io/managed-by: Helm
+             app.kubernetes.io/instance:   vexa-platform
+             app.kubernetes.io/name:       vexa
+             helm.sh/chart:                vexa-0.12.16   (or vexa-platform-0.1.0)
+annotations: meta.helm.sh/release-name:      vexa-platform
+             meta.helm.sh/release-namespace: vexa-production
+```
+
+Neighbours on the same cluster, out of scope and untouched by this plan: `vexa-staging`
+(Helm release `vexa-platform` rev 203, status **failed**, **zero pods** — the stage hold),
+`vexa-v012-staging` (release `vexa` rev 10), `channel-registry`, `monitoring`,
+`platform-ops`, `shared-data`.
+
+## 2 · The three hazards that decide whether adoption is safe
+
+These are the reasons this cannot be a five-line "point Argo at it" instruction. All three
+are properties of prod as it actually stands, verified above.
+
+### 2.1 The instance label is inside 13 immutable selectors
+
+**13 of 13 Deployments carry `app.kubernetes.io/instance: vexa-platform` inside
+`.spec.selector.matchLabels`**, which Kubernetes forbids changing after creation. Argo
+CD's **default** resource-tracking method is to stamp its own Application name into
+`app.kubernetes.io/instance`. The ApplicationSet in
+[`kit/argocd/applicationset.yaml`](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/argocd/applicationset.yaml)
+names its Applications `vexa-{{ .env }}`. Left at the default, adoption would attempt to
+rewrite that label to `vexa-enterprise-prod` on every workload — rejected on the selector,
+and where it lands on pod templates it orphans running pods.
+
+**Required before the prod Application exists:** Argo CD configured with annotation-based
+tracking — `application.resourceTrackingMethod: annotation` in `argocd-cm`, so ownership
+is recorded in the `argocd.argoproj.io/tracking-id` annotation and no existing label is
+touched. This is the single setting that makes "the diff is ownership metadata only" true
+rather than aspirational. Verify it on the staging rehearsal before prod, and verify it
+again on prod with `kubectl -n argocd get cm argocd-cm -o yaml` before the first diff.
+
+### 2.2 The release name must match or Argo builds a parallel copy of production
+
+`kit/argocd/applicationset.yaml` hardcodes `helm: releaseName: vexa`. Prod's resources are
+named from the release **`vexa-platform`** (`vexa-platform-vexa-meeting-api`,
+`vexa-platform-caddy`, …). Applied as written, Argo would not adopt anything — it would
+create a **second, parallel set** of workloads named `vexa-*` beside the live ones, in the
+live namespace, on the live database. The prod element's `releaseName` must be
+`vexa-platform`, and the rendered names must be compared to the live names **before** the
+first sync (§ 6.4).
+
+### 2.3 An in-cluster job is watching for exactly what we are about to do
+
+The CronJob `vexa-platform-drift-detector` runs every 30 minutes, does
+`helm get manifest vexa-platform -n vexa-production` and `kubectl diff`, and reports drift.
+After adoption the Helm release stops being the source of truth, so this job reports
+permanent drift, or errors, forever — and its alerting becomes noise precisely when we
+need signal. It must be turned off, or repointed at the Argo Application, as part of the
+migration, not after it. (It is already failing intermittently — the run 10 minutes before
+this document was written exited non-zero.)
+
+Two neighbours worth knowing but **not** hazards: `vexa-platform-bot-reaper` deletes pods
+matching `runtime.managed=true`, which are runtime-spawned and never chart-managed, so
+Argo will not track or prune them; and `vexa-platform-capacity-resize` /
+`collector-watchdog` / `system-host-labeler` mutate node labels and a `capacity-reserve`
+Deployment's replica count every 5 minutes. **`capacity-reserve` replicas are therefore a
+live-mutated field** — with `selfHeal: true` Argo would fight the CronJob. Prod's element
+in the ApplicationSet is `automated: "false"` (no `selfHeal`, no `prune`) precisely because
+prod moves only on a pin, which happens to also resolve this. Keep it that way, and if
+automation is ever wanted on prod, add
+`ignoreDifferences` on `deployment/vexa-platform-capacity-reserve .spec.replicas` first.
+
+## 3 · Where the pin comes from — the problem to solve before step 1
+
+**The digest set that is production exists only in the live cluster.**
+
+- `~/dev/vexa-platform/release/registry.yaml` is an **evidence-check registry** (126 checks:
+  type, script, modes, access, proves). It contains **no digest pins**. It has never been
+  the pin store and nothing else in that repo is.
+- The repo carries **tags**: `values-production.yaml` sets `vexa.imageTag:
+  0.12.4-260714-hc7` and the comment beside it still reads *"prod is NOT deployed yet
+  (human-gated)"*.
+- The live release's stored values contain **no `vexa.imageTag` at all**, yet every one of
+  the 47 pods runs a `@sha256:` reference. The mapping from repo values to running digests
+  is **not reconstructible from the release object**.
+- The repo declares subchart `vexa` **0.12.4**; prod's live labels say **`vexa-0.12.16`**.
+
+So the repo does not describe production, and no signed artifact does either. Three
+consequences for this plan:
+
+1. **The pin must be minted from the cluster, once, deliberately.** Snapshot the full
+   `image → digest` map (`/tmp/dogfood/prod-images.txt`, captured 2026-08-25, is the shape:
+   21 entries, every `vexaai/*` and every third-party base image already resolved to a
+   digest).
+2. **That snapshot becomes a `vexa-internal` candidate entry** through RUNBOOK § 4 — built,
+   signed, pushed, with the platform chart rendered against `values-production.yaml` and the
+   digests baked in. Until that entry exists, **there is nothing to pin to**, and every
+   later step in this document is blocked on it.
+3. **The chart the entry carries must be the platform chart, not the OSS chart.** The
+   channel today carries `vexa`; prod runs `vexa-platform` (billing workers, analytics,
+   transcription-gateway, webapp, dashboard). This is gap 1 of the founder's 2026-08-25
+   pivot chain and it is a prerequisite, not a detail.
+
+The first published entry for `vexa-internal` at prod's position should be built to
+reproduce **what is already running**, not to change it. A migration that also upgrades is
+two experiments in one namespace.
+
+## 4 · Prerequisites, with the inertness requirement stated
+
+| # | Prerequisite | Done when |
+|---|---|---|
+| P1 | Platform chart publishable to `vexa-internal` (§ 3.3) | a candidate entry exists carrying `vexa-platform` with prod's digest set |
+| P2 | Argo CD installed on `lke590708` in namespace `argocd`, **annotation tracking** (§ 2.1) | `argocd-cm` shows `application.resourceTrackingMethod: annotation`; `kubectl -n vexa-production get all` is byte-identical to `/tmp/dogfood/prod-pods-BEFORE.txt` and `prod-gens-BEFORE.txt` |
+| P3 | Kyverno installed, **policies in Audit, namespace-scoped away from prod** | no ValidatingWebhookConfiguration matches `vexa-production`; a test pod in prod's shape is admitted unchanged |
+| P4 | Station bundle installed per RUNBOOK § 5 (`station/root-app.yaml`) | `vexa-station` Application healthy; `station-floor` ConfigMap populated |
+| P5 | Staging rehearsal complete and green | the staging adoption receipt exists and its diff-before-sync showed ownership metadata only |
+| P6 | Fresh DB snapshot and a restore that has been tested | dated, named, and restorable — Postgres is external and out of Argo's reach either way, which is a reason for confidence, not for skipping this |
+
+**Inertness requirement, stated explicitly because it is the whole safety story of P2 and
+P3:** installing Argo CD and Kyverno **must not change one byte of `vexa-production`**.
+Concretely — Argo installs with no Application selecting that namespace; Kyverno installs
+with every policy in `Audit` mode and `namespaceSelector` excluding `vexa-production`;
+neither is given a cluster-wide mutating webhook. **The acceptance test is a diff of the
+before/after generation numbers of all 13 Deployments** (`prod-gens-BEFORE.txt` is that
+baseline — e.g. `vexa-platform-vexa-meeting-api` generation `125`, `webapp` `82`,
+`caddy` `33`). Any generation that moves during P2 or P3 is a stop.
+
+Cluster-scoped installs are owned by whoever holds the cluster-install custody for this
+work; this plan neither performs them nor claims them.
+
+## 5 · Subscription shape — pinned, never `*`
+
+Prod's element in the ApplicationSet, with the three corrections this plan requires:
+
+```yaml
+- env: vexa-prod                     # IDENTITY. Renaming it later tears down and
+                                     # recreates every workload — observed live on the
+                                     # standing station (ADR-0006). Choose it once.
+  namespace: vexa-production
+  position: "0.1.0-internal.N"       # THE PIN — an exact version, never "*".
+  automated: "false"                 # no auto-sync, no selfHeal, no prune on prod
+  contractCm: vexa-contract-prod     # requires vexa-staging's signed station-verdict
+  requireApproval: "0.1.0-internal.N"
+```
+
+with, in the template:
+
+```yaml
+helm:
+  releaseName: vexa-platform         # § 2.2 — must match the live release name
+```
+
+Staging follows `*`; **production follows a pin and only a pin**. Nothing on the publisher
+side can advance it: publishing a new entry makes a release *available* to prod and does
+nothing else. That asymmetry is the product claim, and prod is where we have to actually
+live inside it.
+
+The prod contract
+(`vexa-internal-prod-2026` — since 2026-08-25 the record is
+`channels/vexa-internal/contracts/internal-prod.json` in the private
+`vexa-stations` repository) already requires
+`{kind: station-verdict, station: vexa-staging}` — so a candidate that staging has not
+validated and signed cannot pass prod's PreSync verify even if someone moves the pin. That
+is a machine-enforced gate underneath the human one in § 8, not a substitute for it.
+
+## 6 · The migration, step by step
+
+Identical in mechanism to the staging rehearsal (P5) — same SSA adoption, same
+diff-before-sync, same reconcile-by-values loop. What differs is only that prod is not
+`automated` and that every step below has a named stop condition.
+
+**6.1 — Freeze the other write surface.** Announce that no `helm upgrade`, `kubectl set
+image` or hand patch touches `vexa-production` for the duration. Two writers on one
+surface is how this environment produced its drift in the first place.
+
+**6.2 — Re-capture the before-state** into the migration receipt directory: pods,
+Deployment generations, the full image→digest map, `helm get manifest vexa-platform -n
+vexa-production`, and `kubectl get pv`. The 2026-08-25 captures under `/tmp/dogfood/` are
+the shape; re-take them on the day, because a generation that moved between then and now
+means someone deployed.
+
+**6.3 — Create the prod Application with sync disabled.** `automated: "false"` already
+means no auto-sync. Create it and go no further; Argo now *knows about* prod without having
+written to it. Argo reports `OutOfSync` — that is expected and is the input to the next
+step, not a failure.
+
+**6.4 — Diff before sync. This is the gate, not a formality.**
+
+```bash
+# what Argo would do, without doing it
+argocd app diff vexa-prod --local-repo-root /dev/null   # or: argocd app diff vexa-prod
+# and the name check that catches § 2.2 before it happens
+argocd app manifests vexa-prod | grep -E '^  name:' | sort > /tmp/argo-names.txt
+kubectl -n vexa-production get deploy,svc,cronjob -o name | sed 's|.*/||' | sort > /tmp/live-names.txt
+diff /tmp/argo-names.txt /tmp/live-names.txt
+```
+
+**Stop conditions — any one of these ends the migration for the day:**
+- a rendered name that does not exist live, or a live name that Argo does not render
+  (§ 2.2 has happened);
+- a diff on `.spec.selector` of any Deployment (§ 2.1 has happened);
+- a diff on any image digest (the pin does not reproduce what is running — go back to § 3);
+- a diff on any Secret, PVC, or the `vexa-platform-caddy` Service's `LoadBalancer`
+  fields (a churned NodeBalancer is a public-IP change).
+
+**6.5 — Reconcile by values, not by sync.** Every remaining difference is closed by editing
+the values the entry renders with — never by syncing and letting Argo win, and never by
+hand-patching the cluster to match Argo. Re-diff. Repeat. **The exit condition is that the
+diff contains ownership metadata only**: the `argocd.argoproj.io/tracking-id` annotation
+and nothing else. A single behavioural field left in the diff means the pin does not
+describe production, and syncing would deploy a change while claiming to adopt one.
+
+The known normalisation exception is already in the ApplicationSet —
+`ignoreDifferences` on `StatefulSet .spec.volumeClaimTemplates`, where the API server
+defaults fields Argo cannot normalise. **Prod has zero StatefulSets**, so this exception is
+inert here; it matters for staging.
+
+**6.6 — Sync with ServerSideApply.** `syncOptions: [ServerSideApply=true]` is already in
+the ApplicationSet template and is what makes adoption non-destructive: Argo becomes an
+additional field manager on objects that already exist, rather than replacing them.
+Client-side apply is the legacy mechanism under the ownership-conflict bug class and is
+**not** what happens here. Expected result: **zero pod restarts, zero Deployment generation
+changes**. Verify against 6.2's capture immediately, per-Deployment. A generation bump is
+not "adoption noise" — it is a rollout, and it means 6.5 exited early.
+
+**6.7 — Retire the old write surface.** Disable `vexa-platform-drift-detector` (§ 2.3).
+Leave the Helm release secrets in place — `sh.helm.release.v1.vexa-platform.v129`…`v138`
+are 10 revisions of history and cost nothing. Do not `helm uninstall`; with resources now
+also owned by Argo, an uninstall is a deletion of production.
+
+**6.8 — Soak, then write the receipt.** One full business day at minimum, covering at
+least one run of every CronJob (the longest cycle is `db-backup`, daily at 02:00, and
+`slo-check` at 05:30). Then a receipt under `docs/receipts/` naming the pin, the entry
+digest, the before/after generation table, and the PV state from § 7.
+
+## 7 · The eight Retain PVs are untouched — named
+
+No step in this plan creates, deletes, resizes, rebinds or reclaims a PersistentVolume, and
+none of them appears in the channel chart's managed set. Naming them so "untouched" is
+checkable rather than reassuring.
+
+**All 25 PVs on `lke590708` use `linode-block-storage-retain` with
+`persistentVolumeReclaimPolicy: Retain`.** The distinct set of exactly eight is the
+**`Released` Retain PVs** — orphaned by past `vexa-production` PVC churn, still holding
+their data because the policy is Retain, still costing Linode block storage:
+
+| PV | Size | Former claim (`vexa-production/…`) | Created |
+|---|---|---|---|
+| `pvc-5cf5e892d8de4c4b` | 10Gi | `vexa-platform-vexa-redis-data` | 2026-04-19 |
+| `pvc-67c4a97ef1a44264` | 10Gi | `vexa-platform-caddy-data` | 2026-04-19 |
+| `pvc-f5b4dc9e2473431e` | 10Gi | `vexa-platform-vexa-tts-voices` | 2026-04-19 |
+| `pvc-cd3b0fa9516146b3` | 10Gi | `vexa-platform-vexa-tts-voices` | 2026-05-03 |
+| `pvc-aea2df47796741fc` | 10Gi | `vexa-platform-vexa-tts-voices` | 2026-05-20 |
+| `pvc-5f711c27a0fa48be` | 10Gi | `vexa-platform-vexa-tts-voices` | 2026-05-20 |
+| `pvc-d6aadcd5b5a14881` | 10Gi | `vexa-platform-vexa-tts-voices` | 2026-07-18 |
+| `pvc-e368023a3358470d` | 10Gi | `vexa-platform-vexa-tts-voices` | 2026-07-18 |
+
+The three PVs that are **live** production storage, equally untouched:
+
+| PV | Size | Bound claim | Consumed by |
+|---|---|---|---|
+| `pvc-85bf090af2ed4bd7` | 10Gi | `vexa-production/vexa-platform-caddy-data` | `vexa-platform-caddy` — ACME certificates |
+| `pvc-5326da392fb245d3` | 10Gi | `vexa-production/vexa-platform-vexa-redis-data` | `vexa-platform-vexa-redis` |
+| `pvc-4a27d69b67014e75` | 10Gi | `vexa-production/data-vexa-platform-vexa-minio-0` | **no running consumer** — prod has no MinIO pod; the PVC is Bound and idle |
+
+**Verification, before and after, and the result goes in the receipt:**
+
+```bash
+kubectl get pv -o custom-columns=\
+'NAME:.metadata.name,POLICY:.spec.persistentVolumeReclaimPolicy,STATUS:.status.phase,\
+CLAIM:.spec.claimRef.name,NS:.spec.claimRef.namespace'
+```
+
+Expected after: **25 PVs, all `Retain`, 8 `Released`, the same 3 `Bound` in
+`vexa-production`, no PV created, no PV deleted.** Any change is a stop and a rollback
+trigger, not a note.
+
+Two things this plan deliberately does **not** do: it does not clean up the 8 released
+volumes (that is a separate decision with its own approval, and doing it inside a migration
+would make an unrelated deletion look like migration fallout), and it does not adopt the
+`caddy-data` PVC's certificate state into anything — Caddy re-issues on its own if it ever
+loses it, which is a behaviour to know, not to change here.
+
+## 8 · The ceremony
+
+**The gate is: prod-owner custody + founder approval of the exact pin string.**
+
+Where it sits relative to the locks that already exist:
+
+| Lock | What it governs | Relationship to this gate |
+|---|---|---|
+| **`stage-own` prod ownership lock** | the only hard gate in the release lifecycle; a session must hold prod ownership before any prod-affecting action | **Held first, and held throughout.** Migration is a prod-affecting action; it is not exempt because it deploys nothing new. Claim before P2, resign after 6.8. |
+| **`internal-prod.json`** (`vexa-internal-prod-2026` — the record now lives in `vexa-stations`, `channels/vexa-internal/contracts/`) | machine gate: the candidate must carry `vexa-staging`'s signed `station-verdict` | Enforced by the PreSync verifier at sync time, underneath the human gate. It cannot be satisfied by a person deciding it is fine. |
+| **`kit/verify/approve.sh` — `requireApproval: <pin>`** | a named in-cluster approval of *exactly this release* | **This is where the founder's approval physically lands.** The approval object names the version; approving one pin approves nothing else. |
+| **Founder pin approval** (this document, § 5) | the version string prod runs | The one-line act. Everything above is a precondition to being *allowed* to ask. |
+
+The asks, in the order they become real — none of them is an ask today, because the
+artifacts do not exist yet:
+
+1. **When the platform-chart candidate entry exists on `vexa-internal`** (P1): approve
+   *that entry* as prod's initial pin. What it does: makes the pin string real. Consequence
+   if unanswered: the migration cannot start; prod stays helm-cranked.
+2. **When P2–P6 are green and § 6.5 has exited with an ownership-metadata-only diff**:
+   approve the sync. What it does: Argo becomes an owner of production. Consequence if
+   unanswered: prod is Argo-visible and unsynced, which is a stable and reversible state
+   (delete the Application; § 9.1).
+3. **On every release thereafter**: approve the pin move. What it does: deploys. That is
+   the point of the whole exercise — the prod deploy becomes one approved line.
+
+After adoption, the ceremony **replaces** the stage→prod helm crank. `stage-own` still
+gates who may act; `deploy` no longer runs `helm upgrade` against `vexa-production`.
+
+## 9 · Rollback
+
+### 9.1 Before the first sync
+Delete the prod Application with the non-cascading option so no managed resource is
+touched:
+
+```bash
+argocd app delete vexa-prod --cascade=false
+```
+Prod returns to exactly its pre-plan state; the Helm release is still `deployed` at
+revision 138 and still authoritative. This is the free exit and it is available through
+step 6.5.
+
+### 9.2 After adoption — rollback is a pin move
+```bash
+# 1 edit position + requireApproval back to the previous pin in the ApplicationSet element
+# 2 re-approve that pin (kit/verify/approve.sh) — the approval names the version, so the
+#   old pin needs its own approval act; there is no implicit "back is always allowed"
+# 3 sync
+argocd app sync vexa-prod
+```
+Nothing is rebuilt, nothing is fetched from a developer's machine, and the bytes that
+return are the bytes that were signed. **This is the property being bought, and it is the
+one property in this document that is genuinely unproven at prod scale** — see § 10.
+
+**The receipt is part of the rollback, not a follow-up.** A rollback that leaves no record
+reproduces the exact failure ADR-0006 exists to eliminate: the vexa-platform rollbacks that
+silently stripped out-of-band hotfixes. Write to `docs/receipts/`: the pin moved from, the
+pin moved to, why, what the diff showed, generations before and after, and the PV check
+from § 7.
+
+**What a pin move does not roll back:** database schema. Convergence
+(`admin_api/schema/sync.py`) is additive and forward-only — an upgrade that added a column
+still has that column after the pin moves back. For a schema-affecting release the rollback
+plan is snapshot-then-restore, and it is not this document's mechanism.
+
+## 10 · Rehearsed vs assumed — stated honestly
+
+**Rehearsed, on a throwaway cluster** (2026-08-24 week-exit rehearsal): clean-room
+bootstrap, wrong-key refusal, install from the channel, PreSync verify proven both ways,
+station bundle emit/ingest, gated publish, self-upgrade in 26s with zero kubectl.
+
+**Rehearsed, on the standing station:** the ApplicationSet `env`-rename teardown — and it
+is why § 5 says choose the element name once.
+
+**To be rehearsed on `vexa-staging` before prod** (P5): the adoption dance itself —
+annotation tracking, release-name match, diff-before-sync, reconcile-by-values. Staging is
+at **zero pods with a failed Helm release**, which makes it a weaker rehearsal than it
+sounds: bringing it up under Argo is a fresh install, not an adoption. **To rehearse
+adoption properly, staging must first be brought up by Helm to a healthy state and then
+adopted.** If that is skipped, prod adoption is the first adoption we have ever done, and
+this document's § 6 is a design, not a procedure.
+
+**Assumed, not proven, at prod scale:**
+- that ServerSideApply adoption of 13 Deployments + 48 NetworkPolicies + 7 PDBs produces
+  zero generation bumps;
+- that the rendered platform chart reproduces prod's 21 image digests exactly (§ 3 says the
+  mapping is not currently reconstructible from the release object — this is the highest
+  single risk in the plan);
+- that Kyverno can be installed inert beside 47 running pods;
+- that pin-move rollback works on prod-sized state.
+
+## 11 · What this plan does not cover
+
+Data-plane state (external Postgres, secret contents, MinIO objects), the flows/Minutes
+tier (not in the channel chart — blocker 18), the broken migrations Job (blocker 24), image
+mirroring into the channel, the root-CA trust-model migration, and the disposition of the 8
+released PVs. Each is tracked elsewhere and none of them is a prerequisite for adopting
+what is already running.

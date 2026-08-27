@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+# CI skeleton — fixtures only. This workflow holds no credentials of any kind:
+# no registry logins, no kubeconfigs, no cloud tokens (ADR-0001 boundary — the
+# publisher consumes released artifacts and receipts, never clusters).
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # jsonschema: spec/validate.py. PyYAML: the station gate and kit/validate
+      # parse the customer bundle's values files.
+      - name: Install test dependencies
+        run: pip install --quiet jsonschema pyyaml
+      # One target, so CI cannot drift from what a developer runs: publisher +
+      # preflight + smoke + validate + kit dry-run + goldens.
+      - name: make test
+        run: make test
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: make lint
+        run: make lint

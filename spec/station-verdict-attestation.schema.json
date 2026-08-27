@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vexa.ai/schemas/ee/station-verdict-attestation.v1.json",
+  "title": "Vexa station-verdict attestation (in-toto statement)",
+  "description": "A station attests that it verified this digest set against ITS OWN contract and found it eligible. This is the accumulating signature of the chain: staging's verdict is what the next station's contract requires. Only ELIGIBLE verdicts are ever signed - a failed verification simply produces no attestation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_type", "subject", "predicateType", "predicate"],
+  "properties": {
+    "_type": { "const": "https://in-toto.io/Statement/v1" },
+    "subject": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "digest"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "digest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sha256"],
+            "properties": { "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+          }
+        }
+      }
+    },
+    "predicateType": { "const": "https://vexa.ai/attestations/station-verdict/v1" },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release", "station", "contract_id", "contract_sha256", "verdict", "at"],
+      "properties": {
+        "release": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "station": { "type": "string", "minLength": 1 },
+        "contract_id": { "type": "string", "minLength": 1 },
+        "contract_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "verdict": { "const": "ELIGIBLE" },
+        "verdict_log_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+        "source": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,100 @@
+{
+ "schema_version": 1,
+ "station": "rehearsal",
+ "gated_at": "2026-08-25T12:28:31Z",
+ "verdict": "PASS",
+ "chart": {
+  "name": "vexa-0.12.40.tgz",
+  "sha256": "0b055bcc43944e9dbdea914488279223a951ab0bb1086a53cee72c0f90942ce6"
+ },
+ "contract": {
+  "id": "rehearsal-2026-01",
+  "sha256": "f203751bc593f9e63ce19810d704c5903343815de76cfe4f03e870d414aec562"
+ },
+ "delivery_scope_enforced": {
+  "allowed_namespaces": [
+   "vexa-staging",
+   "vexa-prod"
+  ],
+  "allow_cluster_scoped": false,
+  "pod_security": "baseline",
+  "allowed_image_registries": [
+   "docker.io/vexaai/",
+   "harbor.example.invalid/vexa-mirror/"
+  ],
+  "resource_ceiling": {
+   "cpu": "16",
+   "memory": "32Gi"
+  }
+ },
+ "checks": [
+  {
+   "id": "S5",
+   "holds": "the chart renders with the station's values",
+   "verdict": "PASS (26 objects)"
+  },
+  {
+   "id": "S6",
+   "holds": "every container declares cpu+memory requests and limits",
+   "verdict": "PASS"
+  },
+  {
+   "id": "S7",
+   "holds": "no workload mounts a hostPath volume",
+   "verdict": "PASS"
+  },
+  {
+   "id": "S8",
+   "holds": "every image reference is digest-pinned",
+   "verdict": "PASS"
+  },
+  {
+   "id": "S10",
+   "holds": "objects stay inside ['vexa-staging', 'vexa-prod']",
+   "verdict": "PASS"
+  },
+  {
+   "id": "S11",
+   "holds": "cluster-scoped objects allowed: False",
+   "verdict": "PASS"
+  },
+  {
+   "id": "S12",
+   "holds": "Pod Security Standards level `baseline` (PSS/SCC vocabulary)",
+   "verdict": "PASS"
+  },
+  {
+   "id": "S13",
+   "holds": "images come from ['docker.io/vexaai/', 'harbor.example.invalid/vexa-mirror/']",
+   "verdict": "PASS"
+  },
+  {
+   "id": "S14",
+   "holds": "sum of requests within {'cpu': '16', 'memory': '32Gi'}",
+   "verdict": "PASS"
+  }
+ ],
+ "contract_items": [
+  {
+   "item": "german-teams-meeting-validated",
+   "verdict": "MET",
+   "detail": "matched by --evidence guarantees"
+  },
+  {
+   "item": "images-digest-pinned",
+   "verdict": "MET",
+   "detail": "matched by --evidence guarantees"
+  },
+  {
+   "item": "no-hostpath",
+   "verdict": "MET",
+   "detail": "matched by --evidence guarantees"
+  }
+ ],
+ "waivers": {},
+ "enforced_by": "publisher/vexa_station.py gate (publisher-side, on the rendered chart)",
+ "not_enforced_here": [
+  "what actually runs \u2014 only the cluster's Pod Security admission and Kyverno see that",
+  "anything the chart creates at runtime rather than at render time"
+ ]
+}

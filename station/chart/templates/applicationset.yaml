@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+{{- /*
+THE SUBSCRIPTION — and the one object in this bundle that STANDS UP VEXA.
+
+Gated, because it was not, and that made the bundle uninstallable for anything
+except a full station. Every other piece of machinery here has a switch:
+`admission.enabled`, `floor.enabled`, `receiptSender.enabled`. This one
+rendered unconditionally, so installing the chart to get the receipt sender
+alone — which is exactly what an estate that already runs Vexa by other means
+wants — would also have created `ApplicationSet/vexa-channel-subscription`,
+subscribing `vexa-staging` on auto-sync at `position: '*'` and `vexa-prod`.
+On a cluster whose station contract permits one namespace, that is a second
+Vexa stack in namespaces the contract does not allow (caught 2026-08-25 while
+rendering 1.0.5 for our own production; the chart was never installed).
+
+DEFAULT TRUE. A station that follows this channel is what the bundle is FOR,
+so every existing subscriber's render is unchanged, byte for byte. The switch
+exists for the station that installs the machinery without the subscription.
+
+The file is embedded raw (.Files.Get) so its Argo goTemplate fields never meet
+Helm's renderer. Element `env` is app IDENTITY — renaming one tears down and
+recreates that station's workloads (observed 2026-08-21).
+*/}}
+{{- if .Values.subscription.enabled }}
+{{ .Files.Get "files/applicationset.yaml" | replace "${APP_CHART_REPO}" .Values.appChartRepo | replace "${CHANNEL_NAME}" .Values.channelName }}
+{{- end }}

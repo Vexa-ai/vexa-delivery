@@ -1,0 +1,61 @@
+---
+title: "Security model"
+description: "What runs where, what leaves your cluster, and what you pin."
+---
+
+## What runs in your perimeter
+
+| Component | Controlled by |
+|---|---|
+| Argo CD, Kyverno — stock upstream, pinned | You: your reconciler, your admission layer |
+| Two admission policy files: digest-pinning, signature verification | You — tighten at will |
+| The subscription: one ApplicationSet, including the production pin | You |
+| Preflight, smoke, validate — readable scripts on your operator's machine | You |
+| The kit — verified against your key before unpacking, never cloned | You, including when to update |
+| The Vexa workloads — digest-pinned images | Admitted only by your policy |
+
+No Vexa agent, controller or telemetry component. All of it — including the Vexa product —
+is Apache-2.0; the subscription buys the attested release stream, support and co-design, not
+access to code.
+
+## What leaves your cluster
+
+Nothing is required to leave. The subscription pulls and sends nothing, verification is
+offline, and blocking all egress only makes updates wait. Meeting content — audio,
+transcripts, participants — is in no delivery, verification or support payload. Three
+optional outbound classes exist, each off by default:
+
+| Class | Carries |
+|---|---|
+| [Support tickets](support) | Composed locally, shown in full before sending: configuration shapes and error records |
+| [The station bundle](install#step-5-send-the-station-bundle-back) | Written to disk and sent by hand: substrate facts, values with secrets replaced, contract, receipts |
+| [Notifications and usage reports](support) | Enabled per event class; aggregate numbers and shapes |
+
+## Isolated networks
+
+With no route to `channel.vexa.ai`, mirror the artifacts into your own registry; digests and
+signatures survive mirroring, and verification pins our key, not a hostname.
+
+<Note>
+**Rung.** The mirrored path is proven through a credentialed Harbor pull-through proxy. An
+install on a **genuinely disconnected** network has not been exercised yet.
+</Note>
+
+## What you pin
+
+The channel verification key, the build platform identity (Sigstore, public repo + issuer),
+and digest-only image references. Compromise of any registry, ours or your mirror, therefore
+runs nothing in your cluster. [How to check each one](verify).
+
+## Credentials
+
+- Your credential is **pull-only**, scoped to your channel, revocable independently of every
+  other subscriber's, inside a minute.
+- Pull-only is enforced at the **edge proxy**, not by the registry
+  ([why](channel#worth-knowing)).
+- It reaches you **age-encrypted to a key you already control**, never in plaintext, on a
+  different route from the public key it pairs with.
+- **Vexa holds no credential of yours.** There is no inbound access to grant.
+
+[Preflight](preflight) reports, before install, exactly which workloads OpenShift SCC
+`restricted-v2` or PodSecurity `restricted` would refuse.

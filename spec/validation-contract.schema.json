@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vexa.ai/spec/validation-contract.schema.json",
+  "title": "Validation contract v1",
+  "description": "What a release was validated AGAINST. A green validation run is meaningless without this: an estate depends on services it does not own, and 'it came up' says nothing until the reader knows whether the database was the real managed instance or an empty in-cluster stand-in. THE RULE IS REAL BY DEFAULT. A double is permitted only where real is impossible or harmful, and it must carry the justification. An unjustifiable double is a contract violation, not a shortcut. This artifact is also what tells a SUBSCRIBER what their release was validated against, so it is a customer-facing product surface, not test scaffolding.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "estate",
+    "authored_at",
+    "rule",
+    "dependencies"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "description": "Stable identifier, referenced by hash from the channel entry and by id from receipts.",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "estate": {
+      "type": "string",
+      "description": "Which estate/shape this contract governs."
+    },
+    "authored_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rule": {
+      "type": "string",
+      "description": "Restated in every contract so it cannot be forgotten between one and the next.",
+      "const": "real by default; each double carries a justification; an unjustifiable double is a contract violation"
+    },
+    "dependencies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "fidelity",
+          "proves",
+          "does_not_prove"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "datastore",
+              "payment",
+              "transcription",
+              "model_gateway",
+              "mail",
+              "dns",
+              "object_storage",
+              "cache",
+              "identity",
+              "observability",
+              "other"
+            ]
+          },
+          "fidelity": {
+            "type": "string",
+            "description": "real = the actual production-class service; an optional parenthetical qualifier may narrow it (e.g. `real(Stripe test mode)`) but it is still the real implementation. double(<what>) = a substitute that implements the real contract. dummy-endpoint = something that answers but does not implement. absent = not present at all; every claim depending on it is unproven. Anything other than `real` REQUIRES a justification saying why real was impossible or harmful.",
+            "pattern": "^(real(\\(.+\\))?|double\\(.+\\)|dummy-endpoint(\\(.+\\))?|absent)$"
+          },
+          "justification": {
+            "type": "string",
+            "description": "REQUIRED for any fidelity that is not `real`. Must say why real was impossible or harmful \u2014 not why the double was convenient."
+          },
+          "proves": {
+            "type": "string",
+            "description": "One line: what this fidelity genuinely establishes."
+          },
+          "does_not_prove": {
+            "type": "string",
+            "description": "One line: what a reader must NOT conclude. This field is the point of the document."
+          },
+          "endpoint_shape": {
+            "type": "string",
+            "description": "How the estate reaches it during validation, without credentials."
+          }
+        }
+      }
+    },
+    "unproven_claims": {
+      "type": "array",
+      "description": "Claims that any `absent` or `dummy-endpoint` dependency makes unavailable. Written out so a receipt cannot accidentally assert them.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "customer_note": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,217 @@
+# SPDX-License-Identifier: Apache-2.0
+{{- /*
+THE RETURN LEG, IN-CLUSTER — the telemetry ladder's sender.
+
+Two shapes, because the ladder has two cadences:
+
+  * a PostSync hook Job — the T1 receipt. It fires when a sync completes, which
+    is exactly when "what is running here, under what verdict" changes, and
+    never otherwise. Per release, which is T1's declared cadence.
+  * a CronJob — the T2/T3 cadenced submission. Daily by default; the schedule
+    comes from the contract's declared cadence.
+
+WHAT AUTHORISES THE TIMER IS THE CUSTOMER'S OWN FILE, and this is the part
+worth reading twice. Until today the design claim was absolute: "nothing in the
+delivered software originates a report; it happens when an operator types
+--submit." That claim was doing real work and it is not being quietly dropped.
+
+What changed is that T2 and T3 are CADENCED rungs — daily, weekly — and a rung
+nobody reaches without a human typing a command every morning is a rung nobody
+climbs. So the timer exists, and it is gated three ways:
+
+  1. `receiptSender.enabled` — off by default in values.yaml;
+  2. `receiptSender.trigger` must be `scheduled`, which mirrors
+     `report_scope.trigger` in the station's contract. A contract that still
+     says `explicit-command-only` renders NO CronJob at all — the timer is
+     authorised by the same document that bounds what it may send;
+  3. and the pod re-reads the mounted contract at runtime and refuses to
+     collect above its declared tier, so a values file that disagrees with the
+     contract loses to the contract.
+
+The PostSync receipt Job is NOT gated on `scheduled`: it is not a timer. It
+fires on an act the operator performed — a sync they approved — which is the
+same trigger class as typing --submit, one level up.
+
+The credential is the station's own, from a Secret the customer creates. The
+edge lets it write to /v2/vexa/stations/<its own name>/** and nothing else.
+*/ -}}
+{{- if .Values.receiptSender.enabled }}
+{{- /*
+THE THREE VALUES WITH NO SANE DEFAULT, refused at RENDER rather than at run.
+
+Each of these fails silently-then-late if left empty. An empty image renders a
+pod spec with `image: ""` that the API server accepts and the kubelet cannot
+pull; an empty station name submits to `/v2/vexa/stations//bundles`, which the
+edge rejects with a 401 that reads like a bad credential; an empty contract
+ConfigMap mounts nothing and the tool refuses on a missing report_scope, three
+layers away from the values file that caused it. `fail` puts the sentence in
+front of the operator at `helm template` time, before anything is installed.
+*/}}
+{{- range $k, $why := dict
+    "image"             "the kit runtime image, digest-pinned, off the channel (see kit/Dockerfile)"
+    "station"           "the station name — must equal the path segment the edge allows this credential to write"
+    "contractConfigMap" "the name of a ConfigMap in the station namespace holding key `contract.yaml` — the report contract is YOURS to author; this chart only mounts it" }}
+{{- if not (get $.Values.receiptSender $k) }}
+{{- fail (printf "receiptSender.enabled is true but receiptSender.%s is empty: %s" $k $why) }}
+{{- end }}
+{{- end }}
+{{- $ns := .Values.prodNamespace }}
+{{- $sa := "vexa-receipt-sender" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa }}
+  namespace: {{ $ns }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vexa-receipt-sender
+  namespace: {{ $ns }}
+# READ-ONLY, AND NARROW ON PURPOSE. Every verb here is get/list/watch-less
+# reading of workload STATUS. Nothing grants secrets, nothing grants exec,
+# nothing grants write. A customer auditing this Role should be able to
+# conclude in one pass that the sender cannot read a workload's data, because
+# it has no permission that would let it.
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ .Values.receiptSender.verifierVerdictConfigMap | quote }}]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list]
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vexa-receipt-sender
+  namespace: {{ $ns }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: vexa-receipt-sender}
+subjects:
+  - {kind: ServiceAccount, name: {{ $sa }}, namespace: {{ $ns }}}
+---
+{{- if .Values.receiptSender.readArgoApplication }}
+# The Argo Application lives in the argocd namespace. Reading it is what gives
+# the T1 receipt its pin and sync status. Optional, and named: a station whose
+# operations team will not grant cross-namespace read still submits a receipt,
+# with those fields simply absent rather than invented.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vexa-receipt-sender-argo
+  namespace: {{ .Values.argocdNamespace }}
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    resourceNames: [{{ .Values.receiptSender.app | quote }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vexa-receipt-sender-argo
+  namespace: {{ .Values.argocdNamespace }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: vexa-receipt-sender-argo}
+subjects:
+  - {kind: ServiceAccount, name: {{ $sa }}, namespace: {{ $ns }}}
+---
+{{- end }}
+{{- if .Values.receiptSender.networkPolicy }}
+{{- /*
+THE SAME WALL THE VERIFY GATE HIT (prod, 2026-08-25, seq 4).
+
+The PreSync verifier failed on its first act — `oras pull` of the entry —
+because `vexa-production` runs a default-deny NetworkPolicy plus one
+enumerated egress policy per WORKLOAD, and a hook Job is in nobody's
+enumeration. This sender is the same shape one level along: a Job and a
+CronJob, in that same namespace, whose entire purpose is to reach
+`{{ .Values.receiptSender.destination }}` over HTTPS. Installed as it stood it
+would have failed identically, on install, on the first receipt.
+
+It needs 443 twice over, and the second one is easy to miss: the channel
+destination, and the KUBERNETES API SERVER it reads pod/deployment status
+from. An estate that narrows `egressCIDR` to its registry alone therefore
+breaks the collector rather than the submit — hence one CIDR value covering
+both, defaulting open.
+
+Not a hook: these objects are ordinary namespace resources, so the policy is
+one too. It is created and reconciled with the chart and stays put.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vexa-receipt-sender-egress
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vexa-receipt-sender
+  policyTypes: ["Egress"]
+  egress:
+    - ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - ipBlock: {cidr: {{ .Values.receiptSender.egressCIDR | default "0.0.0.0/0" | quote }}}
+      ports:
+        - {protocol: TCP, port: 443}
+---
+{{- end }}
+{{- if .Values.receiptSender.postSync }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vexa-receipt-postsync
+  namespace: {{ $ns }}
+  annotations:
+    # PostSync, not PreSync: the receipt reports what a completed sync
+    # produced. A hook that ran before the sync would report the previous
+    # release and call it the current one.
+    "argocd.argoproj.io/hook": PostSync
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+spec:
+  backoffLimit: 2
+  # A receipt that cannot be sent must not hold a sync open. Unlike the PreSync
+  # verifier — where a hook that never finishes is a deadlock a human has to
+  # see — a failed receipt is a gap in the ledger, not an unsafe deploy.
+  activeDeadlineSeconds: {{ .Values.receiptSender.deadlineSeconds }}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: vexa-receipt-sender, vexa.ai/rung: receipt}
+    spec:
+{{ include "vexa.receiptSender.podSpec" . | indent 6 }}
+---
+{{- end }}
+{{- if eq .Values.receiptSender.trigger "scheduled" }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vexa-receipt-sender
+  namespace: {{ $ns }}
+spec:
+  schedule: {{ .Values.receiptSender.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # A missed window is not made up for later. Two days of counters submitted as
+  # one is a number nobody can read, and `window_hours` in the payload would be
+  # a lie about what it covers.
+  startingDeadlineSeconds: {{ .Values.receiptSender.startingDeadlineSeconds }}
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: {{ .Values.receiptSender.deadlineSeconds }}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: vexa-receipt-sender, vexa.ai/rung: cadenced}
+        spec:
+{{ include "vexa.receiptSender.podSpec" . | indent 10 }}
+{{- end }}
+{{- end }}

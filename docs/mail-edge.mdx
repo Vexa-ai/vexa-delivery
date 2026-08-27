@@ -1,0 +1,121 @@
+---
+title: "The mail edge"
+description: "The mailbox is the product's front door — Gmail, generic IMAP, or Microsoft Graph, plus the Graph admin runbook."
+---
+
+<Warning>
+**Not shipped.** The transport seam is an open pull request
+([`Vexa-ai/vexa#1318`](https://github.com/Vexa-ai/vexa/pull/1318)) targeting a feature branch,
+not `main`. The Graph transport is fixture-proven and has never met a live Exchange server, and
+the chart does not plumb these variables yet. This page exists so your identity team can start
+the approval path — the long pole — not because you can deploy it today.
+</Warning>
+
+Vexa's flows tier is driven by a mailbox: people invite an address to a meeting, or write
+to it. `VEXA_MAIL_TRANSPORT` picks how Vexa reads it; any other value is a startup error.
+
+| Value | What it is | Use when |
+|---|---|---|
+| `gmail` | IMAP + SMTP, Google's hosts pre-filled | Google Workspace |
+| `imap` | Generic IMAP + SMTP — **the Exchange path when your tenant allows IMAP** | Exchange with IMAP enabled, or any IMAP server |
+| `graph` | Microsoft Graph, client credentials, no IMAP | Exchange Online with IMAP disabled by policy |
+
+## `gmail` and `imap`
+
+| Variable | Default |
+|---|---|
+| `VEXA_MAIL_ADDR` | required |
+| `VEXA_MAIL_APP_PASSWORD` | required |
+| `VEXA_MAIL_IMAP_HOST` | `imap.gmail.com` under `gmail`; required under `imap` |
+| `VEXA_MAIL_IMAP_PORT` | `993` |
+| `VEXA_MAIL_IMAP_FOLDER` | `INBOX` |
+| `VEXA_MAIL_SMTP_HOST` | `smtp.gmail.com` under `gmail`; required under `imap` |
+| `VEXA_MAIL_SMTP_PORT` | `465` |
+| `VEXA_MAIL_SMTP_STARTTLS` | `0` — set `1` for plain SMTP plus STARTTLS |
+
+Exchange Online with IMAP enabled is four values: `outlook.office365.com:993`,
+`smtp.office365.com:587`, `VEXA_MAIL_SMTP_STARTTLS=1`.
+
+## `graph`
+
+| Variable | Default |
+|---|---|
+| `VEXA_GRAPH_TENANT_ID` | required |
+| `VEXA_GRAPH_CLIENT_ID` | required |
+| `VEXA_GRAPH_CLIENT_SECRET` | required |
+| `VEXA_GRAPH_MAILBOX` | required — the mailbox UPN, e.g. `vexa@your.tld` |
+| `VEXA_GRAPH_BASE` | `https://graph.microsoft.com/v1.0` |
+| `VEXA_GRAPH_LOGIN` | `https://login.microsoftonline.com` |
+| `VEXA_GRAPH_USE_DELTA` | `0` — `1` uses a delta-link cursor instead of a timestamp |
+| `VEXA_GRAPH_PAGE_SIZE` | `25` |
+
+## Admin runbook — Microsoft Graph
+
+**1 · Register an application.** Entra ID → App registrations → New registration. Single
+tenant, no redirect URI. Record the **Application (client) ID** and **Directory (tenant)
+ID**; create a client secret and record its **value**, not its id.
+
+**2 · Grant application permissions.** API permissions → Microsoft Graph → **Application
+permissions** (not delegated): `Mail.ReadWrite` (read the inbox, draft the reply) and
+`Mail.Send`. Nothing else is required to read a mailbox. Replies are drafted then sent because
+that is the only way Graph returns the real `internetMessageId` that keeps a reply in thread.
+
+**3 · Grant admin consent** for the tenant. Until a Global Administrator (or Privileged
+Role Administrator) consents, the app authenticates fine and returns `403` on every call.
+
+**4 · Scope the app to one mailbox — required.** `Mail.ReadWrite` as an application
+permission is tenant-wide: without this step the app can read every mailbox in your tenant.
+
+```powershell
+Connect-ExchangeOnline
+New-DistributionGroup -Name "Vexa Mailbox Scope" `
+  -Alias vexa-scope -Type Security -Members vexa@your.tld
+New-ApplicationAccessPolicy -AppId <client-id> `
+  -PolicyScopeGroupId vexa-scope@your.tld -AccessRight RestrictAccess `
+  -Description "Vexa flows — restrict to the vexa mailbox"
+Test-ApplicationAccessPolicy -Identity vexa@your.tld -AppId <client-id>
+```
+
+Expect `Granted` for the vexa mailbox, and **run the test against a second mailbox too**,
+expecting `Denied` — a policy that was created but does not apply looks identical to one that
+works. Allow a few minutes for propagation.
+
+Mint the client secret in the admin's browser and put it into the cluster Secret from the
+admin's terminal. It goes in no ticket, chat or email, Vexa's included.
+
+**`az login` is not your app.** The Azure CLI gives you a delegated token as yourself, and
+delegated calls succeed against mailboxes the application permission does not cover. Test with
+`grant_type=client_credentials` and `scope=https://graph.microsoft.com/.default`. And a fresh
+registration returning `403` is usually missing consent, not missing permissions.
+
+## If you also want Vexa to create Teams meetings
+
+A **separate capability** with its own approval path; the mail transport never touches the
+meetings API. Additional application permissions, with admin consent:
+`OnlineMeetings.ReadWrite.All` and `Calendars.ReadWrite` (to place it on the organizer's
+calendar). Plus a Teams policy granted to the organizing user:
+
+```powershell
+Connect-MicrosoftTeams
+New-CsApplicationAccessPolicy -Identity vexa-meetings `
+  -AppIds <client-id> -Description "Vexa — create meetings as this organizer"
+Grant-CsApplicationAccessPolicy -PolicyName vexa-meetings -Identity <organizer-upn>
+```
+
+**The organizer is identified by objectId GUID, not by UPN.** `POST
+/users/{organizer}/onlineMeetings` needs the directory object id; a UPN fails with an
+invalid-GUID message that reads like a malformed request id. Resolve it once with
+`GET /users/<upn>?$select=id` and store the GUID.
+
+## Current limits
+
+- **An invite is picked up only if it carries a `https://meet.google.com/…` link.** A
+  Teams-linked Outlook invite is ignored, silently.
+- Invites more than 24 hours in the past are dropped.
+- First boot anchors at the tail; existing mail is never replayed.
+- Delta mode can re-deliver a batch after a crash; de-duplication is by `Message-ID`.
+- The Graph invite-synthesis path is fixture-proven only.
+- One manual schema change on an existing deployment:
+  `ALTER TABLE mail_cursor ADD COLUMN token TEXT;`. IMAP works without it; Graph refuses to
+  start rather than rewinding your cursor.
+- The chart does not carry these variables yet.

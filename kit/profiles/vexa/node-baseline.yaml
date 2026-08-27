@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+# Vexa Enterprise node baseline — the delivered TOGGLES. Image identity never
+# lives here: digests are baked per release by the publisher's `chart` verb
+# (pins-<version>.yaml, generated from the candidate map at the tag).
+global:
+  # digest-pinned refs make Always pointless and Docker Hub quota-expensive
+  imagePullPolicy: IfNotPresent
+gateway:
+  replicaCount: 1          # single-node profile; scale in customer values
+migrations:
+  enabled: false           # 0.12.x services create their schema on boot (verified
+                           # live: 6 tables self-created with the job disabled);
+                           # the chart's job targets a module the images do not
+                           # ship. The publisher's Argo Sync/wave hook stamp stays
+                           # for the first release that ships real migrations.
+
+# ---- dependency images: digest-pinned, like everything else -----------------
+# Vexa's own images are pinned per release from the candidate map. The chart's
+# THIRD-PARTY dependencies were not pinned at all, and two of them floated on
+# `:latest` — in a delivery system whose entire claim is an exact, attested
+# digest set. The station gate refused the chart on exactly this (S8, rehearsal
+# 2026-08-24), which is the gate doing its job.
+#
+# Pinned below at the digests resolved on 2026-08-24. These are ordinary
+# upstream images: the pin makes the delivered set reproducible and reviewable,
+# it does not make them attested by us — see the entry's evidence_absent.
+# Refreshing them is a deliberate act with its own gate run, which is the point.
+postgres:
+  image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+redis:
+  image: valkey/valkey:8-alpine@sha256:e0eb7c480958d32bdc4357a74bdd70653ae15f2f9b4c93c4a5a9fad1dc471c84
+minio:
+  image:
+    repository: minio/minio
+    tag: latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+
+  # the bucket-init client, pinnable only once Vexa-ai/vexa#1321 lands
+  mcImage:
+    repository: minio/mc
+    tag: latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+
+# NOT fixable from here until Vexa-ai/vexa#1321 ships in a release:
+#   * the minio-init Job's `minio/mc:latest` is HARDCODED in the chart template
+#     (templates/job-minio-init.yaml), not exposed as a value;
+#   * the same Job declares no resources.requests/limits, which is the exact
+#     LimitRange-squeeze class the preflight's P2 exists to catch.
+# Both need a change in the OSS chart at Vexa-ai/vexa; until it lands the
+# station gate refuses this chart on S6 and S8, and it is right to.

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+{{- if .Values.admission.enabled }}
+{{- /* Kyverno's own {{ }} expressions must never meet Helm's renderer:
+       the policy rides as a raw file, only our ${} placeholders are filled. */}}
+{{- $key := .Values.channelPublicKey | trim | indent 22 }}
+{{- if eq .Values.scope "cluster" }}
+{{ .Files.Get "files/kyverno-vexa-admission.yaml"
+   | replace "${STAGING_NAMESPACE}" .Values.stagingNamespace
+   | replace "${PROD_NAMESPACE}" .Values.prodNamespace
+   | replace "${SIGNATURE_REPOSITORY}" .Values.signatureRepository
+   | replace "${CHANNEL_PUBLIC_KEY_INDENTED}" $key }}
+{{- else }}
+{{- range $ns := list .Values.stagingNamespace .Values.prodNamespace }}
+---
+{{ $.Files.Get "files/kyverno-vexa-admission-namespaced.yaml"
+   | replace "${POLICY_NAMESPACE}" $ns
+   | replace "${SIGNATURE_REPOSITORY}" $.Values.signatureRepository
+   | replace "${CHANNEL_PUBLIC_KEY_INDENTED}" $key }}
+{{- end }}
+{{- end }}
+{{- end }}

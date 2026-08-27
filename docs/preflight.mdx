@@ -1,0 +1,58 @@
+---
+title: "Preflight"
+description: "Know before first sync whether your cluster will run what the channel delivers."
+---
+
+Preflight answers one question before anything is installed: **will this cluster run what
+the channel delivers?** It fails closed, so a conflict with your taints, quotas or admission
+profile surfaces now instead of during your first sync. Run it again before every upgrade.
+
+```bash
+python3 kit/preflight/vexa_preflight.py --namespace vexa-staging \
+  [--manifests <rendered-manifests>] [--live-probes --registry-host <host>]
+```
+
+Each check prints `PASS`, `WARN` or `FAIL` with a remedy line. Non-zero exit if anything
+failed; `--json` emits the same report machine-readably.
+
+## The nine checks
+
+- **P1 · Taints and tolerations** — workloads that cannot schedule sit Pending forever,
+  looking like an application failure. Covers the **dynamically spawned bot pods**, which
+  appear in no manifest.
+- **P2 · Resources vs LimitRange** — a LimitRange silently defaults undeclared containers to
+  64Mi. Verifies the delivered declarations fit your min/max.
+- **P3 · ResourceQuota headroom** — quota cannot fit the declared totals; admission refuses
+  pods at the margin.
+- **P4 · Pod security admission** — OpenShift SCC `restricted-v2` **rejects** explicit UIDs
+  outside the namespace range; PodSecurity `restricted` needs `runAsNonRoot`, seccomp,
+  capability drops. Names the workload that would be refused.
+- **P5 · NetworkPolicy reachability** — default-deny egress with no DNS allowance, or no
+  route to the registry. Static, or proven with `--live-probes`.
+- **P6 · Shared-memory sizing** — the bot's memory-backed `/dev/shm` counts against its
+  memory limit; checks your LimitRange max and node capacity hold it.
+- **P7 · Image pull** — pulls a release image **by digest** with this namespace's secrets;
+  warm node caches hide broken credentials until the first new release.
+- **P8 · Storage** — a default StorageClass exists if the delivered set carries volume claims.
+- **P9 · Version floor** — Kubernetes is at or above the tested floor.
+
+Live-probe pods are themselves PodSecurity `restricted` compliant, so preflight works inside
+hardened namespaces.
+
+## Air-gapped clusters
+
+On a connected workstation with cluster access:
+
+```bash
+python3 kit/preflight/vexa_preflight.py --namespace vexa-staging --dump-snapshot cluster.json
+```
+
+Then analyse anywhere with `--snapshot cluster.json`. Live probes need cluster access;
+everything else works from the snapshot.
+
+## What it cannot tell you
+
+Preflight answers *will it run here*, never *did it work here*. A cluster can pass all nine
+checks and still fail to capture a meeting — that is
+[the smoke test's job](install#step-4-smoke-with-a-human-in-a-real-meeting), and it needs a
+human. `vexa_validate.py` runs both in order and packages the receipts together.

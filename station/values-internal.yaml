@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+scope: cluster
+appChartRepo: registry.channel-registry.svc:5000/vexa/channel/vexa-internal/charts
+signatureRepository: registry.channel-registry.svc:5000/vexa/channel/enterprise-stable/sigs
+registryHost: registry.channel-registry.svc
+registryPort: "5000"
+floor:
+  image: docker.io/bitnami/kubectl@sha256:02a8b4cd036d7bd4572798a87215edf061cc59533873aa668bbe795685cd770a
+channelPublicKey: |
+  -----BEGIN PUBLIC KEY-----
+  MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5fmaemu0EtzmMbUE0JSPzo3Iq+eS
+  ddu5IZVBIKnfUyoP+JbcP4/golcKMb8Sz1jvP09cw9jVTdFyLX+BZBXRNA==
+  -----END PUBLIC KEY-----

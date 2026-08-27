@@ -1,0 +1,179 @@
+# When you use this — the half of the reference no generator can produce.
+#
+# `--help` says what a flag DOES. This file says when an operator reaches for
+# the verb, which is the only part of a CLI reference a human has to write.
+# One line per verb, flat keys: "<page> <verb>", or "<page>" for the tools
+# that take no subcommand.
+#
+# THIS FILE IS THE COVERAGE GATE. docs/gen-cli-reference.py fails when a verb
+# exists in the code and has no line here, so a new verb breaks the build until
+# somebody says what it is for. Deleting a line does not make the gate quieter;
+# it makes it louder.
+
+# ---------------------------------------------------------------- publisher --
+# Run by us, never by a customer. These pages stay out of the public nav.
+
+vexa-channel fetch: >-
+  First step of a release crank: pull the release archive, its provenance
+  bundle and the trusted root out of GitHub via `gh` into a working directory.
+  Everything after this is offline, so this is the only step that needs the
+  network to reach the OSS release.
+
+vexa-channel build: >-
+  Assemble the channel entry and run cross-checks C1..C9 against the release
+  tag, the candidate image map at that tag, and the internal delivery receipt.
+  A failed check refuses the entry — there is no silent path, only an explicit
+  `--break-glass` record that becomes visible data inside the signed entry.
+
+vexa-channel verify: >-
+  Re-run every offline check against an entry directory without touching a
+  registry. Use it after `build` to see what the entry claims before you push
+  it, and to re-check an entry someone else built.
+
+vexa-channel push: >-
+  Publish the built entry: push it to the registry with `oras`, sign it and
+  every image digest with cosign, and move the channel tag. The signing
+  toolchain checks T1/T2 run inside this path so they cannot be skipped —
+  T2 proves the signature is discoverable in the exact shape the customer's
+  Kyverno will ask for.
+
+vexa-channel chart: >-
+  Package the OSS chart with the release's image digests baked in, so the
+  customer's Argo resolves a tag to nothing and a digest to exactly one image.
+  Push it to the channel's chart repository; the chart's semver IS the channel
+  position a station follows.
+
+vexa-channel platform-chart: >-
+  The same packaging act as `chart`, for the chart nobody outside can see: the
+  proprietary `vexa-platform` chart, pinned from digests captured off a running
+  cluster rather than off a release tag. Reach for it when what ships is an
+  estate we operate, not an OSS release — there is no upstream tag to read pins
+  from, so the live namespace is the source of truth and anything that cannot be
+  pinned through values has to be declared as unpinnable, with its reason.
+
+vexa-channel platform-entry: >-
+  Build a channel entry for a whole platform estate — several charts, no single
+  OSS release tag behind them. It refuses without a validation contract, because
+  an estate with no stated scope is an estate nobody can prove anything about.
+  What the estate is known NOT to cover goes in `known_holes` and rides inside
+  the signed entry, where a subscriber reads it before they find out.
+
+vexa-channel refresh: >-
+  Re-stamp an entry's expiry — same release, next seq, new horizon — when the
+  channel is still current but its entry is about to go stale. Every entry
+  expires, so a channel nobody refreshes stops verifying on its own; that is
+  deliberate, and this is the verb that says "still good" without republishing
+  the release.
+
+vexa-channel revoke: >-
+  Withdraw a release or a digest from the channel by appending to its signed
+  revocation list — or publish an EMPTY list, which is how the list goes live
+  before it is needed. We can publish and cannot un-publish: this is the only
+  path that stops a subscriber's sync, and the `--reason` is what their operator
+  reads when it stops.
+
+vexa-channel sign-images: >-
+  Sign every digest in the candidate map into the channel's signature
+  repository. Separated from `push` because the signature layout — not the
+  signature — is what the customer's admission controller reads, and a
+  re-signing pass must be runnable without republishing the entry.
+
+vexa-channel attest: >-
+  Record a signed, structured claim about a release: a station's verdict, a
+  soak result, anything a downstream contract can `require:` by name. This is
+  how the internal channel accumulates evidence that the enterprise entry is
+  later built from.
+
+vexa-station ingest: >-
+  Take the `station.tar.gz` a customer sent back and unpack it into
+  `stations/<name>/` after checking it is complete, self-consistent and free
+  of plaintext secrets. Until a station is ingested we cannot gate a release
+  against it, so an un-ingested bundle is an un-represented customer.
+
+vexa-station gate: >-
+  Ask the other half of the publish question — not "may this release exist"
+  but "may it be published AT this station, given that station's contract".
+  Renders the packaged chart with the station's own values and refuses on any
+  unmet `require:` item unless it is loudly waived in the gate report.
+
+vexa-stations record-publish: >-
+  Reduce a published entry into `channels/<channel>/channel.yaml`. You rarely
+  type this: `vexa-channel push --ledger` calls it, so the ledger cannot drift
+  from the act it records. Reach for it directly only to seed a channel from an
+  entry that was published before the ledger existed.
+
+vexa-stations record-ingest: >-
+  Reduce an already-unpacked station directory into its `state.yaml` and store
+  its receipt. Also rarely typed directly — `vexa-station ingest --ledger` calls
+  it — but it is how you backfill a station that was ingested before the ledger,
+  without asking the customer to send the bundle again.
+
+vexa-stations pin: >-
+  Move a station's pin: the promotion. This is the one write to `channel.yaml`
+  a human makes, and it refuses to run without a justification, because a
+  promotion with no stated reason is indistinguishable in history from a slip.
+
+vexa-stations show: >-
+  Read the whole ledger in one screen: every channel's sequence and current
+  entry, and every station's pin, observed position, last verdict and flags.
+  The fastest answer to "which customers are behind, and on what".
+
+vexa-subscriber list: >-
+  Show every account on the channel registry and its scope. The first thing to
+  run when a customer reports a 401, and the inventory you reconcile against
+  before a rotation.
+
+vexa-subscriber add: >-
+  Mint a credential for an account — the same verb rotates an existing one.
+  Onboarding a new subscriber and rotating a compromised one are the same act
+  against the registry, and both end with an age-encrypted handoff.
+
+vexa-subscriber revoke: >-
+  Remove an account's credential. Use it when a pilot ends or a credential is
+  suspected: revocation stops future pulls, it does not un-deliver what the
+  subscriber already has.
+
+kit-release: >-
+  Publish a new signed version of the customer kit itself to the channel. The
+  kit is delivered the same way the product is — bootstrapped tree, cosign
+  signature, `latest` tag — so shipping a kit fix is a release, not an email
+  with a tarball.
+
+# ----------------------------------------------------------------- customer --
+# Run by the operator in their own cluster. These pages are in both navs.
+
+vexa-preflight: >-
+  Run before the first sync and before every upgrade, to answer "will this
+  cluster run what the channel delivers" while there is still time to fix the
+  answer. Every check is anchored to a failure seen in a real customer
+  cluster; the first sync is the wrong moment to discover a taint.
+
+vexa-smoke: >-
+  Run after an install or an upgrade to prove the release worked HERE: the
+  pods that should be running are, and — with `--flows` — a bot joined a real
+  meeting and produced transcript segments. The receipt it writes is what
+  turns "it synced" into "it works".
+
+vexa-validate: >-
+  The one command an operator runs end to end: preflight, optionally install,
+  smoke, then bundle it all into a secret-free `station.tar.gz`. Reach for it
+  at onboarding and at every upgrade you want a receipt for; reach for the
+  individual tools only when you are debugging one leg of it.
+
+kit-bootstrap: >-
+  The first command a new station ever runs: fetch the kit tree from the
+  channel and verify its signature against the channel public key and nothing
+  else. Everything the operator does afterwards comes from a tree whose
+  provenance was checked before it was trusted.
+
+kit-install: >-
+  Install the station itself — the Argo subscription that follows a channel
+  position, plus the admission policy that pins the channel key. Prod gets an
+  Application only when you set `--prod-pin`, because moving that pin is the
+  operator's gate and not ours to pre-press.
+
+kit-self-update: >-
+  Move an already-bootstrapped kit tree to a newer kit version, checked
+  against the key recorded in the tree at bootstrap. `--check` reports what an
+  update would do and changes nothing, which is the form to use before an
+  upgrade window rather than during one.

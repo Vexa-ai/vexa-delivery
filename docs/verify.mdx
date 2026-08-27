@@ -1,0 +1,126 @@
+---
+title: "Verify"
+description: "What your change board can check without contacting Vexa — and exactly how."
+---
+
+Every channel entry verifies **offline** — the bundle carries its own trust material, and
+each entry ships these commands as a ready-to-run `VERIFY.md` with its own file names in.
+
+The chain: `channel.pub` reaches you out of band → it verifies `entry.json` → `entry.json`
+names the sha256 of every evidence file and the digest of every image, so one signature seals
+the bundle → the chart references those same digests → your Kyverno pins the same key at
+admission.
+
+## 1 — The entry is signed
+
+```bash
+cosign verify-blob --key channel.pub \
+  --bundle entry.json.sigstore.json --new-bundle-format entry.json
+```
+
+Steps 2–4 add no signatures; they recompute hashes against this sealed record.
+
+## 2 — The evidence bundle is intact
+
+Recompute the sha256 of every file in `evidence/` and compare to `entry.json` — a five-line
+script in `VERIFY.md`. A mismatch is a rejection.
+
+## 3 — The source provenance is real
+
+```bash
+cosign verify-blob-attestation \
+  --bundle evidence/source-provenance.sigstore.json --new-bundle-format \
+  --type slsaprovenance1 \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp='^https://github.com/Vexa-ai/vexa/' \
+  vexa-core-<version>.tar.gz
+```
+
+Proves the source archive was built from the stated public repository at the stated commit,
+attested by the build platform's identity, not Vexa's word.
+
+## 4 — The digest set is the validated one
+
+The digest map's sha256 must equal the pin inside the delivery receipt from Vexa's own
+production run of this release. One comparison ties the digests you will run to the map that
+froze them and the run that validated them.
+
+## Steps 3 and 4 on a PLATFORM ESTATE entry
+
+An estate entry — one carrying an `estate` block, published from a running cluster rather
+than cut from a release tag — **has no source archive, no SLSA provenance, no candidate map
+and no delivery receipt.** No release train produced it, so none of those artifacts exists
+and none ever will.
+
+The entry says so. Each is named in `evidence_absent` with a reason, inside the signed
+document, so the absence is a statement you can read and hold us to rather than a gap you
+have to notice:
+
+```bash
+jq -r '.evidence_absent[] | "\(.kind): \(.reason)"' entry.json
+```
+
+**Steps 3 and 4 above therefore do not apply, and `vexa-verify` says so out loud instead of
+skipping quietly.** What replaces them is not a weaker version of the same claim — it is a
+different one, and it is the claim an OSS release never has to make:
+
+| | OSS release entry | Estate entry |
+|---|---|---|
+| What binds it to reality | SLSA provenance over the source archive | the digest set **captured from the running cluster**, per image, with its own receipt |
+| What it was validated against | implicit — the release train | **explicit**: a mandatory `validation_contract`, named and hashed in the entry |
+| Who decides the absences are acceptable | — | **your contract**, via `forbid_absent_evidence` |
+
+That last row is the one that matters. Tolerating a declared absence is not the same as
+accepting it: `vexa-verify` reads the declaration, and **your** contract decides. An
+estate-shaped contract lists `validation_contract` under `forbid_absent_evidence`, so an
+entry that declared *that* away is refused. Point an OSS-shaped contract at an estate and it
+refuses the entry — correctly, on its own terms. The requirement is **replaced, not
+lowered**; see `channels/<channel>/contracts/policy.internal-estate.yaml` for the worked
+form.
+
+<Note>
+Before 2026-08-25 the verifier had no model for this and refused every estate entry with
+`candidate map absent from the bundle` — in-cluster, a failed PreSync hook that stopped the
+sync and blamed a missing file. The estate charts also shipped **without** the PreSync
+verifier at all, so an estate reached Argo CD with nothing checking its signature, contract,
+revocation list or approval. Both are fixed; both are regression-tested offline.
+</Note>
+
+## 5 — The images carry the channel signature
+
+```bash
+cosign verify --key channel.pub --insecure-ignore-tlog=true \
+  channel.vexa.ai/vexa/channel/<your-channel>/<image>@sha256:<digest>
+```
+
+Image signatures live in the registry, in the legacy format with no transparency-log entry.
+Same check your admission layer runs on every pod, same key.
+
+## If step 1 fails on the bundle format
+
+An entry signed by an older cosign carries a legacy bundle, which the step-1 command rejects
+with `ecdsa: Invalid IEEE_P1363 encoded bytes` — a message that looks like a corrupt
+signature and is not one. Try:
+
+```bash
+cosign verify-blob --key channel.pub \
+  --bundle entry.json.sigstore.json \
+  --new-bundle-format=false --insecure-ignore-tlog=true entry.json
+```
+
+<Note>
+**Known issue.** Nothing pins the cosign version that signs, so both forms are in circulation
+and some onboarding material prints the legacy one. Pinning it is tracked as delivery work.
+</Note>
+
+## Read before you accept
+
+- **`evidence_absent`** — evidence kinds this release does not carry, each with a reason.
+- **`break_glass`** — who authorised an incomplete chain, and why. A release with gaps and no
+  break-glass record should be rejected by your verifier.
+- **The delivery receipt** — which images served production traffic and which were validated
+  in other harnesses. The claim is never rounded up.
+
+**Air-gapped sites:** verification is digest- and signature-based, so it holds whichever
+registry served the bytes, your own mirror included. See
+[isolated networks](security#isolated-networks).

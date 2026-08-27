@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: Apache-2.0
+# Namespace-scoped variant for shared clusters without cluster-admin
+# (e.g. OpenShift run by a separate operations department).
+# The customer-owned admission layer: independently verifies OUR artifacts
+# before a byte runs (P11 — the policy is the customer's; we cannot override
+# it). Two rules:
+#
+#   1 require-digest-pinning  every vexaai/* image reference is @sha256:...
+#                             (NO_MUTABLE_TAGS carried to the customer side)
+#   2 verify-channel-signature every vexaai/* image is cosign-signed by the
+#                             channel key; signatures live in the channel
+#                             registry, so verification needs no reachability
+#                             to Docker Hub and no call to Vexa
+#
+# ${...} placeholders are filled by kit/install.sh (channel public key,
+# signature repository). Kyverno is stock upstream; this file is config.
+apiVersion: kyverno.io/v1
+kind: Policy
+metadata:
+  name: vexa-require-digest-pinning
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  validationFailureAction: Enforce
+  background: false
+  admission: true
+  emitWarning: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: vexa-images-by-digest-only
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      validate:
+        allowExistingViolations: true
+        message: >-
+          Vexa images must be pinned by digest (@sha256:...). A mutable tag is
+          not an identity; the channel entry names exact digests.
+        foreach:
+          - list: request.object.spec.containers[] || `[]`
+            deny:
+              conditions:
+                all:
+                  - key: "{{ regex_match('^.*vexaai/.*', element.image) }}"
+                    operator: Equals
+                    value: true
+                  - key: "{{ regex_match('^.*@sha256:[a-f0-9]{64}$', element.image) }}"
+                    operator: Equals
+                    value: false
+---
+apiVersion: kyverno.io/v1
+kind: Policy
+metadata:
+  name: vexa-verify-channel-signature
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  validationFailureAction: Enforce
+  background: false
+  admission: true
+  emitWarning: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: vexa-images-signed-by-channel
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      verifyImages:
+        - imageReferences:
+            - "*vexaai/*"
+          # signatures live in the channel registry (cosign COSIGN_REPOSITORY
+          # convention), so admission verifies without reaching the image's
+          # home registry and without calling Vexa
+          repository: ${SIGNATURE_REPOSITORY}
+          mutateDigest: false
+          verifyDigest: true
+          required: true
+          useCache: true
+          failureAction: Enforce
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: |-
+${CHANNEL_PUBLIC_KEY_INDENTED}
+                    signatureAlgorithm: sha256
+                    rekor:
+                      ignoreTlog: true
+                    ctlog:
+                      ignoreSCT: true
+                  signatureAlgorithm: sha256

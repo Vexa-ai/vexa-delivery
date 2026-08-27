@@ -1,0 +1,15 @@
+Vexa Enterprise customer kit
+Copyright 2026 Vexa Inc.
+
+This directory (kit/) is licensed under the Apache License, Version 2.0 — see
+kit/LICENSE. It is the customer-side half of Vexa Enterprise: the installer,
+the conformance preflight, the admission policies, the Argo CD subscription and
+the provider profiles. It is open on purpose: a customer runs it inside their
+own perimeter, so its being readable and auditable is what makes "nothing
+proprietary of ours executes in your cluster" a checkable statement rather than
+a promise.
+
+The whole vexa-delivery repository is under the same license (see the LICENSE
+and NOTICE files at the repository root, and docs/adr/0008-repository-apache-2).
+This copy exists because kit/ is distributed standalone as a signed tarball by
+kit/release.sh, and the license must travel with those bytes.

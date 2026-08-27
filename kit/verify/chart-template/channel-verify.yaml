@@ -1,0 +1,332 @@
+# SPDX-License-Identifier: Apache-2.0
+{{- /*
+The station gate, carried BY the chart so every sync runs it as a PreSync
+hook: deterministic validation against THIS station's contract, plus — where
+values demand it — the human-approval check. Injected into the packaged chart
+by the channel publisher; disabled unless verify.enabled. Apache-2.0.
+*/ -}}
+{{- if .Values.verify.enabled }}
+{{- /*
+THE VERIFIER'S OWN INPUTS ARE CHART-MANAGED, and that is a correction, not a
+convenience (prod orphan audit, 2026-08-25).
+
+The Job below mounts two objects from the release namespace: the contract
+ConfigMap and the pinned channel public key. During the prod adoption ceremony
+both were created BY HAND with kubectl, so the two objects the entire gate
+rests on were owned by nobody, tracked by nothing, and reproduced by no
+artifact — a cluster in that state cannot prove which contract it verified
+against, and `kubectl edit` on either silently changes the verdict with no
+receipt anywhere. The trust machinery is ring 3: it must arrive with the
+release or it is not trust machinery.
+
+They render as PreSync hooks at sync-wave -1 so they exist BEFORE the wave-0
+verify Job that mounts them — a plain (non-hook) resource is applied in the
+Sync phase, which is after PreSync, so it would arrive too late. NO
+hook-delete-policy: unlike the Job, these must persist between syncs.
+
+Both are opt-in by content: supply verify.contractPolicy / verify.channelPublicKey
+and the chart owns the object; leave them empty and the chart expects an
+externally managed one, which is what a subscriber who keeps their contract in
+their own GitOps repo wants. That second path is legitimate and stays open —
+what is closed is the accidental version of it.
+*/ -}}
+{{- if .Values.verify.contractPolicy }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.verify.contractConfigMap | quote }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": ""
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/sync-wave": "-1"
+data:
+  # The filename the Job mounts and passes as --policy. One name, one carrier.
+  contract.json: |-
+{{ .Values.verify.contractPolicy | indent 4 }}
+---
+{{- end }}
+{{- if .Values.verify.channelPublicKey }}
+apiVersion: v1
+kind: Secret
+metadata:
+  # A PUBLIC key in a Secret. The kind is wrong and the mount is right: the Job
+  # reads it at /keys/channel.pub, and Secret is what that volume type takes.
+  # Nothing here is confidential — it is the key a subscriber is supposed to
+  # pin, publish and compare. What matters is that it is PINNED, i.e. that it
+  # arrives with the release and cannot be swapped without a sync.
+  name: vexa-channel-pubkey
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": ""
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/sync-wave": "-1"
+type: Opaque
+stringData:
+  channel.pub: |-
+{{ .Values.verify.channelPublicKey | indent 4 }}
+---
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vexa-verify
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+---
+{{- if .Values.verify.networkPolicy }}
+{{- /*
+THE GATE MUST BE ABLE TO REACH THE EVIDENCE (prod, 2026-08-25, seq 4).
+
+Fourth defect of one shape, and the shape is now unmistakable: the gate failed
+for a reason that has nothing to do with the evidence. Missing pull credential
+(rehearsal 2026-08-24), nil top-level `global` (building seq 3), unschedulable
+pod (prod, seq 3), and now — with the pod finally SCHEDULED — `cannot pull
+entry channel.vexa.ai/...`, because the namespace runs a default-deny
+NetworkPolicy and this pod had no egress policy naming it.
+
+The container IMAGE pulled fine, which is what makes this one confusing on
+first read: the kubelet pulls images from the NODE's network namespace and
+NetworkPolicy does not apply to it. The ENTRY pull is `oras` running INSIDE
+the pod, and that is ordinary pod egress. An estate can therefore watch the
+verifier start, and still have it fail on the first thing it does.
+
+Deny-by-default namespaces are the norm on the estates this gate exists for —
+ours is one — so the policy ships ON by default rather than as an opt-in an
+operator can forget. `verify.networkPolicy: false` opts out, which is what a
+subscriber with their own hand-written egress policy for this pod wants.
+
+TWO EGRESS RULES, and they are shaped the way this cluster's other egress
+policies are shaped (see vexa-platform's own networkpolicy.yaml):
+
+  * DNS — port 53 UDP+TCP to any destination. Resolution happens before any
+    connection, so a policy that opens 443 and forgets 53 blocks everything
+    while looking correct.
+  * 443/TCP to `verify.egressCIDR`, default `0.0.0.0/0`. The channel registry
+    is one host behind one address today, and hard-coding it here would put a
+    subscriber's registry address inside OUR template — the same mistake as
+    hard-coding a toleration. The CIDR is a value; an estate that wants it
+    narrow narrows it in the values it publishes with.
+
+A subscriber whose registry is not on 443 (a plain-HTTP mirror, `--insecure`)
+must widen the policy or turn it off — that case is real and it is theirs to
+declare, which is why the escape hatch exists.
+
+SYNC-WAVE -1, like the contract ConfigMap and the pinned key, so the policy
+exists BEFORE the wave-0 Job it protects; a policy applied after the pod has
+already started is a policy that watched the pull fail. The delete policy
+matches the Job's — BeforeHookCreation removes it at the START of the next
+sync's hook, so it is present for the whole run, unlike the ConfigMap and key
+which carry no delete policy because they must persist BETWEEN syncs.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vexa-verify-egress
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    # Helm orders hooks by weight before kind; a negative weight says out loud
+    # what the kind order would otherwise decide silently.
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/sync-wave": "-1"
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+spec:
+  # The Job's pod template carries this label for exactly one reason: to be
+  # selectable here. The generated `job-name` label would also work and is a
+  # worse contract — it is set by the controller, not by us.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vexa-verify
+  policyTypes: ["Egress"]
+  egress:
+    - ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - ipBlock: {cidr: {{ .Values.verify.egressCIDR | default "0.0.0.0/0" | quote }}}
+      ports:
+        - {protocol: TCP, port: 443}
+---
+{{- end }}
+{{- if .Values.verify.requireApproval }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vexa-verify-approvals-{{ .Release.Namespace }}
+  namespace: {{ .Values.verify.approvalNamespace }}
+  annotations:
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]           # reads approval records only; writes nothing
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vexa-verify-approvals-{{ .Release.Namespace }}
+  namespace: {{ .Values.verify.approvalNamespace }}
+  annotations:
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: vexa-verify-approvals-{{ .Release.Namespace }}}
+subjects:
+  - kind: ServiceAccount
+    name: vexa-verify
+    namespace: {{ .Release.Namespace }}
+---
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vexa-verify
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+spec:
+  backoffLimit: 0            # a failed verification is a verdict, not a flake
+  # ...but a Job that can never START is not a verdict, it is a deadlock: with
+  # backoffLimit 0 an ImagePullBackOff pod never terminates, so the Job never
+  # fails, so Argo waits on the hook forever with no self-recovery and no
+  # timeout. Observed live on 2026-08-24 — the Application sat "waiting for
+  # completion of hook batch/Job/vexa-verify" for ten minutes and would have
+  # sat there indefinitely. A deadline converts it into a failed sync a human
+  # can see and Argo can retry.
+  activeDeadlineSeconds: {{ .Values.verify.deadlineSeconds | default 300 }}
+  template:
+    metadata:
+      # A STABLE LABEL, so a NetworkPolicy can name this pod (prod, seq 4). The
+      # pod previously carried only the controller's generated `job-name` and
+      # `controller-uid`; selecting on either means our policy depends on a
+      # label somebody else owns. This one is ours and it does not move.
+      labels:
+        app.kubernetes.io/name: vexa-verify
+    spec:
+      serviceAccountName: vexa-verify
+      restartPolicy: Never
+      {{- /*
+      A GATE THAT CANNOT BE SCHEDULED IS NOT A GATE (prod, 2026-08-25).
+
+      The Job rendered with no tolerations and no nodeSelector, which is
+      correct for a default cluster and wrong for every cluster that reserves
+      its nodes. Our own production LKE has a single node pool tainted
+      `vexa.ai/pool=main:NoSchedule`, so the pod never scheduled at all:
+      FailedScheduling "untolerated taint", the autoscaler declining with
+      NotTriggerScaleUp, and 300 seconds later the deadline fired and the Job
+      was DeadlineExceeded. The sync then failed CLOSED, which is the system
+      working — prod was untouched — but the sync failed for a reason that has
+      nothing to do with the evidence, exactly like the pull-credential and
+      the nil-`global` defects before it.
+
+      This is a POD PLACEMENT problem and it belongs to whoever owns the
+      cluster, so it is a value and not a hard-coded toleration. The defaults
+      are empty — an existing subscriber's render is unchanged, byte for byte
+      — and an estate whose nodes are tainted bakes its own placement into the
+      values it publishes with.
+      */}}
+      {{- with .Values.verify.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.verify.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $globalPullSecrets := (default dict .Values.global).imagePullSecrets }}
+      {{- /*
+      `default dict` and not a bare `.Values.global`. The OSS chart always
+      defines a top-level `global`; the platform ESTATE chart does not, and a
+      bare field access on nil is a TEMPLATE ERROR, not an empty value — so
+      injecting this template into an estate chart failed the render outright
+      (caught building the seq-3 candidate, 2026-08-25). A chart that cannot
+      render cannot be packaged, so this failed loudly rather than silently,
+      which is the only good thing about it.
+      */}}
+      {{- if or .Values.verify.registrySecret $globalPullSecrets }}
+      # The verifier image lives on the channel too, so the KUBELET needs the
+      # credential as well as the container: without this the PreSync Job never
+      # starts ("image can't be pulled") and the sync fails for a reason that
+      # has nothing to do with the evidence (rehearsal 2026-08-24).
+      imagePullSecrets:
+        {{- if .Values.verify.registrySecret }}
+        - name: {{ .Values.verify.registrySecret | quote }}
+        {{- end }}
+        {{- with $globalPullSecrets }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      volumes:
+        - name: channel-key
+          secret: {secretName: vexa-channel-pubkey}
+        - name: contract
+          configMap: {name: {{ .Values.verify.contractConfigMap | quote }}}
+        {{- if .Values.verify.registrySecret }}
+        # An authenticated channel needs a credential here too, or the verifier
+        # pulls the entry anonymously, gets 401, and fails the sync for a
+        # reason that has nothing to do with the evidence (rehearsal 2026-08-24).
+        - name: registry-cred
+          secret:
+            secretName: {{ .Values.verify.registrySecret | quote }}
+            items: [{key: .dockerconfigjson, path: config.json}]
+        {{- end }}
+      containers:
+        - name: verify
+          image: {{ .Values.verify.image | quote }}
+          args:
+            - --entry-ref
+            # appVersion, NOT version. Chart.version is the CHART revision;
+            # the channel entry is tagged by the RELEASE, which is appVersion.
+            # While the publisher collapsed the two these were accidentally
+            # equal; the moment a release ships a second chart revision this
+            # asked for an entry tag that does not exist and failed every sync.
+            #
+            # ...and the derivation holds only for an OSS release, where the
+            # entry tag IS `v<appVersion>`. An ESTATE entry is tagged
+            # `0.12.23-estate-20260825` (schema: <X.Y.Z>-estate-<YYYYMMDD>)
+            # while its chart's appVersion is `0.12.23-estate` — so the
+            # derivation asks for `v0.12.23-estate`, which does not exist, and
+            # the sync fails on a 404 that says nothing about the evidence.
+            # verify.entryTag names the entry outright for that case.
+            - "{{ .Values.verify.registry }}/vexa/channel/{{ .Values.verify.channel }}:{{ if .Values.verify.entryTag }}{{ .Values.verify.entryTag }}{{ else }}v{{ .Chart.AppVersion }}{{ end }}"
+            - --pubkey
+            - /keys/channel.pub
+            - --policy
+            - /contract/contract.json
+            {{- if .Values.verify.requireApproval }}
+            - --require-approval
+            - {{ .Values.verify.requireApproval | quote }}
+            - --approval-namespace
+            - {{ .Values.verify.approvalNamespace | quote }}
+            {{- end }}
+            {{- if .Values.verify.insecure }}
+            - --insecure
+            {{- end }}
+          {{- if .Values.verify.registrySecret }}
+          env:
+            - {name: DOCKER_CONFIG, value: /registry-cred}
+          {{- end }}
+          volumeMounts:
+            - {name: channel-key, mountPath: /keys, readOnly: true}
+            - {name: contract, mountPath: /contract, readOnly: true}
+            {{- if .Values.verify.registrySecret }}
+            - {name: registry-cred, mountPath: /registry-cred, readOnly: true}
+            {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits:   {cpu: 500m, memory: 512Mi}
+{{- end }}

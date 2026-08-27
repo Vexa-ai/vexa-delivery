@@ -1,0 +1,68 @@
+---
+title: "ADR-0006: The internal channel — Vexa is subscriber zero"
+description: "Our own staging → prod runs on the same channel machinery we sell, fed by candidate entries that accumulate station verdicts"
+---
+
+**Status:** accepted · 2026-08-21 · proven live on the standing station
+
+## Context
+
+The conveyor was built outside-in: enterprise customers subscribe to a channel of
+frozen, evidence-carrying releases. But our own staging → prod promotion still ran
+on hand deploys — `helm upgrade` plus `kubectl set image` forks, documented drift
+tables that themselves went stale, and rollbacks that silently stripped out-of-band
+hotfixes (see the vexa-platform handover docs, 2026-07). The vendor of a delivery
+product was not its own first consumer.
+
+## Decision
+
+Run a **`vexa-internal` channel** with the same machinery, inverted in one respect:
+entries are published **before** production runs, not after.
+
+1. A release enters the channel as a **candidate**: same signed entry, same frozen
+   digest set, but by definition no delivery receipt and no soak numbers — those
+   facts do not exist yet. The schema enforces exactly this asymmetry: candidates
+   are exempt from receipt/soak/per-image-prod-receipt strictness, every other
+   publication mode stays fully strict.
+2. Stations (staging, then prod) consume the candidate, validate against **their
+   own contract**, and **sign a `station-verdict` attestation beside the entry**.
+   The entry is never republished; evidence accumulates next to it at
+   `<channel>/attestations:<kind>.<release>`.
+3. A downstream contract names what must already be signed:
+   `require_attestations: [{kind: station-verdict, station: vexa-staging}]`.
+   The verifier pulls each required attestation from the channel, verifies its
+   signature against the pinned key, matches its subject digests against the
+   entry's images, and checks release, station, and verdict.
+4. The enterprise `published` entry is then **built from the accumulated
+   evidence** — delivery receipt, soak, hardening, and the station verdicts all
+   ride in the bundle. What a customer receives is the record of what our own
+   chain already consumed and signed.
+
+## What this eliminates — and what it does not
+
+Proven the hard way during adoption: renaming the ApplicationSet's element `env`
+tore down and recreated the whole staging workload, and the station **rebuilt
+itself from the channel alone** — 12 pods, zero hand commands. That is the
+property being bought: the running state is a pure function of (channel entry ×
+pinned position × per-station values). The drift class that bit vexa-platform —
+hand forks persisting invisibly, rollbacks stripping undeclared state, stale
+drift bookkeeping, staging validating different bytes than prod runs — becomes
+impossible rather than discouraged.
+
+Not eliminated, by design honesty: per-station values divergence (inspectable,
+not forbidden), data-plane state (database schema, secrets contents, volumes),
+and shared-cluster infrastructure. Those are preflight and migration-evidence
+territory, not GitOps territory.
+
+## Consequences
+
+- The emergency-hotfix path changes shape: a hand-built image cannot be set on a
+  station (admission refuses unsigned images). The fast lane is **break-glass** —
+  a signed, recorded bypass in the entry itself that the next entry must
+  supersede — instead of a silent fork.
+- Element `env` names in the ApplicationSet are **identity**. Renaming one is a
+  declared teardown of that station's apps. Rename only with the recreate in mind.
+- One key currently signs channel and stations alike; per-station keys are a
+  known follow-up alongside the key ceremony.
+- The standing station (LKE `vexa-channel-station`, ex mvp0-node) hosts the
+  channel registry and both internal stations until the channel moves to GHCR.

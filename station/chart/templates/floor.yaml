@@ -1,0 +1,182 @@
+# SPDX-License-Identifier: Apache-2.0
+{{- if .Values.floor.enabled }}
+# The substrate floor: a scheduled check of the layer reconciliation cannot
+# fix. SCC-restricted-compliant (no UID, non-root, no caps) so it runs
+# unchanged on OpenShift restricted-v2.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: station-floor
+  namespace: {{ .Values.argocdNamespace }}
+---
+{{- if eq .Values.scope "cluster" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vexa-station-floor
+rules:
+  - apiGroups: [""]
+    resources: [nodes, persistentvolumes]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, volumeattachments]
+    verbs: [get, list]
+  - apiGroups: [kyverno.io]
+    resources: [clusterpolicies]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vexa-station-floor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vexa-station-floor
+subjects:
+  - kind: ServiceAccount
+    name: station-floor
+    namespace: {{ .Values.argocdNamespace }}
+---
+{{- else }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vexa-station-floor
+  namespace: {{ .Values.stagingNamespace }}
+rules:
+  - apiGroups: [kyverno.io]
+    resources: [policies]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vexa-station-floor
+  namespace: {{ .Values.stagingNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vexa-station-floor
+subjects:
+  - kind: ServiceAccount
+    name: station-floor
+    namespace: {{ .Values.argocdNamespace }}
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vexa-station-floor
+  namespace: {{ .Values.argocdNamespace }}
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vexa-station-floor
+  namespace: {{ .Values.argocdNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vexa-station-floor
+subjects:
+  - kind: ServiceAccount
+    name: station-floor
+    namespace: {{ .Values.argocdNamespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: station-floor-script
+  namespace: {{ .Values.argocdNamespace }}
+data:
+  floor.sh: |-
+{{ .Files.Get "files/floor.sh" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: station-floor
+  namespace: {{ .Values.argocdNamespace }}
+spec:
+  schedule: {{ .Values.floor.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: station-floor
+          restartPolicy: Never
+          {{- /*
+          THE SAME TAINT, AUDITED IN THE SAME PASS (2026-08-26).
+
+          The receipt sender's pods could not schedule on a cluster whose only
+          node pool is tainted. This CronJob is the other pod this bundle
+          spawns and it had the identical hole — it would have gone Pending
+          every ten minutes, and a floor that never runs reports no floor
+          rather than a red one, which is the worse of the two failures.
+
+          Values, empty by default, rendered with `with`: a station that needs
+          no placement renders byte-identically.
+          */}}
+          {{- with .Values.floor.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.floor.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: floor
+              image: {{ required "floor.image (digest-pinned) is required" .Values.floor.image }}
+              command: [bash, /station/floor.sh]
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              env:
+                - name: FLOOR_SCOPE
+                  value: {{ .Values.scope | quote }}
+                - name: ADMISSION_ENABLED
+                  value: {{ .Values.admission.enabled | quote }}
+                - name: ARGOCD_NAMESPACE
+                  value: {{ .Values.argocdNamespace | quote }}
+                - name: STAGING_NAMESPACE
+                  value: {{ .Values.stagingNamespace | quote }}
+                - name: PROD_NAMESPACE
+                  value: {{ .Values.prodNamespace | quote }}
+                - name: MIN_NODES_READY
+                  value: {{ .Values.floor.minNodesReady | quote }}
+                - name: MAX_RELEASED_PVS
+                  value: {{ .Values.floor.maxReleasedPVs | quote }}
+                - name: REQUIRED_STORAGE_CLASS
+                  value: {{ .Values.floor.requiredStorageClass | quote }}
+                - name: MAX_STUCK_ATTACH_MINUTES
+                  value: {{ .Values.floor.maxStuckAttachMinutes | quote }}
+                - name: REGISTRY_HOST
+                  value: {{ .Values.registryHost | quote }}
+                - name: REGISTRY_PORT
+                  value: {{ .Values.registryPort | quote }}
+              volumeMounts:
+                - name: script
+                  mountPath: /station
+          volumes:
+            - name: script
+              configMap:
+                name: station-floor-script
+{{- end }}

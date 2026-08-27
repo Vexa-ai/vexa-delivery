@@ -1,0 +1,78 @@
+---
+title: "Durability and disaster recovery"
+description: "Git is the record; the bucket is a copy. What a total bucket loss actually costs."
+---
+
+<Note>
+Internal. The customer-facing half of this is one paragraph in
+[Operations](/operations#if-the-channel-goes-away).
+</Note>
+
+## The model
+
+**Git is the source of record. The bucket is a distribution copy.**
+
+| Layer | Holds | If it is lost |
+|---|---|---|
+| `Vexa-ai/vexa-delivery` | the publisher, the kit, the contracts, every receipt | the product |
+| [`DmitriyG228/vexa-stations`](https://github.com/DmitriyG228/vexa-stations) (private) | what was published on each channel, at which sequence, and where each station stands | the record of what we shipped |
+| `vexa-channel` bucket (Linode, us-sea-1) | entries, charts, kit tarballs, signatures — what `channel.vexa.ai` serves | hours of republish |
+| `<replica-host>:<replica-path>` | a nightly copy of the whole bucket | the shortcut that makes the republish unnecessary |
+| the operator's secrets vault (SOPS + age) | the channel signing keys and every credential | the ability to sign; see custody below |
+
+**Worst case — the bucket is gone entirely — is hours of republish, zero data
+loss, and no customer action.** Every artifact in it was built from a tagged
+release and can be built again; what could not be rebuilt is what was
+*published, at which sequence, to whom* — and that lives in `vexa-stations`,
+where `channel.yaml` is the authority for `entry_seq` and the copy inside each
+published entry is derived from it.
+
+A pinned station keeps running through all of it. Its Argo CD is reconciling
+against digests it already pulled; an unreachable channel stops upgrades, not
+workloads. A station following `*` stops seeing new entries until the channel
+is back, which is the same as us not publishing.
+
+## What protects the bucket
+
+**Versioning is on.** An overwrite or a delete does not destroy the previous
+bytes — `list-object-versions` still returns them, and a deleted key comes back
+from its version id. This is the protection against the ordinary accident (a
+wrong `oras push`, a mistyped `s3 rm`), which is the one that actually happens.
+
+**A nightly replica runs on the replica host** at 04:20 host time
+(`/home/dima/bin/vexa-channel-replica.sh`, in `crontab`), landing in
+`<replica-path>/data` with `last-run.json` naming the object
+count and total size of the run. It uses `rclone sync --backup-dir`, so an
+object that vanishes upstream is moved into `deleted/<date>/` rather than
+dropped: **an accidental mass-delete upstream cannot replicate itself into a
+loss here.** The script decrypts its own credentials from the secrets vault at run
+time into environment variables; nothing credential-shaped is written to disk
+on that host.
+
+## Station receipts
+
+Everything a customer sent us — the bundle verbatim, its ingest receipt, its
+manifest — is committed to `vexa-stations` under
+`channels/<channel>/stations/<station>/receipts/<timestamp>/`. The working copy
+in `stations/<name>/` on an operator's laptop is a scratch directory and is
+gitignored on purpose; it is not the durable copy and never was.
+
+## Keys
+
+The channel signing keys are SOPS+age encrypted in the operator's secrets vault. **Losing the
+private key is the one failure this design does not absorb**: entries and
+images already signed keep verifying against the published public key, but
+nothing new can be signed into that channel, and every subscriber has pinned
+that key. Key custody is therefore a separate discipline from bucket
+durability, and the age identity that decrypts the vault must exist in more
+than one place.
+
+## Rebuilding from nothing
+
+1. Read `channels/<channel>/channel.yaml` for the last `entry_seq` and the
+   release each entry named.
+2. Re-run the crank in [RUNBOOK](https://github.com/Vexa-ai/vexa-delivery/blob/main/RUNBOOK.md)
+   §1 per release, or restore straight from the off-site replica if it is intact.
+3. Re-push the kit and the charts from their tags.
+4. Move `current` to the newest entry. A `*` station picks it up on its next
+   poll; a pinned station never noticed.

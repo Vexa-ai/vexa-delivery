@@ -1,0 +1,18 @@
+vexa-preflight — cluster conformance for the Vexa enterprise channel
+SYNTHETIC RECEIPT — fabricated for the stations-lane rehearsal. No cluster was
+contacted. A real receipt is produced by kit/preflight/vexa_preflight.py.
+==============================================================================
+station: rehearsal   namespace: vexa-rehearsal   scope: namespace
+kubernetes 1.31 (openshift)   generated 2026-08-24T09:10:00Z
+------------------------------------------------------------------------------
+[PASS] P1 · Every delivered workload can schedule despite node taints
+[PASS] P2 · Declared resources on every container, and they fit the LimitRange
+[PASS] P3 · ResourceQuota headroom covers the declared totals
+[PASS] P4 · SCC restricted-v2 / PodSecurity 'restricted' admission
+[PASS] P5 · NetworkPolicy lets the delivered workloads resolve DNS and reach the registry
+[PASS] P6 · The bot's Memory-backed /dev/shm fits the limits and the nodes
+[PASS] P7 · Default StorageClass exists and binds
+[PASS] P8 · Channel registry reachable and its signature verifies
+[PASS] P9 · Egress to the meeting platforms
+------------------------------------------------------------------------------
+RESULT: PASS (9/9)

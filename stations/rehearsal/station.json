@@ -1,0 +1,31 @@
+{
+ "schema_version": 1,
+ "station": "rehearsal",
+ "customer": "SYNTHETIC \u2014 rehearsal station, no customer",
+ "environment": "openshift 1.31, namespace scope",
+ "kit_version": "0.0.0-synthetic",
+ "created_at": "2026-08-24T09:45:00Z",
+ "produced_by": "hand-assembled from repo example files; a real bundle is produced by kit validate",
+ "files": [
+  {
+   "name": "contract.yaml",
+   "sha256": "384cc8e3a7c95a2f2cdb92823e85932805210d64428982ba64bb59968931b59c"
+  },
+  {
+   "name": "preflight-receipt.txt",
+   "sha256": "076ddb512fcc495f7d8dabbbb0f69fca402c2c843015b5f174b8d90456342377"
+  },
+  {
+   "name": "profile.env",
+   "sha256": "8f4f3c7e943a34b65ae6eacd095da8abd65d35dfd7983fbd90d34b1c87859330"
+  },
+  {
+   "name": "smoke-receipt.json",
+   "sha256": "3cd84e3e1d4369e742b027f9502062298c4fc5352e90589a49b227e55e086072"
+  },
+  {
+   "name": "values.redacted.yaml",
+   "sha256": "0e99ad5cec48ad0fa880bb11b5b4c545ffed0a13fd6ea0b70828e2669dcb4a54"
+  }
+ ]
+}

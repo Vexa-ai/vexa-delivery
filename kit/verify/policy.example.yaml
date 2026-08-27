@@ -1,0 +1,215 @@
+# SPDX-License-Identifier: Apache-2.0
+# Your contract file — the machine-readable half of your subscription: what a
+# release must prove before it may run in THIS environment. Read by
+# vexa-verify; yours to tighten, Vexa cannot weaken it. The file's sha256 is
+# the contract's identity — every verdict and every approval record carries
+# "contract <id> @ <hash>", so audits can answer which promise a deployment
+# was admitted under. Agree the contents with Vexa; then treat edits like
+# contract changes, because they are.
+
+# Names this contract. Convention: <org>-<year>-<rev>.
+contract_id: example-2026-01
+#
+# (JSON is what the verifier reads; this YAML is the readable source. Convert
+# with: yq -o=json policy.yaml > policy.json — or write JSON directly.)
+#
+# TWO HUMAN APPROVALS sit in the chain, by different parties:
+#   1. Vexa's — a named person at Vexa approved the publication. It travels
+#      inside the signed entry, so your staging can require it: nothing that
+#      Vexa itself did not approve reaches you. Switch: require_vendor_approval.
+#   2. Yours — a named person in YOUR organisation approved this release for
+#      YOUR production. It is recorded in your cluster by kit/verify/approve.sh
+#      and enforced by the PreSync hook's --require-approval, not by this file.
+#
+# The two are independent. Vexa's approval never stands in for yours.
+
+# ---- staging: consume what Vexa approved -----------------------------------
+require_vendor_approval: true
+require_publication_mode: published   # refuses dry-run entries
+
+# Evidence kinds that must be present in the bundle.
+require_evidence_kinds:
+  - candidate_map
+  - delivery_receipt
+  - source_provenance
+  - trusted_root
+
+# May a release published with an incomplete evidence chain run here?
+# Most change boards answer "no" for production.
+allow_break_glass: false
+
+# Refuse anything below this channel sequence — blocks a silent downgrade.
+min_entry_seq: 1
+
+# Evidence kinds you refuse to accept as ABSENT. Vexa states absences honestly
+# in the entry; this is where you decide which absences you will not tolerate.
+# Example: uncomment once per-image SLSA attestations exist upstream.
+# forbid_absent_evidence:
+#   - image_provenance
+
+# ---- structured attestations (entry v2 machinery) ---------------------------
+# Pins + parameter floors for the signed attestations. The definitions hashes
+# come from your onboarding pack and freeze WHAT THE NUMBERS MEAN; a release
+# attested under different definitions is refused regardless of its values.
+# soak:
+#   definitions_sha256: "<sha256 of prod-soak-metrics.v1 — onboarding pack>"
+#   platforms:
+#     ms_teams:
+#       min_meetings: 100
+#       min_software_success_rate: 0.99
+#   # NOTE: a floor on completion_rate is a definition error and the verifier
+#   # refuses the CONTRACT (completion mixes user/host/world with software).
+# security_hardening:
+#   definitions_sha256: "<sha256 of security-hardening.v1 — onboarding pack>"
+#   min_agents: 8
+#   max_open: {critical: 0, high: 0}
+
+# ---- accumulated attestations (the internal chain) --------------------------
+# Attestations that arrive AFTER an entry, as stations run — pulled from the
+# channel's attestations path, signature-verified, subject digests matched
+# against the entry. This is how "prod requires staging's verdict" is said:
+# require_attestations:
+#   - kind: station-verdict
+#     station: vexa-staging
+
+# ============================================================================
+# THE TWO-DIRECTIONAL HALF
+# ============================================================================
+# Everything above answers "may this release run here?" — one direction, and
+# the one every software vendor's documentation is about. The two sections
+# below are the other two questions, and they are the ones a bank's reviewer
+# asks first:
+#
+#     delivery_scope — what may a release DO inside our estate?
+#     report_scope   — what may leave it?
+#
+# They are in YOUR file, not ours. You tighten them; we cannot weaken them;
+# the file's hash travels in every verdict and in every gate report, so an
+# audit can answer which promise a given deployment was admitted under.
+#
+# Where a standard exists we use its vocabulary rather than inventing one:
+# Pod Security Standards (which OpenShift SCC maps to), the cluster-scoped /
+# namespaced split OLM install modes turn on, NetworkPolicy, registry
+# allowlisting. A reviewer who recognises the vocabulary can stop evaluating
+# and start checking. Where no standard exists — and none does for the
+# outbound half, because nobody has standardised what telemetry may leave a
+# perimeter — the format is ours and is marked as ours.
+
+# ---- delivery_scope: the blast radius --------------------------------------
+# ENFORCED TWICE, and the two are not equivalent:
+#   1. Publisher-side, before publication: `vexa_station.py gate` renders the
+#      chart with YOUR values and refuses to publish a release that exceeds
+#      this scope. It sees every object the release would create.
+#   2. PreSync, in your cluster: vexa-verify re-checks what a shell in a Job
+#      can re-check — that the scope the gate enforced is the scope written
+#      here, at this revision. It CANNOT render the chart, and it says so in
+#      its own output rather than implying a check it did not run.
+#   3. And then Kubernetes itself. Pod Security admission and Kyverno are the
+#      only parties that see what actually runs. The clauses below are written
+#      in PSS vocabulary precisely so you can switch that on and get the same
+#      answer from a party that is not us. Do that.
+#
+# delivery_scope:
+#   # Objects may only be created in these namespaces.
+#   allowed_namespaces: [vexa-staging, vexa-prod]
+#
+#   # CRDs, ClusterRoles, ClusterRoleBindings, admission webhooks, StorageClasses.
+#   # These are the objects that reach outside a tenancy; most change boards
+#   # answer false and make the vendor come and ask.
+#   allow_cluster_scoped: false
+#
+#   # Pod Security Standards level — baseline | restricted. Maps 1:1 onto
+#   # OpenShift SCC. `restricted` additionally requires runAsNonRoot, dropped
+#   # capabilities, no privilege escalation, a RuntimeDefault seccomp profile,
+#   # and only the projected/ephemeral volume types.
+#   # hostPath, hostNetwork, hostPID, hostIPC, hostPorts and privileged are
+#   # forbidden at BOTH levels — there is no setting that permits them.
+#   pod_security: restricted
+#
+#   # Image sources, by prefix. A release needing a registry that is not on
+#   # this list is refused at publish rather than discovered by your egress
+#   # proxy at 3am.
+#   allowed_image_registries:
+#     - channel.vexa.ai/
+#     - docker.io/vexaai/
+#
+#   # The most the release may RESERVE — the sum of container requests across
+#   # every rendered workload, multiplied by replicas. Requests, not limits:
+#   # requests are what the scheduler actually takes out of your cluster.
+#   resource_ceiling:
+#     cpu: "8"
+#     memory: 16Gi
+
+# ---- report_scope: what may leave your perimeter ---------------------------
+# The inbound half. There is no standard for this and we are not pretending
+# otherwise; the guarantee is structural rather than promissory.
+#
+# `report.v1` (spec/report.v1.schema.json) sets additionalProperties:false on
+# every object, so the permitted field set is the WHOLE field set. There is no
+# place in it for a transcript, a meeting title, a participant, a mail body or
+# a log line — not "we would not send one", but "the document cannot express
+# one, and the submit tool validates before it sends".
+#
+# Four properties beyond the field list:
+#   tier         — THE TELEMETRY LADDER RUNG, and the one clause here that is
+#                  purely your choice rather than your limit. See below.
+#   trigger      — `explicit-command-only`: an operator command, never a timer,
+#                  never a hook. `scheduled`: you have authorised the in-cluster
+#                  CronJob. The station chart renders NO CronJob unless this
+#                  says `scheduled`, so the timer is authorised by the same
+#                  document that bounds what it may send.
+#   destination  — the channel host you already pull from, and only that host.
+#                  No new firewall rule and no second vendor endpoint.
+#   allowed_files— the bundle's file roles. A bundle carrying anything outside
+#                  this list is refused locally, before a byte is sent.
+#
+# `vexa_validate.py --submit` prints the payload path before sending it. Open
+# it. That is what it is for.
+#
+# ---- the ladder, in one paragraph -----------------------------------------
+#   T0 silent · T1 receipts (per release) · T2 health counters (daily) ·
+#   T3 usage aggregates (daily/weekly) · T4 scrubbed diagnostics (on demand,
+#   NEVER automatic — exported to your disk by `--export-diagnostics` and
+#   handed over per incident; there is no submit path for it and no `tier: 4`
+#   value in report.v1, because a schema that could express T4 is a schema
+#   that could carry one automatically).
+#
+# CONTENT IS ON NO RUNG. There is no tier at which a transcript, a meeting
+# title, a participant or a log line becomes permitted.
+#
+# Enforced three ways, and the third is the one worth anything to you: the
+# packager resolves your tier to a list of collector functions BEFORE calling
+# any of them (so at T2 the usage collector is never referenced, not merely
+# discarded); the schema refuses a payload whose blocks exceed its own tier;
+# and OUR INGEST REFUSES a bundle exceeding your declared scope. You can read
+# the first two. The third runs on our machine, which is exactly why it exists.
+#
+# A report_scope with no `tier` reads as tier 1 — every contract written before
+# the ladder has that shape and permits exactly the install bundle, which is
+# what T1 is. A contract with NO report_scope at all is refused at both ends.
+#
+# report_scope:
+#   schema: report.v1
+#   tier: 1                            # 0-4; yours alone, settable nowhere else
+#   cadence: per-release               # per-release · daily · weekly · on-demand
+#   trigger: explicit-command-only     # or `scheduled`, which authorises the CronJob
+#   destination: channel.vexa.ai       # host only; no path, no second host
+#   allowed_files:
+#     - station.json
+#     - contract.yaml
+#     - profile.env
+#     - values.redacted.yaml
+#     - preflight-receipt.txt
+#     - smoke-receipt-*.md
+#     - smoke-console.txt
+#     - install-log.txt
+#   # Refuse to submit unless redaction was verified against the written archive.
+#   require_redaction_verified: true
+
+# ---- freshness -------------------------------------------------------------
+# Every entry carries an `expires` instant and every verifier refuses a stale
+# one on its own — you do not have to switch that on. This clause is the
+# TIGHTER knob: refuse an entry older than N days regardless of the horizon
+# Vexa stamped on it. A channel nobody is publishing to is a supply chain that
+# has stopped, and it looks identical to a healthy one from the inside.
+# max_entry_age_days: 14

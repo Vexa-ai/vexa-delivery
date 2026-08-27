@@ -1,0 +1,496 @@
+{
+ "schema_version": 1,
+ "release": "v0.12.23",
+ "state": "prod_live_oss_pending",
+ "owners": {
+  "prod": {
+   "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+   "release": "v0.12.23",
+   "observed_at": "2026-08-20T07:48:40Z",
+   "readback_receipt": "skills/lifecycle/state/ownership.yaml read 2026-08-20T07:48:40Z: prod.owner=476fb938-bae8-40c3-811d-ec3954e8929d prod.release=v0.12.23 (detail: rc.21 content, Helm rev 138, rollback 137; claimed 2026-08-20T07:28:40Z, handoff be722c35)."
+  },
+  "stage": {
+   "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+   "release": "v0.12.23",
+   "observed_at": "2026-08-20T07:48:40Z",
+   "readback_receipt": "skills/lifecycle/state/ownership.yaml read 2026-08-20T07:48:40Z: stage.owner=476fb938-bae8-40c3-811d-ec3954e8929d (id continuity from deda037b, same conversation) stage.release verbatim '0.12.23-rc.21 LIVE on stage (Helm rev 198/201)' = the 0.12.23 content; stage custody grants no publication authority."
+  }
+ },
+ "packet": {
+  "sha256": "sha256:c5a310465b9005573c9fef79534e34a7822447d6c7004f24271ed59df61fe2a6",
+  "packet_kind": "releases/v0.12.23/candidate-images.json at e59874bc (map: 10 images, 19 platform identities; build 2dec3082 run 32185449851; validation ccd6da52 run 32188980106)",
+  "deployment_fingerprint": "sha256:0b0882c8acd78e6cd51a59b0f0b3c2d1d9e3b8ca1e20b3d0a2db1c99e4723747",
+  "approved_by": "Dmitry Grankin (founder, GitHub DmitriyG228)",
+  "approved_at": "2026-08-19T22:28:44Z",
+  "approval_receipt": "vexa-platform release/releases/release-011-vexa-0.12.23/evidence/human-approval.json (schema vexa.production-human-approval/v1): decision=approved, fingerprint sha256:0b0882c8, recorded per founder instruction in the 2026-08-19 operating chat ('sign it as me and deploy') after review of the consolidated go-picture; leg 2 deferred by name. OSS publication ordered by founder /prod:release-oss invocation 2026-08-20."
+ },
+ "prod": {
+  "revision": "vexa-production helm rev 138 (135->136 reconcile, 137 leg 1, 138 leg 4; 2026-08-19T23:58Z)",
+  "hold_receipt": "Post-deploy independent verification 2026-08-19/20: meeting-api sha256:26716f96, gateway sha256:2cf9adba, admin-api sha256:654c3320, BROWSER_IMAGE sha256:2bd879c6; dashboard sha256:57a1c4f0 + PLATFORM_VERSION=0.12.23 (leg 2 deferred by approval); zero SchemaInvariantError; doors 200/200/200; tenure sweep 07:21Z: 14/14 workloads ready, failure mix at pre-deploy baseline.",
+  "rollback_anchor": "helm rollback vexa-platform 137 (leg-1 state; pre-deploy anchor 135 via 136)"
+ },
+ "oss": {
+  "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+  "tag": "v0.12.23",
+  "release_url": "https://github.com/Vexa-ai/vexa/releases/tag/v0.12.23",
+  "notes_sha256": "sha256:99ac27fecdbf599824cb4fab62646654f91d3490b2d97f1bb60d03836c72e2d0",
+  "images": [
+   {
+    "name": "vexaai/v012-admin-api",
+    "class": "prod_deployed",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:ef1d8f5cd39ab5e4bfe8ff2d8b76d2fd75d35ce1b533e05687133f6b99f9eef9",
+    "platforms": [
+     "linux/amd64",
+     "linux/arm64"
+    ],
+    "platform_manifests": {
+     "linux/amd64": {
+      "manifest_digest": "sha256:654c3320fd974bc80b67364eac4dab6f2c814fccc82f786a66d35cbdeb04eb60"
+     }
+    },
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "prod",
+      "receipt": "vexa-production helm rev 138 (2026-08-19T23:58Z): running imageID sha256:654c3320fd974bc80b67364eac4dab6f2c814fccc82f786a66d35cbdeb04eb60 read from live pods 2026-08-20T07:58:23Z"
+     },
+     {
+      "kind": "stage",
+      "receipt": "staging Helm rev 198 (rc.21, 2026-08-19): identical image pins live; two-diff gate 115->115 zero add/delete; #1244/#1236 live probes green"
+     },
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     }
+    ],
+    "prod_runtime": {
+     "platform": "linux/amd64",
+     "identity_kind": "platform_manifest",
+     "running_image_id": "sha256:654c3320fd974bc80b67364eac4dab6f2c814fccc82f786a66d35cbdeb04eb60",
+     "witness_receipt": "rev-138 post-deploy verification + tenure sweep 2026-08-20T07:21Z (14/14 ready, zero SchemaInvariantError); platform_manifest ids to be bound to registry descriptor readback (alias tsv) at public_readback"
+    }
+   },
+   {
+    "name": "vexaai/v012-runtime",
+    "class": "prod_deployed",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:f90c7c2817c47f8e594c30a4c30cf45d49a8ac4d32614bd4a3c765c656134c19",
+    "platforms": [
+     "linux/amd64",
+     "linux/arm64"
+    ],
+    "platform_manifests": {
+     "linux/amd64": {
+      "manifest_digest": "sha256:38d9d219fb588ddfb1fae1408856ba049d662085c930d18635589ef432b8b2dd"
+     }
+    },
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "prod",
+      "receipt": "vexa-production helm rev 138 (2026-08-19T23:58Z): running imageID sha256:38d9d219fb588ddfb1fae1408856ba049d662085c930d18635589ef432b8b2dd read from live pods 2026-08-20T07:58:23Z"
+     },
+     {
+      "kind": "stage",
+      "receipt": "staging Helm rev 198 (rc.21, 2026-08-19): identical image pins live; two-diff gate 115->115 zero add/delete; #1244/#1236 live probes green"
+     },
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     }
+    ],
+    "prod_runtime": {
+     "platform": "linux/amd64",
+     "identity_kind": "platform_manifest",
+     "running_image_id": "sha256:38d9d219fb588ddfb1fae1408856ba049d662085c930d18635589ef432b8b2dd",
+     "witness_receipt": "rev-138 post-deploy verification + tenure sweep 2026-08-20T07:21Z (14/14 ready, zero SchemaInvariantError); platform_manifest ids to be bound to registry descriptor readback (alias tsv) at public_readback"
+    }
+   },
+   {
+    "name": "vexaai/v012-agent-worker",
+    "class": "oss_only",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:7457aa4a2fc7658de51481ae27c53274de3281ca77a86a2759d192c80f4564dc",
+    "platforms": [
+     "linux/amd64",
+     "linux/arm64"
+    ],
+    "platform_manifests": null,
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     },
+     {
+      "kind": "compose",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose); compose profile green at candidate source"
+     }
+    ]
+   },
+   {
+    "name": "vexaai/v012-agent-api",
+    "class": "oss_only",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:40021cd52048c053520ed84939da66bc350173e4e42197dd49452ffbad45dddf",
+    "platforms": [
+     "linux/amd64",
+     "linux/arm64"
+    ],
+    "platform_manifests": null,
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     },
+     {
+      "kind": "compose",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose); compose profile green at candidate source"
+     }
+    ]
+   },
+   {
+    "name": "vexaai/v012-meeting-api",
+    "class": "prod_deployed",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:effe3b3392af4713ce09bc5683f903bffce396392949950ff307050f75dcfa74",
+    "platforms": [
+     "linux/amd64",
+     "linux/arm64"
+    ],
+    "platform_manifests": {
+     "linux/amd64": {
+      "manifest_digest": "sha256:26716f96c60bb450d84291135cc34cbff5fcaf254ca2ce502823b37a43000875"
+     }
+    },
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "prod",
+      "receipt": "vexa-production helm rev 138 (2026-08-19T23:58Z): running imageID sha256:26716f96c60bb450d84291135cc34cbff5fcaf254ca2ce502823b37a43000875 read from live pods 2026-08-20T07:58:23Z"
+     },
+     {
+      "kind": "stage",
+      "receipt": "staging Helm rev 198 (rc.21, 2026-08-19): identical image pins live; two-diff gate 115->115 zero add/delete; #1244/#1236 live probes green"
+     },
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     }
+    ],
+    "prod_runtime": {
+     "platform": "linux/amd64",
+     "identity_kind": "platform_manifest",
+     "running_image_id": "sha256:26716f96c60bb450d84291135cc34cbff5fcaf254ca2ce502823b37a43000875",
+     "witness_receipt": "rev-138 post-deploy verification + tenure sweep 2026-08-20T07:21Z (14/14 ready, zero SchemaInvariantError); platform_manifest ids to be bound to registry descriptor readback (alias tsv) at public_readback"
+    }
+   },
+   {
+    "name": "vexaai/v012-gateway",
+    "class": "prod_deployed",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:514ba2702ab03da4f90a6df58893cfec634ee61b913a1500ee6b56714dca89f2",
+    "platforms": [
+     "linux/amd64",
+     "linux/arm64"
+    ],
+    "platform_manifests": {
+     "linux/amd64": {
+      "manifest_digest": "sha256:2cf9adbadce9d53669d11a680823d238e09d5b9be64f14cb3a39b877a1c9efac"
+     }
+    },
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "prod",
+      "receipt": "vexa-production helm rev 138 (2026-08-19T23:58Z): running imageID sha256:2cf9adbadce9d53669d11a680823d238e09d5b9be64f14cb3a39b877a1c9efac read from live pods 2026-08-20T07:58:23Z"
+     },
+     {
+      "kind": "stage",
+      "receipt": "staging Helm rev 198 (rc.21, 2026-08-19): identical image pins live; two-diff gate 115->115 zero add/delete; #1244/#1236 live probes green"
+     },
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     }
+    ],
+    "prod_runtime": {
+     "platform": "linux/amd64",
+     "identity_kind": "platform_manifest",
+     "running_image_id": "sha256:2cf9adbadce9d53669d11a680823d238e09d5b9be64f14cb3a39b877a1c9efac",
+     "witness_receipt": "rev-138 post-deploy verification + tenure sweep 2026-08-20T07:21Z (14/14 ready, zero SchemaInvariantError); platform_manifest ids to be bound to registry descriptor readback (alias tsv) at public_readback"
+    }
+   },
+   {
+    "name": "vexaai/v012-mcp",
+    "class": "oss_only",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:a5d45bd73c4c68d311d9d38b2d074472004b4a9a265a635f2859db8b5a4ec248",
+    "platforms": [
+     "linux/amd64",
+     "linux/arm64"
+    ],
+    "platform_manifests": null,
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     },
+     {
+      "kind": "compose",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose); compose profile green at candidate source"
+     }
+    ]
+   },
+   {
+    "name": "vexaai/v012-terminal",
+    "class": "oss_only",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:e98025e251e69fd5c21ef6a1702cc9f34362e6c682e9ed5865abb5cb1462cefa",
+    "platforms": [
+     "linux/amd64",
+     "linux/arm64"
+    ],
+    "platform_manifests": null,
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     },
+     {
+      "kind": "compose",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose); compose profile green at candidate source"
+     }
+    ]
+   },
+   {
+    "name": "vexaai/vexa-bot",
+    "class": "prod_deployed",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:2bd879c61cb24f3e20d698ded475f565ebfb4f07f2bf842d1ebf0299e9814314",
+    "platforms": [
+     "linux/amd64"
+    ],
+    "platform_manifests": {
+     "linux/amd64": {
+      "manifest_digest": "sha256:2bd879c61cb24f3e20d698ded475f565ebfb4f07f2bf842d1ebf0299e9814314"
+     }
+    },
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "prod",
+      "receipt": "vexa-production helm rev 138 (2026-08-19T23:58Z): running imageID sha256:2bd879c61cb24f3e20d698ded475f565ebfb4f07f2bf842d1ebf0299e9814314 read from live pods 2026-08-20T07:58:23Z \u2014 BROWSER_IMAGE deployment env pin (bots are per-meeting pods)"
+     },
+     {
+      "kind": "stage",
+      "receipt": "staging Helm rev 198 (rc.21, 2026-08-19): identical image pins live; two-diff gate 115->115 zero add/delete; #1244/#1236 live probes green"
+     },
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     }
+    ],
+    "prod_runtime": {
+     "platform": "linux/amd64",
+     "identity_kind": "index_digest",
+     "running_image_id": "sha256:2bd879c61cb24f3e20d698ded475f565ebfb4f07f2bf842d1ebf0299e9814314",
+     "witness_receipt": "rev-138 post-deploy verification + tenure sweep 2026-08-20T07:21Z (14/14 ready, zero SchemaInvariantError); platform_manifest ids to be bound to registry descriptor readback (alias tsv) at public_readback"
+    }
+   },
+   {
+    "name": "vexaai/vexa-lite",
+    "class": "oss_only",
+    "stable_tag": "v0.12.23",
+    "index_digest": "sha256:bb382b2031c4040c3121c421580d3af7d9c6a94581079d30b01d2622586df524",
+    "platforms": [
+     "linux/amd64",
+     "linux/arm64"
+    ],
+    "platform_manifests": null,
+    "source_sha": "e59874bc2dfff3a75475696ac33cc0c62e71e75a",
+    "validation_receipts": [
+     {
+      "kind": "lite",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose)"
+     },
+     {
+      "kind": "compose",
+      "receipt": "release-validate run 32188980106 (candidate v0.12.23-rc.21, all legs green incl. lite amd64/arm64 + compose); compose profile green at candidate source"
+     }
+    ]
+   }
+  ],
+  "delivered_issues": [
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/1208",
+    "receipt": "Closed 2026-08-20 with file/line evidence at e59874bc (via #1210); supersedes the stale deferral line."
+   },
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/1216",
+    "receipt": "Closed 2026-08-20 with parity-test evidence at e59874bc (via #1217); dashboard copy caveat stated."
+   },
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/1150",
+    "receipt": "Auto-closed by #1151 merge (the only machine-honoured closing reference in the train)."
+   }
+  ],
+  "routed_survivors": [
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/984",
+    "receipt": "Delivery note 2026-08-20: producer complete, shipped v0.12.21/22 (provenance stated); blocked on platform#100/#158 witness."
+   },
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/988",
+    "receipt": "Delivery note: C1-C4 complete, shipped v0.12.21/22; blocked on platform#163 witness."
+   },
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/994",
+    "receipt": "Delivery note: A1-A3+tests complete; only A4 (platform#184) remains."
+   },
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/992",
+    "receipt": "Delivery note: transport complete; human close needs platform#184."
+   },
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/499",
+    "receipt": "Honesty note: NOT delivered; oracle absent (COUNTING-FIXTURES.md:62-64); contested-pair duplication documented; release notes say so under Not claimed."
+   },
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/1221",
+    "receipt": "Clarification: #1228 fix is mixed-lane; this GMeet defect remains open."
+   },
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/1175",
+    "receipt": "Remains open, narrowed: join module 180_000ms default survives (join/src/index.ts:97)."
+   },
+   {
+    "issue": "https://github.com/Vexa-ai/vexa/issues/1237",
+    "receipt": "Likely delivered via 0b8fd165; needs one clean post-fix release-images run (2026-08-20 runs were quota-tainted)."
+   }
+  ],
+  "credits": [
+   {
+    "login": "jbschooley",
+    "role": "author",
+    "receipt": "Teams speaker-name resolution from stable data-tid, mainAudio-only transcription + track dedup (PR #1024, merged in the train lineage)"
+   },
+   {
+    "login": "LauraGPT",
+    "role": "validator",
+    "receipt": "Upstream FunASR/SenseVoice custom-STT path validation, attributed per #928"
+   }
+  ]
+ },
+ "publication": {
+  "completed_steps": [
+   {
+    "name": "annotated_tag",
+    "completed_at": "2026-08-20T07:48:47Z",
+    "custody": {
+     "prod": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T07:48:40Z",
+      "readback_receipt": "skills/lifecycle/state/ownership.yaml read 2026-08-20T07:48:40Z: prod.owner=476fb938-bae8-40c3-811d-ec3954e8929d prod.release=v0.12.23 (detail: rc.21 content, Helm rev 138, rollback 137; claimed 2026-08-20T07:28:40Z, handoff be722c35)."
+     },
+     "stage": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T07:48:40Z",
+      "readback_receipt": "skills/lifecycle/state/ownership.yaml read 2026-08-20T07:48:40Z: stage.owner=476fb938-bae8-40c3-811d-ec3954e8929d (id continuity from deda037b, same conversation) stage.release verbatim '0.12.23-rc.21 LIVE on stage (Helm rev 198/201)' = the 0.12.23 content; stage custody grants no publication authority."
+     }
+    },
+    "receipt": "annotated tag v0.12.23 (object bca42f99) -> e59874bc pushed; readback git ls-remote: bca42f99 refs/tags/v0.12.23, e59874bc refs/tags/v0.12.23^{}. Local pre-push gate:schema bypassed per its documented emergency path (empty-error defect, pre-existing on base, CI authoritative suite green on this sha)."
+   },
+   {
+    "name": "stable_image_aliases",
+    "completed_at": "2026-08-20T08:04:17Z",
+    "custody": {
+     "prod": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T08:04:17Z",
+      "readback_receipt": "ownership.yaml read 2026-08-20T08:04:17Z: prod.owner=476fb938-bae8-40c3-811d-ec3954e8929d prod.release=v0.12.23 (rev 138, rollback 137)."
+     },
+     "stage": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T08:04:17Z",
+      "readback_receipt": "ownership.yaml read 2026-08-20T08:04:17Z: stage.owner=476fb938-bae8-40c3-811d-ec3954e8929d (id continuity), stage verbatim '0.12.23-rc.21 LIVE on stage'."
+     }
+    },
+    "receipt": "release-images run 32345789524 (tag-triggered, reuse_candidate=true, all build jobs skipped): alias-candidate copied descriptors without rebuild; stable-image-aliases-v0.12.23 artifact reads back all 10 vexaai/*:v0.12.23 -> exact frozen index digests (verified equal to candidate map, each traced from its v0.12.23-rc.21 source tag). First attempt 429'd at 7/10 (Docker Hub pull window); idempotent rerun completed the set. Downstream validate/resolve verified descriptors through vexa-bot then hit an unauthenticated-quota 429 on the final vexa-lite child manifest (exit 6 = quota class, explicitly not identity); rerun pending."
+   },
+   {
+    "name": "github_release",
+    "completed_at": "2026-08-20T11:45:12Z",
+    "custody": {
+     "prod": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T11:45:12Z",
+      "readback_receipt": "ownership.yaml read 2026-08-20T11:45:12Z: prod.owner=476fb938-bae8-40c3-811d-ec3954e8929d prod.release=v0.12.23 (rev 138, rollback 137)."
+     },
+     "stage": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T11:45:12Z",
+      "readback_receipt": "ownership.yaml read 2026-08-20T11:45:12Z: stage.owner=476fb938-bae8-40c3-811d-ec3954e8929d (id continuity), stage verbatim '0.12.23-rc.21 LIVE on stage'."
+     }
+    },
+    "receipt": "gh release create v0.12.23 --verify-tag published 2026-08-20 ~12:5xZ on founder's explicit go ('go on the release notes') on the corrected draft (the #499 overclaim fixed pre-approval). Body = drafts/2026-08-20-v0.12.23-release-notes.md below the separator, verbatim; notes_sha256 2c37f0ee\u2026. Readback: isDraft=false, isPrerelease=false. Founder explicitly waived waiting for the konnectivity-blocked hygiene cells."
+   },
+   {
+    "name": "issue_reconciliation",
+    "completed_at": "2026-08-20T11:48:20Z",
+    "custody": {
+     "prod": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T11:48:20Z",
+      "readback_receipt": "ownership.yaml read 2026-08-20T11:48:20Z: prod.owner=476fb938-bae8-40c3-811d-ec3954e8929d prod.release=v0.12.23 (rev 138, rollback 137)."
+     },
+     "stage": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T11:48:20Z",
+      "readback_receipt": "ownership.yaml read 2026-08-20T11:48:20Z: stage.owner=476fb938-bae8-40c3-811d-ec3954e8929d (id continuity), stage verbatim '0.12.23-rc.21 LIVE on stage'."
+     }
+    },
+    "receipt": "2 closes + 4 provenance-honest delivery notes + 2 honesty clarifications posted 2026-08-20 (all <!-- vexa-agent -->). No v0.12.23 milestone exists; nothing to close there. Verified against the tagged tree by line-level evidence (validator agent), not the changelog."
+   },
+   {
+    "name": "public_readback",
+    "completed_at": "2026-08-20T11:48:20Z",
+    "custody": {
+     "prod": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T11:48:20Z",
+      "readback_receipt": "ownership.yaml read 2026-08-20T11:48:20Z: prod.owner=476fb938-bae8-40c3-811d-ec3954e8929d prod.release=v0.12.23 (rev 138, rollback 137)."
+     },
+     "stage": {
+      "owner": "476fb938-bae8-40c3-811d-ec3954e8929d",
+      "release": "v0.12.23",
+      "observed_at": "2026-08-20T11:48:20Z",
+      "readback_receipt": "ownership.yaml read 2026-08-20T11:48:20Z: stage.owner=476fb938-bae8-40c3-811d-ec3954e8929d (id continuity), stage verbatim '0.12.23-rc.21 LIVE on stage'."
+     }
+    },
+    "receipt": "Tag v0.12.23 -> e59874bc (ls-remote). Release published_at 2026-08-20T11:15:20Z, isDraft=false (API readback post-guard). 10/10 vexaai/*:v0.12.23 aliases -> frozen index digests (tsv + validate/resolve SUCCESS). notes_sha256 2c37f0ee\u2026 recorded. release-attest SUCCESS (SLSA provenance published). Customer version surfaces: dashboard PLATFORM_VERSION=0.12.23 (leg 2 deferral means dashboard image itself unchanged, by approval)."
+   }
+  ],
+  "last_attempt_at": "2026-08-20T11:48:20Z",
+  "last_error": "State stays prod_live_oss_pending on three formalities: (1) witness signed_off on main \u2014 HUMAN-ONLY, founder word pending; release-published-guard red on exactly this; (2) hygiene cells C/D/F+(G) blocked by LKE konnectivity outage (retry scheduled); (3) :v012 float move pending PR #1253 (merge queue) + release-promote Environment approval.",
+  "readback_receipts": [
+   "annotated_tag: git ls-remote --tags origin v0.12.23 -> bca42f99 (tag), e59874bc (target) at 2026-08-20T07:55:21Z",
+   "stable_image_aliases: tsv artifact 10/10 alias->frozen-digest equalities at 2026-08-20T08:04:17Z; Hub API tag existence 10/10.",
+   "descriptor_resolve: release-images run 32345789524 'validate / resolve' SUCCESS on rerun at 2026-08-20T09:32:03Z \u2014 every frozen descriptor (10 top digests, all platform manifests) resolves through authenticated registry reads; prior failures were Docker Hub quota 429s (exit 6, quota class), never identity.",
+   "release edited 2026-08-20T12:07:13Z on founder direction ('keep in ground truth engineering, business JTBD, no fluff'): title 'Scheduled bots you can trust\u2026' -> 'Calendar auto-join discipline, and Teams CSRC transcription'; lede rewritten as the observable contract; notes_sha256 now 99ac27fe\u2026. Founder's edit is the specification for future release-notes voice."
+  ]
+ }
+}

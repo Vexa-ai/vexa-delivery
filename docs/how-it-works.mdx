@@ -1,0 +1,63 @@
+---
+title: "How it works"
+description: "How the channel keeps your deployment current and inside your specification."
+---
+
+The channel keeps the deployment inside your perimeter current and within your agreed
+specification. A release is built once: a set of images identified by content digest
+(`@sha256:…`), never rebuilt. It reaches you on a private channel with its evidence attached,
+and your cluster admits it only if your policy says so.
+
+## The channel entry
+
+Each release arrives as one OCI artifact: **`entry.json`**, the signed record naming the
+version, source commit, digest set and the sha256 of every evidence file; **`evidence/`**,
+holding the digest map, the delivery receipt from Vexa's own production run, SLSA provenance
+and the Sigstore trust material to verify offline; and **`VERIFY.md`**, the commands with this
+release's file names filled in.
+
+Beside it sits the Helm chart as an OCI artifact with every image digest baked into its
+values, including images the runtime spawns on demand. Your Argo CD applies that chart.
+
+Two fields are contractual: **`evidence_absent`** names evidence this release lacks;
+**`break_glass`** names who authorised an incomplete chain, and why.
+
+## Your two environments
+
+**Staging** follows the channel pointer: pulled, verified at admission, applied.
+**Production** follows a **pin** — nothing arrives until you move it, and Vexa cannot. The
+subscription is one ApplicationSet plus two policies, on a channel that is private always:
+shared by estate shape, or dedicated where a customer's own contract gates its releases. See
+[the channel](channel).
+
+## Evidence accumulates; artifacts don't change
+
+<img className="block dark:hidden" src="/images/release-flow-light.svg" alt="Four deployments pull from one release store, each admitting only what its evidence policy accepts." />
+<img className="hidden dark:block" src="/images/release-flow-dark.svg" alt="Four deployments pull from one release store, each admitting only what its evidence policy accepts." />
+
+Every node above is the same box. Each stage that validates a release signs it — Vexa staging
+its validation plus a human witness, Vexa production its real usage soak, your staging your
+own checks. The artifact never changes; a candidate that fails stops accumulating evidence.
+
+## The station bundle
+
+Two things run in your cluster: Vexa, and the machinery that receives Vexa. That machinery —
+subscription, contract, admission rules, floor check — is one signed chart pinned by your
+bootstrap file. Releases move by the release pin, machinery by the bundle pin; a hand-edit to
+either is reverted visibly.
+
+## The loop
+
+1. **Publish** — images freeze and are signed; Vexa staging and production add evidence.
+2. **Gate** — rendered with **your** values, against **your** contract. See
+   [the station gate](station-gate).
+3. **Channel** — the gated entry lands; the `current` pointer moves.
+4. **Pull** — your Argo CD polls over your pull-only credential, or your mirror.
+5. **Admission** — Kyverno checks the signature, refuses anything not digest-pinned.
+6. **Smoke** — a human watches the bot capture a real meeting. Dated receipt.
+7. **Station bundle** — receipts, redacted values, profile, contract; sent back by hand.
+8. **Back to 2** — that bundle is the station the next release is gated against.
+
+**The standards underneath:** build-once / promote-by-digest over OCI content addressing ·
+Sigstore signing · SLSA Provenance v1 · in-toto attestations · Binary-Authorization-style
+admission enforced by Kyverno · GitOps reconciliation by Argo CD.

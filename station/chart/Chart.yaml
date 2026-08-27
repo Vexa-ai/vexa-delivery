@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: vexa-station
+description: >-
+  The station bundle — the machinery layer of a Vexa channel station
+  (subscription, contracts, admission, substrate floor), delivered and
+  reconciled through the channel itself. The app is deterministic because the
+  channel pins it; the station is deterministic because this bundle pins IT.
+version: 1.0.7

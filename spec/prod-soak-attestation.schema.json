@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vexa.ai/schemas/ee/prod-soak-attestation.v1.json",
+  "title": "Vexa production-soak attestation (in-toto statement)",
+  "description": "A signed, machine-verifiable statement of what a digest set did in a named environment during a named window. Numbers are defined EXCLUSIVELY by the sealed definitions document whose sha256 the predicate pins; a verifier must refuse an attestation whose definitions hash it does not recognize.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_type", "subject", "predicateType", "predicate"],
+  "properties": {
+    "_type": { "const": "https://in-toto.io/Statement/v1" },
+    "subject": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "digest"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "digest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sha256"],
+            "properties": { "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+          }
+        }
+      }
+    },
+    "predicateType": { "const": "https://vexa.ai/attestations/prod-soak/v1" },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release", "environment", "window", "platforms", "definitions"],
+      "properties": {
+        "release": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "environment": { "type": "string", "minLength": 1 },
+        "window": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to"],
+          "properties": {
+            "from": { "$ref": "#/$defs/ts" },
+            "to": { "$ref": "#/$defs/ts" }
+          }
+        },
+        "platforms": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "meetings_dispatched",
+              "software_failures",
+              "software_success_rate",
+              "completed",
+              "completion_rate"
+            ],
+            "properties": {
+              "meetings_dispatched": { "type": "integer", "minimum": 1 },
+              "software_failures": { "type": "integer", "minimum": 0 },
+              "software_success_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+              "completed": { "type": "integer", "minimum": 0 },
+              "completion_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+              "exit_reasons": {
+                "type": "object",
+                "additionalProperties": { "type": "integer", "minimum": 0 },
+                "description": "Optional full per-reason breakdown; keys are ExitReason names from the sealed definitions"
+              }
+            }
+          }
+        },
+        "definitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["document", "sha256"],
+          "properties": {
+            "document": { "const": "prod-soak-metrics.v1" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        "source": {
+          "type": "string",
+          "description": "Where the counts were read from (telemetry query id, snapshot ref) — provenance of the numbers themselves"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ts": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }
+  }
+}

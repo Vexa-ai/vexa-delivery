@@ -1,0 +1,114 @@
+{
+ "schema_version": 1,
+ "channel": {
+  "name": "fixture-estate",
+  "entry_seq": 2,
+  "supersedes": null
+ },
+ "release": {
+  "version": "0.0.1-estate-20260825",
+  "source_sha": "0000000000000000000000000000000000000000",
+  "tag_object_sha": "0000000000000000000000000000000000000000",
+  "release_url": "https://example.invalid/fixture"
+ },
+ "source": {
+  "archive_name": "fixture-estate.none",
+  "archive_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "provenance_predicate": "none",
+  "certificate_oidc_issuer": "none",
+  "certificate_identity_pattern": "none"
+ },
+ "images": [
+  {
+   "name": "example/app",
+   "class": "prod_deployed",
+   "index_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "platforms": [
+    "linux/amd64"
+   ],
+   "source_sha": "0000000000000000000000000000000000000000",
+   "validation_receipts": [
+    {
+     "kind": "prod",
+     "receipt": "synthetic fixture; no cluster was read"
+    }
+   ]
+  }
+ ],
+ "evidence": [
+  {
+   "name": "validation-contract.yaml",
+   "kind": "validation_contract",
+   "sha256": "424adebcbc395e7c576f2091439deb3f9c6878c752245badc17ca1f38aba903f",
+   "description": "what this estate was validated against",
+   "media_type": "application/yaml"
+  }
+ ],
+ "evidence_absent": [
+  {
+   "kind": "candidate_map",
+   "reason": "an artifact of the OSS release train; this estate was captured from a cluster"
+  },
+  {
+   "kind": "delivery_receipt",
+   "reason": "produced by the OSS release train; no train produced this entry"
+  },
+  {
+   "kind": "source_provenance",
+   "reason": "a platform estate has no GitHub release archive and no SLSA provenance"
+  },
+  {
+   "kind": "trusted_root",
+   "reason": "only meaningful with a Sigstore keyless provenance bundle"
+  }
+ ],
+ "prod_soak": {
+  "carrier": "live_cluster_read",
+  "receipt": "fixture"
+ },
+ "chart": {
+  "oci_ref": "registry.invalid/vexa/channel/fixture-estate/charts/app",
+  "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "version": "0.0.1-estate.20260825"
+ },
+ "break_glass": null,
+ "signing": {
+  "mode": "test_key",
+  "identity": "fixture channel key",
+  "note": "synthetic fixture entry; the signature bundle beside it is a stub"
+ },
+ "publication": {
+  "mode": "candidate",
+  "published_at": "2026-08-25T00:00:00Z",
+  "publisher": "fixture",
+  "approved_by": "fixture"
+ },
+ "expires": "2036-08-22T18:57:16Z",
+ "estate": {
+  "kind": "platform_estate",
+  "release_name": "app",
+  "charts": [
+   {
+    "name": "app",
+    "primary": true,
+    "namespace": "vexa-production",
+    "oci_ref": "registry.invalid/vexa/channel/fixture-estate/charts/app",
+    "version": "0.0.1-estate.20260825",
+    "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   }
+  ],
+  "validation_contract": {
+   "id": "fixture-estate-contract",
+   "sha256": "424adebcbc395e7c576f2091439deb3f9c6878c752245badc17ca1f38aba903f",
+   "file": "validation-contract.yaml"
+  },
+  "secrets_required": [],
+  "captured_from": {
+   "cluster": "fixture",
+   "release": "app",
+   "revision": 1,
+   "method": "synthetic fixture; no cluster was read"
+  },
+  "known_holes": []
+ }
+}

@@ -1,0 +1,149 @@
+---
+title: "Telemetry ladder"
+description: "What comes back, at which rung, on whose authority — and why content is on no rung at all."
+---
+
+You want the better product. You hold a security policy. Those are not in tension if the
+choice is yours: **we offer the full spectrum of callback kinds and you pick the rung.**
+Policy is yours, mechanics are ours, one host in both directions.
+
+Every rung is the same mechanism: a **bundle of plain, inspectable files** pushed to your
+station's write path on the channel host you already pull from. No streams, no second
+endpoint, no new firewall rule. Your security team can open any bundle before it leaves —
+and the tool prints its path and stops before sending, precisely so they can.
+
+## The rungs
+
+| Tier | What comes back | Cadence |
+|---|---|---|
+| **T0 — silent** | nothing. Entries can even arrive by sneakernet. | — |
+| **T1 — receipts** | signed install and validation verdicts: which pin, which entry, sync and health words, the PreSync verifier's verdict, the image digests actually running | per release |
+| **T2 — health** | aggregate counters: pod phase counts, restart counts, deployment ready ratios, CronJob last-success ages, node readiness. **No identities, no content, no logs.** | daily (or weekly) |
+| **T3 — usage** | activation and volume aggregates, pseudonymous: activated-user counts, meeting and minute volumes, tokens per model | daily or weekly |
+| **T4 — diagnostics** | scrubbed log and trace bundles. **Never automatic** — exported by your admin, read by you, handed over per incident | on demand |
+
+<Warning>
+**Content is not on the ladder at any rung.** Transcripts and meeting bodies never leave.
+This is the fixed point that makes every other rung negotiable, and it is enforced by the
+shape of the document rather than by our restraint: [`report.v1`](https://github.com/Vexa-ai/vexa-delivery/blob/main/spec/report.v1.schema.json)
+sets `additionalProperties: false` on **every** object, so there is no field a transcript
+could go in. A payload carrying one fails validation on your side, before it is sent.
+</Warning>
+
+## Enforcement is structural, and it runs in both directions
+
+Your `contract.yaml` declares the rung. Three independent things then hold it:
+
+**1 · The packager cannot collect above it.** `collectors.collect()` resolves your declared
+tier to a list of collector functions **before calling any of them**. At T2 the usage
+collector is not called and its output discarded — the function is never referenced. That
+distinction is the whole point: *"we filter the output afterwards"* is a promise, and
+*"the code that reads it is not reachable"* is a property you can check by reading
+[`kit/validate/collectors.py`](https://github.com/Vexa-ai/vexa-delivery/blob/main/kit/validate/collectors.py).
+
+**2 · The schema refuses a payload that exceeds its own declared tier**, so even a bug in
+(1) cannot produce one.
+
+**3 · Our ingest refuses a bundle exceeding your declared scope.** A T3-shaped bundle
+arriving against a T2 contract is refused with a named error (`S10`) and nothing is kept.
+
+That third one is the half worth anything. You can read the packager yourself. You cannot
+read what happens on our machine — so that is where the check has to be, and it is us
+enforcing your policy against ourselves.
+
+## Declaring your rung
+
+In your station's `contract.yaml`, inside the `report_scope` block you already have:
+
+```yaml
+report_scope:
+  schema: report.v1
+  tier: 2                          # 0-4. Your declaration; nothing else may set it.
+  cadence: daily                   # per-release · daily · weekly · on-demand
+  trigger: explicit-command-only   # or `scheduled` — see below
+  destination: channel.vexa.ai
+  allowed_files: [station.json, contract.yaml, ...]
+  require_redaction_verified: true
+```
+
+**`tier` has exactly one authority and this is it.** It is deliberately not settable from a
+values file: a second place to write it is a second place it can disagree with the first,
+and the disagreement would be silent.
+
+<Note>
+**A `report_scope` with no `tier` is tier 1.** Every contract written before the ladder
+existed has that shape, and every one of them already permits exactly the operator's
+install bundle — which is what T1 is. A contract with **no `report_scope` at all** is a
+refusal at both ends: without it there is no bound to enforce, and we do not pick one for
+you.
+</Note>
+
+## The trigger, and what did not change
+
+`explicit-command-only` is still the default and still means what it always meant: nothing
+in the delivered software originates a report. It happens when an operator types
+`--submit`.
+
+`scheduled` exists because T2 and T3 are **cadenced** rungs, and a rung nobody reaches
+without a human typing a command every morning is a rung nobody climbs. Setting it is what
+authorises the in-cluster CronJob — **the station chart renders no CronJob unless your
+contract says `scheduled`.** The timer is authorised by the same document that bounds what
+it may send, and no timer ever appears in software you have already installed.
+
+## Sending, per rung
+
+**T1 — per release.** A PostSync hook Job fires when a sync completes, which is exactly
+when *what is running here, under what verdict* changes. It is not a timer: it fires on an
+act you performed.
+
+**T2 / T3 — cadenced.** Either the CronJob (if you declared `scheduled`), or by hand:
+
+```bash
+vexa-validate --report --namespace vexa-prod \
+  --contract ./contract.yaml --station <your-station> \
+  --submit --submit-dry-run          # prints the payload path; sends nothing
+```
+
+Drop `--submit-dry-run` to send. The RBAC the sender holds is `get`/`list` on pods,
+deployments, cronjobs and jobs, plus `get` on one named ConfigMap — no secrets, no exec, no
+logs, no write.
+
+**T4 — on demand, and it does not send.**
+
+```bash
+vexa-validate --export-diagnostics --namespace vexa-prod --out ./diag
+```
+
+Writes a scrubbed bundle to your disk and stops. There is no `--submit` path for tier 4 and
+there is no `tier: 4` value in `report.v1` — a schema that could express T4 is a schema that
+could carry one automatically. Secret and ConfigMap values, container env values and
+credential-shaped annotations are removed; object names, images, conditions and event
+messages are kept, because without them the bundle diagnoses nothing. **Read it, then share
+it however your policy allows.** The reason the command exists is that *"send us your
+logs"* otherwise means an engineer improvising `kubectl logs` under incident pressure, which
+is exactly when redaction gets skipped.
+
+## Absent over faked
+
+A counter that could not be collected is reported **absent, with a reason** — never
+defaulted to zero. Zero is a claim. A CronJob that has never succeeded reports `null`, not
+`0`, because *never* and *a moment ago* are different facts and rendering them the same is
+how a dashboard shows green on a dead job.
+
+**T3 ships today as an interface with no implementation, and says so.** Nothing in this
+software can produce activation or volume counts yet — the product's usage surface is not
+exposed to a station-side collector. So the collector returns the block with every counter
+null and one `absent` row explaining why. Inventing plausible numbers would put fabricated
+data into your ledger under our signature, in a document whose entire value is that it is
+inspectable.
+
+## What climbing buys you
+
+| Rung | What it buys |
+|---|---|
+| **T1** | support entitlement — we can answer *"which bytes are they on?"* without asking you |
+| **T2** | we see your degradation before you file a ticket |
+| **T3** | benchmarks against the fleet, tuned defaults, capacity planning |
+
+An exchange rate priced in your own policy currency. Nothing above your declared rung
+leaves, and nothing above it is kept.

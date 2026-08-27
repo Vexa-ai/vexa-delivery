@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+# Station bundle values. Site-specific facts live HERE and only here; the
+# templates and files/ are identical on every station.
+
+# cluster   — you hold cluster-admin: admission ships as Kyverno ClusterPolicy,
+#             the floor reads nodes/PVs/storage classes.
+# namespace — shared cluster, no cluster-admin (e.g. OpenShift run by a
+#             separate operations department): admission ships as NAMESPACED
+#             Kyverno Policy per station namespace, the floor checks only what
+#             a namespace tenant can see and reports cluster facts as UNKNOWN.
+scope: cluster
+channelName: vexa-internal
+
+# Where the channel lives (the customer's mirror on disconnected sites).
+appChartRepo: registry.channel-registry.svc:5000/vexa/channel/vexa-internal/charts
+signatureRepository: registry.channel-registry.svc:5000/vexa/channel/enterprise-stable/sigs
+registryHost: registry.channel-registry.svc
+registryPort: "5000"
+
+channelPublicKey: ""   # REQUIRED: the pinned channel public key (PEM)
+
+stagingNamespace: vexa-staging
+prodNamespace: vexa-prod
+argocdNamespace: argocd
+
+admission:
+  enabled: true
+
+# THE SUBSCRIPTION — the ApplicationSet that stands Vexa up, plus the entry
+# contracts its PreSync gate verifies against. ON, because following the
+# channel is what a station IS; every existing subscriber renders unchanged.
+#
+# `false` is for the station that wants this bundle's OTHER machinery without
+# the stack: an estate already running Vexa by another path that installs the
+# chart for the receipt sender alone. Left ungated (through 1.0.5) that install
+# also created the subscription and, with it, a second Vexa stack in namespaces
+# the station's contract may not permit.
+subscription:
+  enabled: true
+
+# The telemetry ladder's sender. OFF BY DEFAULT, and the tier is NOT here:
+# the rung a station occupies is its own declaration and lives in ONE place,
+# `report_scope.tier` in its contract. Putting a tier in a values file would
+# create a second authority that could disagree with the first, and the
+# disagreement would be silent. The sender reads the mounted contract at
+# runtime and refuses to collect above what it declares.
+receiptSender:
+  enabled: false
+  # `explicit-command-only` (the default, and what every pre-ladder contract
+  # says) renders NO CronJob: an operator runs `vexa-validate --report
+  # --submit` when they choose to. `scheduled` renders one — and it must match
+  # report_scope.trigger in the contract, because the timer is authorised by
+  # the same document that bounds what it may send.
+  trigger: explicit-command-only
+  schedule: "17 3 * * *"          # daily, off the hour: nothing else runs here at 03:17
+  startingDeadlineSeconds: 3600
+  deadlineSeconds: 600
+  # The per-release receipt, fired by a completed sync rather than by a clock.
+  postSync: true
+  station: ""                      # REQUIRED: must equal the path segment the edge allows
+  destination: channel.vexa.ai
+  # REQUIRED, and it is a REFERENCE: a ConfigMap YOU create in prodNamespace,
+  # holding the key `contract.yaml` — your station's report contract, the
+  # document whose `report_scope` bounds what may leave your perimeter. The
+  # chart mounts it and never authors it; a tier we wrote would be a second
+  # authority over your own declaration.
+  #
+  # NOT the `vexa-contract-*` ConfigMaps this chart renders into the argocd
+  # namespace. Those carry `policy.json` for the PreSync entry-verification
+  # gate — a different document, a different reader, a different namespace.
+  # Through 1.0.5 this defaulted to one of them and the mount could not work.
+  contractConfigMap: ""
+  credentialSecret: vexa-station-credential   # keys: username, password
+  verifierVerdictConfigMap: vexa-verify-verdict
+  # REQUIRED: the kit RUNTIME image (kit/Dockerfile), digest-pinned, off the
+  # channel — e.g. <registry>/vexa/channel/<chan>/images/vexaai/kit-runtime@sha256:...
+  # It carries python3 + kubectl + oras + the kit tree at /kit, and nothing else.
+  image: ""
+  imagePullSecrets: []
+  app: ""                          # the Argo Application this station follows (T1)
+  pin: ""                          # fallback when the Application cannot be read
+  entrySeq: ""
+  entryDigest: ""
+  windowHours: 24
+  readArgoApplication: true
+  dryRun: false
+  # EGRESS. A station namespace that denies egress by default — ours does, and
+  # so does every estate this chart is written for — blocks the sender's HTTPS
+  # exactly as it blocked the PreSync verify Job on 2026-08-25. On by default
+  # for that reason; `false` for a station that writes its own egress policy.
+  # The CIDR covers TWO destinations, and forgetting the second is the trap:
+  # the channel, and the Kubernetes API server the collector reads status from.
+  networkPolicy: true
+  egressCIDR: "0.0.0.0/0"
+  # PLACEMENT. A cluster that reserves its nodes will not schedule these pods
+  # at all: ours runs a single pool tainted `vexa.ai/pool=main:NoSchedule` and
+  # the PostSync receipt Job sat Pending on "untolerated taint" until the
+  # deadline fired (prod, 2026-08-26 — the same wall the PreSync verify gate hit
+  # on 2026-08-25). Empty by default, so a default cluster renders exactly as it
+  # did on 1.0.6; an estate whose nodes are tainted declares its placement here
+  # and it reaches BOTH the PostSync Job and the cadenced CronJob, which share
+  # one pod spec. Whoever owns the cluster owns these values — a toleration
+  # hard-coded in our template would be our guess about someone else's nodes.
+  #   tolerations:
+  #     - {key: vexa.ai/pool, operator: Equal, value: main, effect: NoSchedule}
+  #   nodeSelector: {vexa.ai/pool: main}
+  tolerations: []
+  nodeSelector: {}
+
+floor:
+  enabled: true
+  schedule: "*/10 * * * *"
+  # channel-served, digest-pinned, signed like everything else
+  image: ""            # REQUIRED: <registry>/.../tools/kubectl@sha256:...
+  minNodesReady: 2
+  maxReleasedPVs: 0
+  requiredStorageClass: linode-block-storage-retain
+  # a VolumeAttachment carrying a deletionTimestamp older than this is a stuck
+  # detach (the 2026-08-21 CSI class) — floor goes RED
+  maxStuckAttachMinutes: 10
+  # Same placement hole as the sender's, found in the same audit. This CronJob
+  # is the bundle's other pod; on a tainted pool it goes Pending every ten
+  # minutes, and a floor that never runs reports no floor rather than a red one.
+  tolerations: []
+  nodeSelector: {}

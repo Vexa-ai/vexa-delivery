@@ -1,0 +1,51 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Vexa Enterprise",
+  "colors": {
+    "primary": "#0D9373",
+    "light": "#07C983",
+    "dark": "#0D9373"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Vexa Enterprise",
+        "pages": [
+          "index",
+          "how-it-works",
+          "install",
+          "channel",
+          "station-gate",
+          "preflight",
+          "verify",
+          "telemetry-ladder",
+          "operations",
+          "security",
+          "governance",
+          "support",
+          "co-design"
+        ]
+      },
+      {
+        "group": "Command reference",
+        "pages": [
+          "reference/vexa-preflight",
+          "reference/vexa-smoke",
+          "reference/vexa-validate",
+          "reference/kit-bootstrap",
+          "reference/kit-install",
+          "reference/kit-self-update"
+        ]
+      },
+      {
+        "group": "Environments",
+        "pages": [
+          "environments/kubernetes",
+          "environments/openshift",
+          "environments/managed-cloud"
+        ]
+      }
+    ]
+  }
+}

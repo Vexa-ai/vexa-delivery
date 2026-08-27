@@ -1,0 +1,9 @@
+{
+  "contract_id": "fixture-estate-2026-08",
+  "require_evidence_kinds": ["validation_contract"],
+  "forbid_absent_evidence": ["validation_contract"],
+  "require_publication_mode": "candidate",
+  "require_vendor_approval": false,
+  "allow_break_glass": false,
+  "min_entry_seq": 1
+}

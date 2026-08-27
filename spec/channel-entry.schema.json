@@ -1,0 +1,898 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vexa.ai/schemas/ee/channel-entry.v1.json",
+  "title": "Vexa enterprise channel entry",
+  "description": "One release on one enterprise channel: the exact image-digest set plus the evidence bundle proving that set earned promotion. Generalized from the internal prod-delivery-receipt.v1 schema; this is the customer-facing contract. Every evidence file is listed with its sha256 so the bundle verifies offline; entry.json itself is the signed subject.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "channel",
+    "release",
+    "source",
+    "images",
+    "evidence",
+    "evidence_absent",
+    "prod_soak",
+    "signing",
+    "publication",
+    "expires"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "entry_seq",
+        "supersedes"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+          "description": "Channel identifier, e.g. enterprise-stable. One channel = one ordered stream of entries."
+        },
+        "entry_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonic per-channel sequence. A puller refuses an entry whose seq does not exceed the one it holds."
+        },
+        "supersedes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "The release this entry supersedes on this channel; null for the channel's first entry."
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "source_sha",
+        "tag_object_sha",
+        "release_url"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+              "description": "a Vexa OSS release tag"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-estate-[0-9]{8}$",
+              "description": "a platform ESTATE capture: <platform version>-estate-<YYYYMMDD>. An estate is not a release tag \u2014 nobody tagged it. Its version says which platform version was running and which day it was read, which is the only identity a cluster capture honestly has."
+            }
+          ]
+        },
+        "source_sha": {
+          "$ref": "#/$defs/sha"
+        },
+        "tag_object_sha": {
+          "$ref": "#/$defs/sha"
+        },
+        "release_url": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "archive_name",
+        "archive_sha256",
+        "provenance_predicate",
+        "certificate_oidc_issuer",
+        "certificate_identity_pattern"
+      ],
+      "description": "The source-archive SLSA provenance chain. This is the provenance rung that exists today: images bind to source via the candidate map (sha-pinned below), and the source archive carries SLSA provenance. Per-image provenance is evidence_absent until the OSS release pipeline attests images (vexa PRD C1).",
+      "properties": {
+        "archive_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "archive_sha256": {
+          "$ref": "#/$defs/digest_hex"
+        },
+        "provenance_predicate": {
+          "enum": [
+            "https://slsa.dev/provenance/v1",
+            "none"
+          ],
+          "description": "`none` is permitted ONLY for an estate entry, which has no build attestation to reference; the matching evidence_absent row must say so."
+        },
+        "certificate_oidc_issuer": {
+          "enum": [
+            "https://token.actions.githubusercontent.com",
+            "none"
+          ],
+          "description": "`none` is permitted ONLY for an estate entry, which has no build attestation to reference; the matching evidence_absent row must say so."
+        },
+        "certificate_identity_pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Regexp the Fulcio certificate SAN must match, e.g. ^https://github.com/Vexa-ai/vexa/",
+          "enum": [
+            "^https://github.com/Vexa-ai/vexa/",
+            "none"
+          ]
+        }
+      }
+    },
+    "images": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "class",
+          "index_digest",
+          "platforms",
+          "source_sha",
+          "validation_receipts"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "class": {
+            "enum": [
+              "prod_deployed",
+              "oss_only"
+            ]
+          },
+          "index_digest": {
+            "$ref": "#/$defs/digest"
+          },
+          "platforms": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+/[a-z0-9_]+$"
+            }
+          },
+          "platform_manifests": {
+            "anyOf": [
+              {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "manifest_digest"
+                  ],
+                  "properties": {
+                    "manifest_digest": {
+                      "$ref": "#/$defs/digest"
+                    },
+                    "config_digest": {
+                      "$ref": "#/$defs/digest"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_sha": {
+            "$ref": "#/$defs/sha"
+          },
+          "validation_receipts": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "receipt"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "prod",
+                    "stage",
+                    "compose",
+                    "lite"
+                  ]
+                },
+                "receipt": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "mirrored_to": {
+            "type": "string",
+            "description": "Where this channel serves the image from. A subscriber pulls this reference, not the upstream one \u2014 that is what makes one-host egress possible."
+          },
+          "values_path": {
+            "type": "string",
+            "description": "The chart values path that pins this image, when the estate pins it through values rather than a workload template."
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The bundle: every file shipped alongside entry.json, digest-listed. Offline verification: check each file's sha256, then follow each kind's own verification (candidate_map sha equals packet pin; source_provenance verifies against the archive with the trusted_root). A RELEASE entry must carry candidate_map + source_provenance + trusted_root. An ESTATE entry (see `estate`) cannot: it has no release tag, no source archive and no provenance bundle. It must carry a validation_contract instead \u2014 an estate is validated against dependencies it does not own, and 'it came up green' is not a claim until the reader knows what it came up against. The requirement is swapped, never dropped.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "kind",
+          "sha256",
+          "media_type",
+          "description"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "kind": {
+            "enum": [
+              "validation_contract",
+              "candidate_map",
+              "delivery_receipt",
+              "source_provenance",
+              "trusted_root",
+              "readiness",
+              "storm",
+              "witness",
+              "soak",
+              "station_gate",
+              "security_hardening",
+              "sbom",
+              "other"
+            ]
+          },
+          "sha256": {
+            "$ref": "#/$defs/digest_hex"
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "evidence_absent": {
+      "type": "array",
+      "description": "Evidence kinds this entry does NOT carry, each with the reason. The boundary of the claim is stated, never smoothed (ADR-0016 pattern): an absent receipt is declared absent, not assumed covered.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "reason"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "validation_contract",
+              "image_provenance",
+              "chart",
+              "readiness",
+              "storm",
+              "witness",
+              "soak",
+              "station_gate",
+              "security_hardening",
+              "sbom",
+              "other",
+              "source_provenance",
+              "candidate_map",
+              "trusted_root",
+              "delivery_receipt"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "prod_soak": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "receipt",
+            "carrier"
+          ],
+          "description": "The production-soak claim for this digest set: the revision it ran as, how long, and the health aggregate. carrier names where the underlying evidence lives in the bundle.",
+          "properties": {
+            "receipt": {
+              "type": "string",
+              "minLength": 1
+            },
+            "carrier": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Bundle-relative pointer, e.g. delivery_receipt:prod.hold_receipt"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The production-soak claim. Null ONLY on a candidate entry (internal channel, prod has not run yet) \u2014 the soak then arrives later as an accumulated attestation."
+    },
+    "chart": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "oci_ref",
+            "digest",
+            "version"
+          ],
+          "properties": {
+            "oci_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "digest": {
+              "$ref": "#/$defs/digest"
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The Helm chart as an OCI artifact, digest-pinned. Null while OCI chart publishing is pending (then chart appears in evidence_absent)."
+    },
+    "break_glass": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "actor",
+            "reason",
+            "approved_by",
+            "at",
+            "receipt"
+          ],
+          "properties": {
+            "actor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "approved_by": {
+              "type": "string",
+              "minLength": 1
+            },
+            "at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "receipt": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Audited break-glass: present when this entry was published with an incomplete evidence chain, naming the human and the reason. Never a silent path \u2014 an entry with evidence gaps and break_glass null is invalid by policy (publisher refuses)."
+    },
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "identity",
+        "note"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "cosign_key",
+            "cosign_keyless",
+            "test_key"
+          ]
+        },
+        "identity": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Key fingerprint (cosign_key/test_key) or certificate identity (cosign_keyless) the verifier must pin."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "description": "How this entry and its image signatures are signed. test_key is valid only with publication.mode=dry_run \u2014 the production signing model (keyless vs long-lived key, rotation, revocation) is ADR-0002's open decision."
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "published_at",
+        "publisher"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "dry_run",
+            "candidate",
+            "published"
+          ]
+        },
+        "published_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "publisher": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approved_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approval_receipt": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "expires": {
+      "$ref": "#/$defs/timestamp",
+      "description": "Freshness horizon. After this instant the entry is STALE and every verifier in the chain refuses it \u2014 a distinct refusal from an invalid signature, because it means the customer is looking at a channel nobody has published to, not at a forgery. Set by the publisher at build time (default now+30d, --expires-days). Republishing the same release with a fresh expiry is a normal act and needs no version bump: `vexa_channel.py refresh` re-stamps expires, increments channel.entry_seq, re-signs, and pushes; the release tag moves to the new entry while the superseded one stays addressable at <version>-seq<N> and by digest. Rollback protection is entry_seq monotonicity, not tag immutability."
+    },
+    "estate": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Present when this entry carries a PLATFORM ESTATE rather than a single OSS release. An estate is more than one chart plus additional manifests, and the singular `chart` block above cannot express it. `chart` is still populated with the PRIMARY chart so a consumer that does not know about `estate` installs something correct-but-partial rather than failing \u2014 that degradation is deliberate. A consumer that does know about `estate` installs the whole thing.",
+      "required": [
+        "kind",
+        "release_name",
+        "charts",
+        "validation_contract",
+        "captured_from",
+        "known_holes"
+      ],
+      "properties": {
+        "kind": {
+          "const": "platform_estate"
+        },
+        "release_name": {
+          "type": "string",
+          "description": "The Helm release name the estate installs under. Load-bearing for adoption: an existing cluster's release name is not negotiable."
+        },
+        "charts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "additional_manifests": {
+          "type": "array"
+        },
+        "validation_contract": {
+          "type": "object",
+          "required": [
+            "id",
+            "sha256",
+            "file"
+          ],
+          "description": "MANDATORY for an estate. An estate is validated against dependencies it does not own; 'it came up green' is not a claim until the reader knows what it came up against. The hash is here so the contract cannot drift from the entry that cites it.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "file": {
+              "type": "string"
+            }
+          }
+        },
+        "secrets_required": {
+          "type": "array",
+          "description": "Cluster Secrets that must exist before install. Names only \u2014 never values. This is the environment half of `channel + secrets + data = the estate`."
+        },
+        "captured_from": {
+          "type": "object",
+          "description": "Which cluster, release and revision the pins were read from, and how. An estate's identity is a cluster read, not a build."
+        },
+        "known_holes": {
+          "type": "array",
+          "description": "Defects the publisher knows about at publication time, shipped INSIDE the signed entry. A subscriber reads them before installing rather than discovering them on their own maintenance window. An empty array is a claim that there are none.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "what",
+              "effect",
+              "fix"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "what": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "description": "What breaks, for whom."
+              },
+              "fix": {
+                "type": "string",
+                "description": "What would close it. Not a promise of a date."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "publication": {
+            "properties": {
+              "mode": {
+                "const": "published"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "publication": {
+            "required": [
+              "mode",
+              "published_at",
+              "publisher",
+              "approved_by",
+              "approval_receipt"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "signing": {
+            "properties": {
+              "mode": {
+                "const": "test_key"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "publication": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "dry_run",
+                  "candidate"
+                ]
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "publication": {
+            "properties": {
+              "mode": {
+                "const": "candidate"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "prod_soak": {}
+        }
+      },
+      "else": {
+        "properties": {
+          "images": {
+            "items": {
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "class": {
+                        "const": "prod_deployed"
+                      }
+                    },
+                    "required": [
+                      "class"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "validation_receipts": {
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "const": "prod"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "validation_receipts": {
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "lite",
+                                "compose",
+                                "stage"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        "not": {
+                          "contains": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "prod"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "prod_soak": {
+            "type": "object"
+          },
+          "evidence": {
+            "contains": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "delivery_receipt"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "estate"
+        ],
+        "properties": {
+          "estate": {
+            "type": "object"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "allOf": [
+              {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "kind"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "validation_contract"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "evidence": {
+            "allOf": [
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "candidate_map"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "source_provenance"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "trusted_root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "required": [
+            "estate"
+          ]
+        }
+      },
+      "then": {
+        "properties": {
+          "images": {
+            "items": {
+              "required": [
+                "platform_manifests"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "required": [
+            "estate"
+          ]
+        }
+      },
+      "then": {
+        "properties": {
+          "source": {
+            "properties": {
+              "provenance_predicate": {
+                "const": "https://slsa.dev/provenance/v1"
+              },
+              "certificate_oidc_issuer": {
+                "const": "https://token.actions.githubusercontent.com"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "digest_hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  }
+}

@@ -1,0 +1,272 @@
+---
+title: "Microsoft 365"
+description: "What your Microsoft 365 administrator does once, so Vexa can host the Minutes mailbox inside your tenant."
+---
+
+Vexa takes minutes by being **invited to meetings like a colleague**. That requires one
+mailbox in your tenant and one application identity that can read *only that mailbox*. This
+page is the administrator's side of it: about twenty minutes, once, from a terminal.
+
+Every step below was executed against a live tenant before it was written down. The
+`<ANGLE_BRACKET>` values are the only things you change.
+
+## What you are creating
+
+| Object | Why it exists |
+|---|---|
+| A licensed mailbox — e.g. `minutes@<your-domain>` | The address your people invite. Vexa reads its calendar invitations and sends the minutes from it. |
+| An app registration (`vexa-minutes`) | The identity Vexa authenticates as. No user signs in; nothing is stored in a browser session. |
+| Four Graph **application** permissions with admin consent | See the table below. |
+| An **Exchange ApplicationAccessPolicy** | Scopes the app to that one mailbox. Mandatory. |
+| A **Teams ApplicationAccessPolicy** | Lets the app create Teams meetings on that mailbox's behalf. |
+| One client secret | Goes straight from your terminal into the Vexa station's Kubernetes Secret. |
+
+<Warning>
+**The Exchange ApplicationAccessPolicy is not optional.** Graph application permissions are
+tenant-wide by default: without that policy, `Mail.ReadWrite` means *every mailbox in your
+organisation*. With it, the same credential can read exactly one. Skip it and no security
+review will pass — nor should it.
+</Warning>
+
+## 1. The mailbox
+
+Create a normal user with a licence that includes Exchange Online and Microsoft Teams
+(Business Basic is enough). Nothing about it is special except its name.
+
+```bash
+# Microsoft 365 admin center → Users → Active users → Add a user
+# or: az ad user create --display-name "Vexa Minutes" \
+#       --user-principal-name minutes@<YOUR_DOMAIN> --password <SET_AND_DISCARD>
+```
+
+Record two values — you need both later, and they are **not** interchangeable:
+
+```bash
+UPN=minutes@<YOUR_DOMAIN>
+MAILBOX_ID=$(az ad user show --id "$UPN" --query id -o tsv)   # the objectId GUID
+echo "$MAILBOX_ID"
+```
+
+## 2. The app registration
+
+```bash
+az login --tenant <YOUR_TENANT_ID>
+
+APP_ID=$(az ad app create --display-name "vexa-minutes" --query appId -o tsv)
+az ad sp create --id "$APP_ID"
+echo "$APP_ID"
+```
+
+## 3. The four application permissions
+
+These are **application** permissions (app-only, no signed-in user), not delegated ones.
+
+| Permission | What Vexa does with it |
+|---|---|
+| `Mail.ReadWrite` | Reads the invitations that arrive at the Minutes mailbox and marks them handled. |
+| `Mail.Send` | Sends the minutes back from that mailbox, so replies thread naturally. |
+| `Calendars.ReadWrite` | Reads the meeting the invitation refers to, and writes the notetaker's acceptance. |
+| `OnlineMeetings.ReadWrite.All` | Creates and reads the Teams meeting so the notetaker can join. |
+
+The role ids are the same in every tenant, but you never have to trust that — ask Graph:
+
+```bash
+GRAPH=00000003-0000-0000-c000-000000000000
+
+az ad sp show --id $GRAPH --query "appRoles[?value=='Mail.ReadWrite'||value=='Mail.Send'\
+||value=='Calendars.ReadWrite'||value=='OnlineMeetings.ReadWrite.All'].[value,id]" -o tsv
+```
+
+```
+Calendars.ReadWrite            ef54d2bf-783f-4e0f-bca1-3210c0444d99
+Mail.ReadWrite                 e2a3a72e-5f79-4c64-b1b1-878b674786c9
+Mail.Send                      b633e1c5-b582-4048-a93e-9f11b44c7e96
+OnlineMeetings.ReadWrite.All   b8bb2037-6e08-44ac-a4ea-4674e010e2a4
+```
+
+```bash
+az ad app permission add --id "$APP_ID" --api $GRAPH --api-permissions \
+  e2a3a72e-5f79-4c64-b1b1-878b674786c9=Role \
+  b633e1c5-b582-4048-a93e-9f11b44c7e96=Role \
+  ef54d2bf-783f-4e0f-bca1-3210c0444d99=Role \
+  b8bb2037-6e08-44ac-a4ea-4674e010e2a4=Role
+```
+
+Then grant admin consent — a Global Administrator or Privileged Role Administrator must do
+this, and nothing works until it is done:
+
+```bash
+az ad app permission admin-consent --id "$APP_ID"
+```
+
+<Note>
+`az ad app permission grant` is **not** the same thing and is not enough here: it records a
+delegated grant, while application roles require `admin-consent`. If a later call returns
+`Access is denied. Check credentials and try again.`, consent is the first thing to re-check.
+</Note>
+
+## 4. Scope the app to one mailbox — Exchange ApplicationAccessPolicy
+
+Create a mail-enabled security group containing only the Minutes mailbox, then bind the app
+to it. Everything outside the group becomes invisible to that credential.
+
+```powershell
+# PowerShell, from a machine with the ExchangeOnlineManagement module
+Install-Module ExchangeOnlineManagement -Scope CurrentUser   # first time only
+Connect-ExchangeOnline -UserPrincipalName <ADMIN_UPN>
+
+New-DistributionGroup -Name "vexa-minutes-scope" -Type Security `
+  -Members minutes@<YOUR_DOMAIN> -PrimarySmtpAddress vexa-minutes-scope@<YOUR_DOMAIN>
+
+New-ApplicationAccessPolicy -AppId <APP_ID> `
+  -PolicyScopeGroupId vexa-minutes-scope@<YOUR_DOMAIN> `
+  -AccessRight RestrictAccess `
+  -Description "Vexa Minutes — this app may access only the Minutes mailbox"
+```
+
+Verify it — and verify it against a mailbox that should be **denied**, not only the one that
+should be allowed. A policy that grants correctly and restricts nothing looks identical from
+the allowed side:
+
+```powershell
+Test-ApplicationAccessPolicy -Identity minutes@<YOUR_DOMAIN>   -AppId <APP_ID>  # Granted
+Test-ApplicationAccessPolicy -Identity <ANY_OTHER_USER>        -AppId <APP_ID>  # Denied
+```
+
+Policy changes take a few minutes to propagate; a `Denied` that later becomes `Granted` means
+you tested too early.
+
+## 5. Let the app create Teams meetings
+
+Teams gates application-permission meeting creation separately, with its own policy:
+
+```powershell
+Connect-MicrosoftTeams
+
+New-CsApplicationAccessPolicy -Identity vexa-minutes-meetings `
+  -AppIds "<APP_ID>" -Description "Vexa Minutes — create meetings for the Minutes mailbox"
+
+Grant-CsApplicationAccessPolicy -PolicyName vexa-minutes-meetings `
+  -Identity <MAILBOX_ID>          # the objectId GUID from step 1, not the UPN
+```
+
+Allow up to 30 minutes for this one to take effect. Until it does, meeting creation returns
+`Forbidden` even though every permission is consented — a genuinely confusing state, so
+check the clock before you check your work.
+
+## 6. The secret
+
+```bash
+az ad app credential reset --id "$APP_ID" --display-name "vexa-station" \
+  --years 1 --query password -o tsv
+```
+
+<Warning>
+This value is printed once. It goes **from your terminal straight into the station's
+Kubernetes Secret** and travels nowhere else — not through email, not through chat, not to
+Vexa. Nobody at Vexa needs to see it, and nobody at Vexa should be sent it.
+</Warning>
+
+```bash
+kubectl -n vexa create secret generic m365-graph \
+  --from-literal=VEXA_GRAPH_TENANT_ID=<YOUR_TENANT_ID> \
+  --from-literal=VEXA_GRAPH_CLIENT_ID="$APP_ID" \
+  --from-literal=VEXA_GRAPH_CLIENT_SECRET='<PASTE_HERE>' \
+  --from-literal=VEXA_GRAPH_ORGANIZER=minutes@<YOUR_DOMAIN> \
+  --from-literal=VEXA_GRAPH_ORGANIZER_ID="$MAILBOX_ID"
+```
+
+Set a calendar reminder for the expiry. An expired client secret fails as a flat
+`invalid_client` with no warning window.
+
+## 7. Prove it works
+
+Four checks, in order. Each one fails distinctly, which is the point of doing them
+separately.
+
+```bash
+# a. the credential is real and carries the four roles
+TOKEN=$(curl -s -X POST \
+  "https://login.microsoftonline.com/<YOUR_TENANT_ID>/oauth2/v2.0/token" \
+  -d client_id="$APP_ID" -d client_secret='<SECRET>' \
+  -d scope=https://graph.microsoft.com/.default -d grant_type=client_credentials \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+
+# the roles are inside the token itself — decode the payload, do not guess
+python3 - "$TOKEN" <<'PY'
+import base64, json, sys
+p = sys.argv[1].split('.')[1]
+print(json.loads(base64.urlsafe_b64decode(p + '==')).get('roles'))
+PY
+
+# b. the mailbox is readable  → 200
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+  "https://graph.microsoft.com/v1.0/users/$MAILBOX_ID/mailFolders/inbox"
+
+# c. another mailbox is NOT readable → 403 (this is the check that matters)
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+  "https://graph.microsoft.com/v1.0/users/<ANY_OTHER_USER>/mailFolders/inbox"
+
+# d. a Teams meeting can be created → 201
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  "https://graph.microsoft.com/v1.0/users/$MAILBOX_ID/onlineMeetings" \
+  -d '{"startDateTime":"2030-01-01T12:00:00Z","endDateTime":"2030-01-01T12:30:00Z","subject":"scope check"}'
+```
+
+Delete the meeting from check (d) when you are done:
+`DELETE /v1.0/users/$MAILBOX_ID/onlineMeetings/<id>`.
+
+## Gotchas, in the order they bite
+
+<AccordionGroup>
+<Accordion title="onlineMeetings needs the objectId GUID — the UPN gives a misleading error">
+`POST /users/minutes@your-domain/onlineMeetings` fails with a message about the value not
+being a valid GUID or the segment not being found. It reads like a malformed request; it is
+just the wrong identifier. `/users/{objectId}` is required on this endpoint even though the
+UPN works fine on `/users/{upn}/messages`. Keep the GUID from step 1 next to the UPN.
+</Accordion>
+
+<Accordion title="An `az login` is not the app credential">
+Testing while signed in as yourself proves your own admin rights, not the app's. It will
+happily read every mailbox and create every meeting, and tell you nothing about whether the
+ApplicationAccessPolicy works. Always test with a **client-credentials token** as in step 7.
+</Accordion>
+
+<Accordion title="Admin consent is a separate act from adding the permission">
+`az ad app permission add` records a request. Until `admin-consent` runs, the token comes
+back **without** the `roles` claim and every call returns `Access is denied`. Decode the
+token and look at `roles` before debugging anything else.
+</Accordion>
+
+<Accordion title="The Teams policy is not the Exchange policy">
+They are different systems with similarly named cmdlets. Mail works and meetings return
+`Forbidden` → the Teams `New-/Grant-CsApplicationAccessPolicy` step is missing or has not
+propagated yet (up to 30 minutes).
+</Accordion>
+
+<Accordion title="Inviting the mailbox from the mailbox's own account delivers nothing">
+Exchange suppresses self-delivery: if the Minutes mailbox is both organiser and attendee, the
+event is written straight to its calendar and **no invitation is delivered**. When you test
+the flow end to end, invite the Minutes mailbox from a *different* account. An empty inbox
+here is Exchange behaving as designed, not Vexa failing to receive.
+</Accordion>
+
+<Accordion title="Secrets expire silently">
+`az ad app credential reset` defaults to a short lifetime unless you pass `--years`. Expiry
+surfaces as `invalid_client` with no prior warning. Put the date in a calendar.
+</Accordion>
+</AccordionGroup>
+
+## What Vexa can and cannot see
+
+| | |
+|---|---|
+| **Can** | The Minutes mailbox: its mail, its calendar, and the Teams meetings created for it. |
+| **Cannot** | Any other mailbox, calendar, file, Team or channel in your tenant — enforced by the Exchange ApplicationAccessPolicy, verifiable by you at any time with `Test-ApplicationAccessPolicy`. |
+| **Never leaves your boundary** | The client secret. It is created in your terminal and written into your cluster. |
+
+To revoke everything at once, in one command:
+
+```bash
+az ad app delete --id "$APP_ID"
+```

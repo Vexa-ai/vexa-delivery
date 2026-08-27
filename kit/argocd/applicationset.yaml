@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+# The subscription: one Application per customer environment, both consuming
+# the SAME channel's chart at different positions — staging follows the newest
+# published release ("*" over semver), production follows a pin the CUSTOMER
+# moves. Nothing on the vendor side can move it.
+#
+# ${...} placeholders are filled by kit/install.sh; this file is configuration
+# we ship, not an agent — the running software is stock Argo CD.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: vexa-channel-subscription
+  namespace: ${ARGOCD_NAMESPACE}
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - env: enterprise-staging
+            namespace: ${STAGING_NAMESPACE}
+            # newest published chart version = the channel pointer
+            position: "*"
+            automated: "true"
+            # staging's validation: evidence + Vexa's approval, per ITS contract
+            contractCm: vexa-contract-staging
+            requireApproval: ""
+          - env: enterprise-prod
+            namespace: ${PROD_NAMESPACE}
+            # the customer-held pin; moving it is their gate
+            position: "${PROD_PIN}"
+            automated: "false"
+            # prod's validation: all of the above PLUS a named internal
+            # approval of exactly this release, per ITS OWN contract
+            contractCm: vexa-contract-prod
+            requireApproval: "${PROD_PIN}"
+  template:
+    metadata:
+      name: "vexa-{{ .env }}"
+      labels:
+        vexa.ai/channel: ${CHANNEL_NAME}
+        vexa.ai/env: "{{ .env }}"
+    spec:
+      project: default
+      source:
+        repoURL: ${REGISTRY}/vexa/channel/${CHANNEL_NAME}/charts
+        chart: ${CHART_NAME}
+        targetRevision: "{{ .position }}"
+        helm:
+          releaseName: ${RELEASE_NAME}
+          valuesObject:
+${CUSTOMER_VALUES_OBJECT}
+            verify:
+              enabled: ${VERIFY_ENABLED}
+              registry: ${REGISTRY}
+              channel: ${CHANNEL_NAME}
+              image: ${VERIFIER_IMAGE}
+              contractConfigMap: "{{ .contractCm }}"
+              registrySecret: "${VERIFY_REGISTRY_SECRET}"
+              requireApproval: "{{ .requireApproval }}"
+              approvalNamespace: ${ARGOCD_NAMESPACE}
+              insecure: ${VERIFY_INSECURE}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ .namespace }}"
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true   # spike-proven: client-side apply is the
+                                   # legacy mechanism under the ownership bug
+                                   # class; SSA is NOT Argo's default
+      ignoreDifferences:
+        # spike finding: the API server defaults fields into
+        # volumeClaimTemplates that Argo cannot normalise — permanent
+        # OutOfSync with an empty diff without this
+        - group: apps
+          kind: StatefulSet
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+  templatePatch: |
+    {{- if eq .automated "true" }}
+    spec:
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    {{- end }}

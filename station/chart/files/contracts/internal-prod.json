@@ -1,0 +1,8 @@
+{
+  "contract_id": "vexa-internal-prod-2026",
+  "require_publication_mode": "candidate",
+  "require_evidence_kinds": ["candidate_map", "source_provenance", "trusted_root"],
+  "require_attestations": [
+    { "kind": "station-verdict", "station": "vexa-staging" }
+  ]
+}
