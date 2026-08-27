@@ -31,6 +31,22 @@ cloud production.
 The environment stays deterministic end to end: what runs is exactly what was signed, and
 every promotion carries the evidence that justified it.
 
+## Two ways to consume a channel
+
+Same machinery, same kit, same verification on both paths:
+
+- **The open channel (free)** carries Vexa's open-source releases exactly as published —
+  Apache-2.0 images and charts, digest-pinned and signed. Subscribe a cluster and it stays
+  current with upstream; you promote under your own attestation. Community support.
+- **The enterprise channel (subscription)** is a private channel operated per company:
+  releases arrive attestation-complete with the full evidence set (gate reports, station
+  verdicts from real environments), contract-gated against that company's own specification,
+  with a support lane behind it.
+
+The software is identical on both paths and all of it is open source. A subscription buys
+the operated stream and the obligations attached to it — evidence, contract gating,
+support — not software features.
+
 ## What's in the repository
 
 | Path | What it is |

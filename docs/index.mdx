@@ -1,23 +1,40 @@
 ---
-title: "Vexa Enterprise"
+title: "Vexa Delivery"
 ---
 
-Vexa Enterprise is a private release channel that keeps your air-gapped deployment always up
-to date and in compliance with the product specification agreed for your company, guaranteed
-by Vexa.
+Vexa Delivery keeps a self-hosted [Vexa](https://github.com/Vexa-ai/vexa) deployment always
+up to date through a signed channel your cluster pulls from. Nothing reaches in: every image
+is digest-pinned and signed, verified inside your perimeter against keys you pin, and your
+production moves only when you move the pin.
+
+There are two ways to consume a channel. Same machinery, same kit, same verification — the
+difference is what travels through it and the obligations attached.
+
+## The open channel — free
+
+Carries Vexa's open-source releases exactly as published: Apache-2.0 images and charts,
+digest-pinned and signed. Subscribe your cluster and it stays current with upstream —
+staging rolls automatically, you promote to production under your own attestation.
+Community support.
+
+## The enterprise channel — subscription
+
+A private channel operated for your company. Releases arrive attestation-complete, with the
+full evidence set — gate reports and station verdicts from real environments — and no
+release reaches your channel until it has been rendered with your values and matched against
+the contract agreed for your company. A support lane with response commitments sits behind
+it.
+
+The software is identical on both paths, and all of it is open source. The subscription
+buys the operated stream and the obligations attached to it — evidence, contract gating,
+support — not software features.
 
 ## Three moves
 
 1. **Set up a generic environment** — a Kubernetes cluster, an OpenShift namespace, a managed
    cloud. Nothing Vexa-specific.
 2. **Set up the channel** — one pull-only credential, one subscription.
-3. **The software stays up to date** — inside your perimeter, on your schedule, within your
-   specification.
-
-Your cluster pulls; nothing reaches in. Every image is digest-pinned and signed, every release
-carries evidence you can verify offline, and no release reaches your channel until it has been
-rendered with your values and matched against your contract. Your production moves when you
-move the pin.
+3. **The software stays up to date** — inside your perimeter, on your schedule.
 
 Read [how it works](how-it-works), then start at [Install](install). Each
 [environment](environments/kubernetes) page states what it must provide.
