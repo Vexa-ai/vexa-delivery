@@ -3,12 +3,18 @@ title: "Security model"
 description: "What runs where, what leaves your cluster, and what you pin."
 ---
 
-**Nothing reaches in: your cluster pulls, verifies with keys you pin, and promotes to production on your attestation.** One component of ours runs in your cluster: the PreSync [verifier](verify), a shell script on Alpine with cosign, oras and jq. It reads the channel and its own policy, writes nothing, and is Apache-2.0 like everything else. Nothing else of ours executes there, nothing of ours reaches outward, and nothing proprietary runs at all.
+**Nothing reaches in: your cluster pulls, verifies with keys you pin, and promotes to production on your attestation.** Everything of ours that executes there is a readable shell or Python script, Apache-2.0 like the rest, and each one is named below with what switches it on. Nothing proprietary runs at all.
+
+| Ours, in your cluster | On when | What it does |
+|---|---|---|
+| The PreSync [verifier](verify) — a shell script on Alpine with cosign, oras and jq | only with [`--verifier-image`](install#step-3-install); **off** otherwise | reads the channel and its own policy, writes nothing |
+| The **station floor** check, on the station-bundle path | `floor.enabled`, which the chart ships **true**, every 10 minutes | reads Argo Applications, nodes and volumes, and writes one ConfigMap in the argocd namespace with its verdict — the only thing of ours that writes |
+| The **T1 receipt sender** and its cadenced sibling, on the station-bundle path | `receiptSender.enabled`, which the chart ships **false** | the one component of ours that reaches outward, and only to the channel host you already pull from — [what it may carry](telemetry-ladder) |
 
 | Component | Controlled by |
 |---|---|
 | Argo CD, Kyverno — stock upstream, pinned | You: your reconciler, your admission layer |
-| Two admission policy files: digest-pinning, signature verification | You — tighten at will |
+| The admission policy: one file, two ClusterPolicies — digest-pinning, signature verification | You — tighten at will |
 | The subscription: one ApplicationSet, including the production pin | You |
 | Preflight, smoke, validate — readable scripts on your operator's machine | You |
 | The kit — cloned from the public repository, or pulled as a signed artifact and verified against your key before unpacking | You, including when to update |

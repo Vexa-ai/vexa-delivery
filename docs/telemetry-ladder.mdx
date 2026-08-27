@@ -14,7 +14,7 @@ description: "What your side chooses to send back, at which rung, on whose autho
 | **T4 — diagnostics** | scrubbed log and trace bundles. **Never automatic** — exported by your admin, read by you, handed over per incident | on demand |
 
 <Warning>
-**Content is on no rung.** Transcripts and meeting bodies never leave, structurally: [`report.v1`](https://github.com/Vexa-ai/vexa-delivery/blob/main/spec/report.v1.schema.json) sets `additionalProperties: false` on **every** object, so there is no field a transcript could go in. A payload carrying one fails validation on your side, before it is sent.
+**Content is on no rung.** Transcripts and meeting bodies never leave, structurally: [`report.v1`](https://github.com/Vexa-ai/vexa-delivery/blob/main/spec/report.v1.schema.json) sets `additionalProperties: false` on every object but one, so there is no field a transcript could go in. The exception is `usage.tokens_by_model`, an open-keyed map — and its keys are constrained to model-name shape while its **values must be integers**, so it cannot hold a string either. A payload carrying content fails validation on your side, before it is sent.
 </Warning>
 
 Your `contract.yaml` declares the rung, and three independent things hold it:
@@ -36,11 +36,11 @@ report_scope:
   require_redaction_verified: true
 ```
 
-`tier` is deliberately not settable from a values file. A `report_scope` with no `tier` is tier 1; **no `report_scope` at all is a refusal at both ends.** `explicit-command-only` means nothing in the delivered software originates a report — it happens when an operator types `--submit`. Setting `scheduled` is what authorises the in-cluster CronJob: **the station chart renders no CronJob unless your contract says `scheduled`.**
+`tier` is deliberately not settable from a values file. A `report_scope` with no `tier` is tier 1; **no `report_scope` at all is a refusal at both ends.** `explicit-command-only` means nothing in the delivered software originates a report — it happens when an operator types `--submit`. Setting `scheduled` is what authorises the in-cluster CronJob: **the station chart renders no CronJob unless `receiptSender.trigger` is `scheduled`**, and that value is set to mirror your contract. The chart reads its values, not the contract document — so the two must be set together, and the contract is the authority the value is copied from.
 
 ## Sending, per rung
 
-T1 fires from a PostSync hook Job when a sync completes. T2/T3 go by that CronJob, or by hand — the sender's RBAC is `get`/`list` on pods, deployments, cronjobs and jobs plus `get` on one named ConfigMap: no secrets, no exec, no logs, no write.
+T1 fires from a PostSync hook Job when a sync completes. T2/T3 go by that CronJob, or by hand — the sender's RBAC is `get`/`list` on pods, deployments, cronjobs and jobs plus `get` on one named ConfigMap, and `get` on the one named Argo Application it follows, in the argocd namespace. That last one is what gives the receipt its pin and sync status; it defaults on (`receiptSender.readArgoApplication`) and a station that will not grant cross-namespace read sets it `false` and submits with those fields absent rather than invented. No secrets, no exec, no logs, no write.
 
 ```bash
 python3 kit/validate/vexa_validate.py --report --namespace vexa-prod \
