@@ -7,17 +7,22 @@ description: "Nothing running yet: five steps you run yourself, one command each
 
 Your channel's onboarding mail carries three things: the channel **name** (`acme-stable` in the examples below), the channel public key **`channel.pub`**, and your pull-only **credential**, age-encrypted — see [the channel](channel). `channel.pub` is what every signature on this page is checked against; keep it, and pin it.
 
-## Step 1 — Bootstrap the kit
-
-`bootstrap.sh` is the one file here that arrives without a signature to check it — so fetch it, read it, then run it. It is about a hundred lines and it does one thing: pull the kit from the registry and verify it against your key.
+## Step 1 — Get the kit
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/Vexa-ai/vexa-delivery/main/kit/bootstrap.sh
-less bootstrap.sh
-bash bootstrap.sh --registry channel.vexa.ai --channel acme-stable --pubkey channel.pub
+git clone https://github.com/Vexa-ai/vexa-delivery
+cd vexa-delivery
 ```
 
-Replace `acme-stable` with the channel name in your onboarding mail. The tag resolves to a digest and the kit signature is checked against `channel.pub` before anything unpacks; a bad signature writes nothing to disk. Also: `--version vX.Y.Z` (default `latest`), `--dest` (default `./vexa-kit`), `--keep-tarball`.
+That is the whole kit — read it before you run it. Every command below is relative to this directory.
+
+**For a signature-verified kit instead**, pinned to the version your channel expects and checked against your key before a byte lands on disk — the path for air-gapped and high-assurance clusters:
+
+```bash
+bash kit/bootstrap.sh --registry channel.vexa.ai --channel acme-stable --pubkey channel.pub
+```
+
+Replace `acme-stable` with the channel name in your onboarding mail. A bad signature writes nothing to disk. The kit unpacks to `./vexa-kit`, so read `vexa-kit/...` for `kit/...` in the steps below. Also: `--version vX.Y.Z` (default `latest`), `--dest`, `--keep-tarball`.
 
 ## Step 2 — Preflight
 
