@@ -472,7 +472,13 @@ def _owner_of(pod):
     """
     for ref in ((pod.get("metadata") or {}).get("ownerReferences") or []):
         name, kind = ref.get("name") or "", ref.get("kind")
-        if kind in ("ReplicaSet", "Job"):
+        if kind == "Job":
+            # A per-meeting bot Job is NAMED after the meeting, and stripping the
+            # last segment still leaves most of that id in the document. A meeting
+            # id is the one thing this report will not carry, so a Job-owned pod is
+            # grouped as unowned: its image is still reported, its name never is.
+            return None
+        if kind == "ReplicaSet":
             return name.rsplit("-", 1)[0] if "-" in name else name
         if kind in ("StatefulSet", "DaemonSet"):
             return name
