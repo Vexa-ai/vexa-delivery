@@ -3,7 +3,7 @@ title: "ADR-0009 — The repository goes public"
 description: "The visibility decision ADR-0008 explicitly deferred: public, whole repository, on a fresh history."
 ---
 
-**Status:** PROPOSED · **Decision owner:** founder · **Amends:**
+**Status:** ACCEPTED (founder, 2026-08-27) — executed as a FRESH REPOSITORY rather than a visibility flip · **Amends:**
 [ADR-0008](/adr/0008-repository-apache-2) decisions 3 and consequence
 "Public vs private visibility remains open"
 
@@ -79,3 +79,12 @@ coordinates at HEAD, and 120 of 160 commits without DCO sign-off.
 - **Links to private counterpart repositories** (`vexa-stations`,
   `vexa-platform`, the business workspace) are annotated "(private)" so a
   public reader knows the 404 is expected, not broken.
+
+## Amendment at acceptance (2026-08-27)
+
+Executed as a **fresh repository**, not a visibility flip of the original. A full
+metadata scan found customer tokens across 22+ issue/PR bodies and their comments —
+surfaces a visibility flip would publish and history rewriting cannot reach. The
+original repository was renamed `vexa-delivery-internal` and **stays private
+permanently** (issues, PRs, comments, ops history). This repository begins at the
+scrubbed, signed-off root commit and is the public home from its first commit.
