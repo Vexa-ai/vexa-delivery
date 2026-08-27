@@ -8,7 +8,7 @@
 # disk — that ordering is the whole security property, so keep it.
 #
 #   curl -fsSL <url>/bootstrap.sh | bash -s -- \
-#     --registry <host[:port]> --channel enterprise-stable --pubkey channel.pub
+#     --registry <host[:port]> --channel acme-stable --pubkey channel.pub
 #
 # Deliberately self-contained: it sources nothing from the kit it is about to
 # fetch, because at the time it runs there is no kit. kit/self-update.sh is the
@@ -23,7 +23,7 @@ usage: bootstrap.sh --registry <host[:port]> --channel <name> --pubkey <channel.
 
 required
   --registry     channel registry host[:port]
-  --channel      channel name, e.g. enterprise-stable
+  --channel      channel name, e.g. acme-stable
   --pubkey       cosign public key of the channel; the kit signature is checked
                  against THIS key and nothing else
 

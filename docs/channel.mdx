@@ -20,7 +20,7 @@ One **pull-only** account scoped to your channel, minted, rotated and revoked wi
 ```bash
 age -d -i ~/.ssh/id_ed25519 channel-credential.age
 oras login channel.vexa.ai -u <your-account> --password-stdin
-oras pull channel.vexa.ai/vexa/channel/<your-channel>:current -o entry/
+oras pull channel.vexa.ai/vexa/channel/acme-stable:current -o entry/
 ```
 
 Then [verify](verify) before anything runs.

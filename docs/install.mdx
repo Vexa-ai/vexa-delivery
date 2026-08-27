@@ -3,16 +3,21 @@ title: "Install"
 description: "Nothing running yet: five steps you run yourself, one command each — or one command for all of them."
 ---
 
-**Nothing running yet? Five steps from a kit you verify with your own key, and after them the software stays current on its own.** (Already running Vexa? [Upgrade](upgrade) is your door.) By mail you get your pull-only **channel credential** (age-encrypted — see [the channel](channel)), the channel public key **`channel.pub`**, and your bootstrap parameters: registry path, channel name, pinned kit version.
+**Nothing running yet? Five steps from a kit you verify with your own key, and after them the software stays current on its own.** (Already running Vexa? [Upgrade](upgrade) is your door.)
+
+Your channel's onboarding mail carries three things: the channel **name** (`acme-stable` in the examples below), the channel public key **`channel.pub`**, and your pull-only **credential**, age-encrypted — see [the channel](channel). `channel.pub` is what every signature on this page is checked against; keep it, and pin it.
 
 ## Step 1 — Bootstrap the kit
 
+`bootstrap.sh` is the one file here that arrives without a signature to check it — so fetch it, read it, then run it. It is about a hundred lines and it does one thing: pull the kit from the registry and verify it against your key.
+
 ```bash
-curl -fsSL <bootstrap-url> | bash -s -- \
-  --registry channel.vexa.ai --channel <your-channel> --pubkey channel.pub
+curl -fsSLO https://raw.githubusercontent.com/Vexa-ai/vexa-delivery/main/kit/bootstrap.sh
+less bootstrap.sh
+bash bootstrap.sh --registry channel.vexa.ai --channel acme-stable --pubkey channel.pub
 ```
 
-The tag resolves to a digest and the signature is checked against your key before anything unpacks; a bad signature writes nothing to disk. Also: `--version vX.Y.Z` (default `latest`), `--dest` (default `./vexa-kit`), `--keep-tarball`.
+Replace `acme-stable` with the channel name in your onboarding mail. The tag resolves to a digest and the kit signature is checked against `channel.pub` before anything unpacks; a bad signature writes nothing to disk. Also: `--version vX.Y.Z` (default `latest`), `--dest` (default `./vexa-kit`), `--keep-tarball`.
 
 ## Step 2 — Preflight
 
@@ -26,7 +31,7 @@ Nine checks, fails closed, every finding names its remedy. See [Preflight](prefl
 
 ```bash
 ./kit/install.sh --provider <aws-eks|azure-aks|gcp-gke|generic|lke|openshift> \
-  --registry channel.vexa.ai --channel <your-channel> \
+  --registry channel.vexa.ai --channel acme-stable \
   --channel-pubkey channel.pub --customer-values my-values.yaml
 ```
 
