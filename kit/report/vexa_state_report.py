@@ -277,6 +277,36 @@ def _long(value):
     return isinstance(value, str) and len(value) > FOLD_OVER and "\n" not in value
 
 
+def _verbatim(value):
+    return isinstance(value, str) and "\n" in value
+
+
+def _block(prefix, text, indent):
+    """A LITERAL block scalar — the only honest way to carry a receipt whole.
+
+    A multi-line string quoted inline is not a document a person can read, and
+    at some indentations it is not even parseable. `|` keeps the lines exactly
+    as they are, and YAML hands back the identical string on load, so a receipt
+    pasted into this file is still the receipt.
+
+    Two details that are not decoration. The chomping indicator records whether
+    the text ended in a newline, so a round trip is byte-exact rather than
+    nearly. And a first line that begins with a space needs an EXPLICIT
+    indentation indicator (`|2`), because YAML would otherwise read that space
+    as the block's own indentation and silently eat one from every line.
+    """
+    body = text.split("\n")
+    if body and body[-1] == "":
+        body.pop()                                  # trailing newline: clip it
+        head = "|"
+    else:
+        head = "|-"
+    if body and body[0][:1] == " ":
+        head = head[0] + "2" + head[1:]
+    pad = " " * (indent + 2)
+    return ["%s %s" % (prefix, head)] + [(pad + line) if line else "" for line in body]
+
+
 def _yaml(value, indent=0):
     """Emit a value. Empty containers stay inline so a gap reads as a gap."""
     pad = " " * indent
@@ -291,6 +321,8 @@ def _yaml(value, indent=0):
                 lines += _yaml(v, indent + 2)
             elif isinstance(v, (dict, list)):
                 lines.append("%s: %s" % (key, "{}" if isinstance(v, dict) else "[]"))
+            elif _verbatim(v):
+                lines += _block(key + ":", v, indent)
             elif _long(v):
                 lines += _fold(key + ":", v, indent)
             else:
@@ -305,6 +337,8 @@ def _yaml(value, indent=0):
                 lines += block[1:]
             elif isinstance(item, (dict, list)):
                 lines.append("%s- %s" % (pad, "{}" if isinstance(item, dict) else "[]"))
+            elif _verbatim(item):
+                lines += _block("%s-" % pad, item, indent)
             elif _long(item):
                 lines += _fold("%s-" % pad, item, indent)
             else:

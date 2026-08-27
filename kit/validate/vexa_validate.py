@@ -6,22 +6,51 @@ to "here is my signed-off evidence, and here is my contribution back".
 It chains the two tools that already exist and adds the thing neither produces:
 a portable, secret-free record of the station as it actually stands.
 
-    preflight  (will it run here)      -> preflight-receipt.txt
-    install    (optional, --install)   -> install-log.txt
-    smoke      (did it work here)      -> smoke-receipt-<ts>.md
-    bundle                             -> station.tar.gz
+    preflight  (will it run here)      -> the preflight verdict, verbatim
+    install    (optional, --install)   -> the install log
+    smoke      (did it work here)      -> the smoke verdict and its console
+    report                             -> station-report.yaml
 
-`station.tar.gz` is what the operator sends back to Vexa. It carries the
-provider profile, their values file with every secret-looking value replaced by
-REDACTED, the contract the environment verifies against, both receipts, and
-station.json (date, kit revision, Kubernetes server version, provider,
-namespaces, phase verdicts). It carries no credentials — and `--verify-redaction`
-(on by default) refuses to finish if any plaintext value that redaction removed
-still appears anywhere in the archive that was actually written.
+ONE FILE, AND THAT IS THE DESIGN. `station-report.yaml`. Not a directory, not
+an archive, nothing to extract. The person who has to approve this before it
+leaves their perimeter must read ALL of it, and six files in a tarball is a
+review task where one commented document is a read. This one goes back on
+every release rather than once, so the cost of a document nobody reads
+compounds. YAML because the reader is a Kubernetes engineer who reads it all
+day, and because it carries comments — so the explanation of each section sits
+above the section instead of in a second document that can drift from it.
+
+WHAT IS IN IT, and the list is complete:
+
+  1. PROFILE       the provider profile this run used, verbatim — substrate
+                   facts (k8s version, storage class, PSA mode, mirror host),
+                   never credentials
+  2. VALUES        the operator's own values file, structurally intact, with
+                   every secret-looking value replaced by REDACTED. The SHAPE
+                   is the contribution
+  3. CONTRACT      the contract this environment verifies against, verbatim,
+                   beside its id and sha256 — the document states the policy
+                   it was produced under
+  4. PREFLIGHT     the P-check receipt, verbatim
+  5. SMOKE         the smoke receipt, and the raw console TAIL — evidence of a
+                   crash is still evidence, and it is the half a receipt never
+                   gets to write
+  6. THE MANIFEST  station identity, section digests, kit revision, phase
+                   verdicts and the redaction verdict, as top-level keys
+
+It carries no credentials, and `--verify-redaction` (on by default) refuses to
+finish if any plaintext value that redaction removed still appears anywhere in
+the finished file — the check reads the bytes that would be sent, not the
+values we believe we assembled.
+
+ABSENT OVER ZERO. A section that could not be produced is recorded as absent
+with a reason, never as an empty string: an empty receipt in a document whose
+whole purpose is to say what happened is worse than a stated gap.
 
 Naming note: the *station bundle* on the channel (ADR-0007) is the machinery
-chart Vexa publishes. This archive is the return leg — the operator's station
-record travelling the other way. Different direction, different artifact.
+chart Vexa publishes INTO a cluster. `station-report.yaml` is the return leg —
+the operator's station record travelling the other way. Different direction,
+different artifact, and now different words for each.
 
 Run on the operator's machine with kubectl access:
 
@@ -31,7 +60,7 @@ Run on the operator's machine with kubectl access:
         --flows [--meeting-url URL | --non-interactive]
 
 Exit codes: 0 all phases passed · 1 a phase failed · 2 usage · 3 redaction leak
-(the bundle is kept for inspection but must not be sent).
+(the file is kept so it can be inspected, and it must not be sent).
 """
 from __future__ import annotations
 
@@ -45,12 +74,13 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 KIT = HERE.parent
 REPO = KIT.parent
+
+OUTPUT_NAME = "station-report.yaml"
 
 # Keys whose values never leave the customer's perimeter. Deliberately blunt:
 # a false positive costs one redacted line of configuration, a false negative
@@ -60,6 +90,14 @@ REDACTED = "REDACTED"
 # Below this length a "secret" is more likely to collide with ordinary text than
 # to be a credential; scanning for it would produce noise, not safety.
 MIN_LEAK_SCAN_LEN = 6
+
+# A console is the one section with no natural end, and an operator asked to
+# read a document before sending it will not read four thousand lines of one.
+# The TAIL is what a failure says why in, so the tail is what is kept — with
+# the count in the document, because a silent trim is a lie about what
+# happened. The full console is written beside the report, locally, and never
+# travels: see `trim_console`.
+CONSOLE_TAIL_LINES = 200
 
 
 # ── redaction ───────────────────────────────────────────────────────────────
@@ -95,18 +133,312 @@ def redact(node, key_matched: bool = False, removed: set | None = None):
     return node
 
 
-def scan_for_leaks(root: pathlib.Path, secrets: set) -> list:
-    """Return [(relative path, index of the leaked secret)] — never the value."""
-    hits = []
+def scan_text_for_leaks(text: str, secrets: set) -> list:
+    """Return the INDEX of each withheld value that survived — never the value.
+
+    Naming the value in the failure message would put the credential into a
+    terminal, a CI log and a screenshot, which is the thing this file exists to
+    avoid. The scan runs on the rendered document, so what is checked is what
+    would actually be written rather than what we believe we assembled — the
+    same property the archive got by being re-extracted and scanned, now free.
+    """
     candidates = sorted(s for s in secrets if len(s) >= MIN_LEAK_SCAN_LEN)
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
+    return [i for i, secret in enumerate(candidates) if secret in text]
+
+
+# ── sections ────────────────────────────────────────────────────────────────
+#
+# Each section is one verbatim document that used to be one file in the
+# archive. It lands under its own top-level key as a YAML block scalar, and
+# `sections:` at the foot of the document carries its digest — the manifest
+# facts survive the change of shape, they are just over sections now.
+
+def normalise(text: str) -> str:
+    """CRLF to LF, no trailing whitespace, exactly one final newline.
+
+    So that the digest is over WHAT A READER SEES, and so that a YAML round
+    trip cannot change it: a block scalar preserves lines exactly, and the one
+    thing that could differ between what we hash and what a reader parses back
+    is whitespace nobody can see. Normalising once, before hashing, removes the
+    question rather than answering it.
+    """
+    lines = [line.rstrip() for line in
+             (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n" if lines else ""
+
+
+def digest_of(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def trim_console(text: str, keep: int = CONSOLE_TAIL_LINES):
+    """Keep the tail of a console, and SAY SO. Returns (text, note, dropped).
+
+    A console has no natural length. Including all of it makes a document
+    nobody reads; dropping it makes a document that cannot explain a crash.
+    The tail is the compromise the evidence supports — a run that died says why
+    in its last lines — and the count of what was dropped travels with it so
+    the trim is never something a reader has to notice on their own.
+    """
+    lines = normalise(text).split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    if len(lines) <= keep:
+        return normalise(text), None, 0
+    dropped = len(lines) - keep
+    note = ("the last %d of %d lines. A console has no natural length and this "
+            "document is meant to be read end to end; a run that fails says why "
+            "in its last lines, so the tail is what is kept. The full console "
+            "was written beside this file, on your disk, and is not part of "
+            "what leaves." % (keep, len(lines)))
+    return "\n".join(lines[-keep:]) + "\n", note, dropped
+
+
+# ── the document ────────────────────────────────────────────────────────────
+#
+# ONE STYLE, ONE WRITER. The YAML writer and the comment wrapper are IMPORTED
+# from kit/report/vexa_state_report.py rather than copied. The state report and
+# this one land on the same desk, in front of the same person, and a reader who
+# has learned to read one has learned to read both. Two implementations of one
+# format drift within a week — the fold width, the quoting rule, how a gap is
+# spelt — and the drift is invisible because both still parse.
+#
+# It is a hard dependency, deliberately: the kit ships as one tree, and half a
+# kit should fail loudly at import rather than silently render a second style.
+
+sys.path.insert(0, str(KIT / "report"))
+from vexa_state_report import _yaml, comment  # noqa: E402
+
+TOOL = "vexa-validate"
+TOOL_VERSION = "0.2.0"
+
+# The keys that identify this run, emitted first and without individual
+# comments: a reader takes them in as one block, and the header above them has
+# already said what the document is.
+HEAD_KEYS = ("schema_version", "bundle_kind", "tier", "station", "generated_at",
+             "generator", "kit", "kubernetes", "provider", "namespaces", "tiers")
+
+# Everything else, in the order it is read, with the comment that goes above
+# it. The prose lives HERE, beside the key it describes, so a section and its
+# explanation move together — which is the whole reason this file is YAML.
+DOCUMENT = (
+    ("contract", """
+THE CONTRACT THIS RUN WAS JUDGED AGAINST — id and sha256. The document itself
+is below under `contract_document`; the sha256 is over that text, so the
+identity can be recomputed from what you can see rather than from a file you
+were told about.
+"""),
+    ("phases", """
+WHAT RAN, AND WHAT IT DECIDED. Verdicts and exit codes. The receipts these
+verdicts came from are below, verbatim — nothing here summarises them.
+"""),
+    ("profile", """
+1 · THE PROVIDER PROFILE this run used, verbatim. Substrate facts: provider,
+Kubernetes version, scope, storage class, PSA mode, mirror host. Never
+credentials. If it says PROFILE_TESTED=no, this is the section worth sending
+back filled in — it is the highest-value part of the contribution.
+"""),
+    ("values", """
+2 · YOUR VALUES FILE, structurally intact, with every secret-looking value
+replaced by REDACTED — keys matching password|token|secret|key|apikey, and
+everything nested beneath them. THE SHAPE IS THE CONTRIBUTION: what we need is
+which knobs you turned, never what you turned them to. An empty value stays
+empty, because "not set" is configuration and not a secret.
+"""),
+    ("contract_document", """
+3 · THE CONTRACT, verbatim — the policy this run was produced under, carried
+beside the evidence rather than referenced from it. Its `report_scope` is the
+clause that bounds what may leave this perimeter, and `--submit` checks this
+document against it before a byte moves.
+"""),
+    ("preflight_receipt", """
+4 · THE PREFLIGHT RECEIPT, verbatim — will this cluster run what the channel
+delivers. Every finding names its own remedy.
+"""),
+    ("install_log", """
+4b · THE INSTALL LOG, present only when --install ran. A console, so only its
+tail is kept when it is long; the line count is recorded below.
+"""),
+    ("smoke_receipt", """
+5 · THE SMOKE RECEIPT, verbatim — did what was delivered actually work here.
+Chart revision, image digests, segment count.
+"""),
+    ("smoke_console", """
+5b · THE SMOKE RUN'S CONSOLE. Kept because if smoke dies before writing its
+receipt, the console is the only evidence of why, and evidence of a crash is
+still evidence. Trimmed to its tail when long — the trim is stated below,
+never silent.
+"""),
+    ("release", """
+T1 · WHAT IS RUNNING HERE — the Argo Application, the position it follows, the
+channel entry that position resolves to, and the PreSync verifier's verdict.
+Identifiers and digests; there is no field here that could hold a workload's
+data.
+"""),
+    ("health", """
+T2 · AGGREGATE COUNTERS over the workloads this subscription manages. Integers
+and ratios, no identities, no logs. A counter that could not be collected is
+listed as absent with a reason rather than reported as zero.
+"""),
+    ("usage", """
+T3 · VOLUME AND ACTIVATION AGGREGATES, pseudonymous — counts, never identities.
+Shipped as an interface with no implementation: nothing in this kit can produce
+these numbers yet, so they arrive absent with a reason. Absent over faked.
+"""),
+    ("sections", """
+THE MANIFEST — every verbatim section above, with the sha256 of its text and
+its length. This is what makes the document checkable rather than merely
+readable: the ingest recomputes each digest from the text it parsed, and a
+section edited in transit is a refusal rather than a surprise later. Digests
+are over the NORMALISED text (LF line endings, no trailing whitespace, one
+final newline), which is exactly what is written below.
+"""),
+    ("absent", """
+WHAT IS NOT HERE, AND WHY. Recorded rather than defaulted to an empty string: a
+receipt that is blank because nothing ran and a receipt that is blank because a
+phase produced nothing look identical, and only one of them is fine. An empty
+list here means every section was produced.
+"""),
+    ("refuses", """
+WHAT THE TOOL REFUSES, each enforced by code rather than by intent. This one
+CAN transmit — that is what --submit is — so the refusals say what bounds the
+transmission rather than pretending there is none.
+"""),
+    ("redaction", """
+THE REDACTION SELF-CHECK. `values_redacted` counts the plaintext values that
+were removed from your values file. The finished document is then scanned for
+every one of them; `verified: true` means none survived. A survivor exits 3,
+names the count and never the value, and the file is kept so you can inspect
+it — but it must not be sent.
+"""),
+)
+
+SECTION_KEYS = ("profile", "values", "contract_document", "preflight_receipt",
+                "install_log", "smoke_receipt", "smoke_console")
+
+HEADER = """
+%s %s — this station, as it actually stands.
+
+WHAT THIS IS. One file: the provider profile, your values with every secret
+removed, the contract this run was judged against, and the preflight and smoke
+receipts — each verbatim, each with the digest of its own text at the foot of
+the document.
+
+ONE FILE, AND THAT IS THE DESIGN. Not a directory, not an archive, nothing to
+extract. You have to read all of it before any of it leaves, and six files in a
+tarball is a review task where one commented document is a read.
+
+WHAT IS NOT IN IT. No credentials: every value under a key matching
+password|token|secret|key|apikey is REDACTED, and the finished file is scanned
+for what was removed. No meeting content, no transcripts, no participants, no
+schema and no rows — report.v1 sets additionalProperties:false on every object,
+so there is nowhere in this document to put one.
+
+IT HAS NOT BEEN SENT ANYWHERE. Writing it sends nothing. `--submit` sends it,
+to the channel host you already pull from, with your own credential, after
+checking it against your contract's report_scope. Read it first. That is what
+it is for.
+"""
+
+REFUSES = [
+    "send on its own: nothing here transmits until an operator types --submit; "
+    "there is no timer and no hook in this tool",
+    "send anywhere else: one destination, and it is the channel host you already "
+    "pull from — report_scope.destination in your own contract",
+    "send above your rung: this document is validated against report.v1 and against "
+    "your contract's report_scope before a byte moves",
+    "carry a credential: values under keys matching password|token|secret|key|apikey "
+    "are REDACTED, and the finished file is scanned for every one removed",
+    "carry your content: report.v1 has no field for a transcript, a meeting title, a "
+    "participant or a log line, at any tier",
+]
+
+
+def render_yaml(report: dict) -> str:
+    """The whole document: header comment, then one commented block per key."""
+    lines = comment(HEADER.strip("\n") % (TOOL, TOOL_VERSION)) + [""]
+    lines += _yaml({k: report[k] for k in HEAD_KEYS if k in report})
+    for key, note in DOCUMENT:
+        if report.get(key) is None:
             continue
-        blob = path.read_bytes()
-        for i, secret in enumerate(candidates):
-            if secret.encode() in blob:
-                hits.append((str(path.relative_to(root)), i))
-    return hits
+        value = report[key]
+        lines += ["", ""] + comment(note)
+        if isinstance(value, (dict, list)) and value:
+            lines += ["%s:" % key] + _yaml(value, 2)
+        else:
+            lines += _yaml({key: value})
+    return "\n".join(lines) + "\n"
+
+
+class Doc:
+    """The document under construction, and the two things a phase may add.
+
+    `absent` is the same discipline the state report enforces: a section that
+    could not be produced is named with a reason in one central place, so there
+    is one list to read rather than a blank field to interpret.
+    """
+
+    def __init__(self):
+        self.sections: dict = {}
+        self.manifest: list = []
+        self.gaps: list = []
+        # A console that was trimmed is kept whole HERE, and the caller writes
+        # it beside the report on the operator's own disk. It never travels:
+        # the point of the trim is that the document stays readable, not that
+        # the evidence stops existing.
+        self.overflow: dict = {}
+
+    def add(self, name: str, text: str, note: str | None = None,
+            source_lines: int | None = None) -> None:
+        text = normalise(text)
+        if not text:
+            return self.absent(name, "produced nothing")
+        self.sections[name] = text
+        row = {"name": name, "sha256": digest_of(text),
+               "lines": len(text.rstrip("\n").split("\n"))}
+        if source_lines is not None:
+            row["source_lines"] = source_lines
+        if note:
+            row["note"] = note
+        self.manifest.append(row)
+
+    def add_console(self, name: str, text: str) -> None:
+        kept, note, dropped = trim_console(text)
+        if dropped:
+            self.overflow[name] = normalise(text)
+        self.add(name, kept, note=note,
+                 source_lines=(len(kept.rstrip("\n").split("\n")) + dropped
+                               if dropped else None))
+
+    def absent(self, name: str, reason: str) -> None:
+        self.gaps.append({"what": name, "reason": reason})
+
+
+def write_report(report: dict, out_dir: pathlib.Path, verify: bool,
+                 secrets: set) -> tuple:
+    """Render, self-check, render again, write. Returns (path, text, leaks).
+
+    VERIFY THE DOCUMENT, NOT THE INTENTION. The scan runs on the rendered text,
+    so what is checked is exactly the bytes that would be written — and then the
+    verdict goes back into the document and it is rendered again, which is why
+    this happens twice. The archive got this property by being re-extracted and
+    scanned; one file gets it for free.
+    """
+    if not verify:
+        report["redaction"]["verified"] = False
+        report["redaction"]["note"] = "--no-verify-redaction: NOT checked"
+        leaks = []
+    else:
+        leaks = scan_text_for_leaks(render_yaml(report), secrets)
+        report["redaction"]["verified"] = not leaks
+        report["redaction"]["leaks"] = len(leaks)
+    text = render_yaml(report)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / OUTPUT_NAME
+    path.write_text(text)
+    return path, text, leaks
 
 
 # ── plumbing ────────────────────────────────────────────────────────────────
@@ -127,10 +459,6 @@ def run(cmd: list, log: pathlib.Path | None = None, cwd: pathlib.Path | None = N
 def verdict_of(output: str, default: str) -> str:
     m = re.findall(r"VERDICT:\s*\**\s*(PASS|FAIL)", output)
     return m[-1] if m else default
-
-
-def sha256_of(path: pathlib.Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def kube_server_version(kubeconfig: str | None) -> str | None:
@@ -194,7 +522,7 @@ def station_chart_version() -> str | None:
 
 # ── phases ──────────────────────────────────────────────────────────────────
 
-def phase_preflight(a, bundle: pathlib.Path) -> dict:
+def phase_preflight(a, work: pathlib.Path) -> dict:
     print("\n== 1/3 preflight — will this cluster run what the channel delivers?")
     cmd = [sys.executable, str(KIT / "preflight" / "vexa_preflight.py"),
            "--namespace", a.namespace]
@@ -206,12 +534,12 @@ def phase_preflight(a, bundle: pathlib.Path) -> dict:
         cmd += ["--live-probes"]
     if a.registry:
         cmd += ["--registry-host", a.registry]
-    code, out = run(cmd, log=bundle / "preflight-receipt.txt")
+    code, out = run(cmd, log=work / "preflight-receipt.txt")
     return {"verdict": verdict_of(out, "FAIL" if code else "PASS"), "exit_code": code,
             "receipt": "preflight-receipt.txt"}
 
 
-def phase_install(a, bundle: pathlib.Path) -> dict:
+def phase_install(a, work: pathlib.Path) -> dict:
     if not a.install:
         print("\n== 2/3 install — skipped (already installed; pass --install to run it)")
         return {"skipped": True, "reason": "not requested (--install)"}
@@ -222,19 +550,19 @@ def phase_install(a, bundle: pathlib.Path) -> dict:
            "--customer-values", a.customer_values,
            "--staging-ns", a.namespace,
            # preflight already ran above; running it twice would only make the
-           # log longer, and its findings are already in the bundle.
+           # log longer, and its findings are already in the report.
            "--skip-preflight"]
     if a.kubeconfig:
         cmd += ["--kubeconfig", a.kubeconfig]
     if a.contract:
         cmd += ["--contract", a.contract]
     cmd += a.install_arg
-    code, _ = run(cmd, log=bundle / "install-log.txt")
+    code, _ = run(cmd, log=work / "install-log.txt")
     return {"skipped": False, "exit_code": code, "log": "install-log.txt",
             "channel": a.channel, "registry": a.registry}
 
 
-def phase_smoke(a, bundle: pathlib.Path) -> dict:
+def phase_smoke(a, work: pathlib.Path) -> dict:
     print("\n== 3/3 smoke — did what was delivered actually work here?")
     cmd = [sys.executable, str(KIT / "smoke" / "vexa_smoke.py"),
            "--namespace", a.namespace, "--customer-values", a.customer_values]
@@ -255,69 +583,83 @@ def phase_smoke(a, bundle: pathlib.Path) -> dict:
     if a.non_interactive:
         cmd += ["--non-interactive"]
     cmd += ["--admit-timeout", str(a.admit_timeout), "--min-segments", str(a.min_segments)]
-    # Run inside the bundle so the dated receipt lands where it belongs, and keep
-    # the console too: if smoke dies before writing its receipt, the console is
-    # the only evidence of why, and evidence of a crash is still evidence.
-    code, out = run(cmd, cwd=bundle, log=bundle / "smoke-console.txt")
-    receipts = sorted(p.name for p in bundle.glob("smoke-receipt-*.md"))
+    # Run inside the scratch directory so the dated receipt lands somewhere
+    # known, and keep the console too: if smoke dies before writing its receipt,
+    # the console is the only evidence of why, and a crash is still evidence.
+    code, out = run(cmd, cwd=work, log=work / "smoke-console.txt")
+    receipts = sorted(p.name for p in work.glob("smoke-receipt-*.md"))
     return {"verdict": verdict_of(out, "FAIL" if code else "PASS"), "exit_code": code,
             "receipt": receipts[-1] if receipts else None}
 
 
-# ── bundle ──────────────────────────────────────────────────────────────────
+# ── the sections that used to be files ──────────────────────────────────────
 
-def write_profile(a, bundle: pathlib.Path) -> dict:
-    """Copy the provider profile actually used, or say honestly that there was none."""
-    dest = bundle / "profile.env"
+def profile_section(a) -> tuple:
+    """The provider profile actually used, or an honest stub saying there was none.
+
+    Returns (text, meta). The stub is not filler: `PROFILE_TESTED=no` is the
+    line the whole contribution loop exists to turn into a date, and a silent
+    empty section would lose the ask.
+    """
     if a.provider:
         src = KIT / "providers" / a.provider / "profile.env"
         if src.exists():
-            shutil.copyfile(src, dest)
             tested = None
             for line in src.read_text().splitlines():
                 if line.startswith("PROFILE_TESTED="):
                     tested = line.split("=", 1)[1].strip().strip('"\'')
-            return {"name": a.provider, "profile_env_present": True, "profile_tested": tested}
-    dest.write_text(
+            return normalise(src.read_text()), {
+                "name": a.provider, "profile_env_present": True,
+                "profile_tested": tested}
+    text = (
         "# No provider profile was used for this run.\n"
         f"# provider requested: {a.provider or '(none)'}\n"
         f"# looked for: kit/providers/{a.provider or '<name>'}/profile.env\n"
         "# The cluster was validated against ambient kubectl credentials. If your\n"
         "# platform needs a profile (namespaces, pinned versions, node baseline),\n"
-        "# this is the file to send back filled in — it is the highest-value part\n"
-        "# of the contribution.\n"
+        "# this is the section to send back filled in — it is the highest-value\n"
+        "# part of the contribution.\n"
         f"PROVIDER={a.provider or 'unspecified'}\n"
         "PROFILE_TESTED=no\n")
-    return {"name": a.provider or "unspecified", "profile_env_present": False,
-            "profile_tested": None}
+    return normalise(text), {"name": a.provider or "unspecified",
+                             "profile_env_present": False, "profile_tested": None}
 
 
-def write_contract(a, bundle: pathlib.Path) -> dict:
+def contract_section(a) -> tuple:
+    """The contract, verbatim, beside its identity.
+
+    The document states the policy it was produced under, in the same file as
+    the evidence produced under it — which is the whole reason the contract
+    travelled in the archive too. Its sha256 is over the normalised text that
+    appears below it, so a reader can recompute the identity from what they can
+    see rather than from a file they were told about.
+    """
     src = pathlib.Path(a.contract) if a.contract else KIT / "verify" / "policy.example.yaml"
-    dest = bundle / "contract.yaml"
-    shutil.copyfile(src, dest)
+    text = normalise(src.read_text())
     contract_id = None
     try:
         import yaml
-        contract_id = (yaml.safe_load(dest.read_text()) or {}).get("contract_id")
+        contract_id = (yaml.safe_load(text) or {}).get("contract_id")
     except Exception:
         pass
     # the file's name and hash identify the contract; its path on the operator's
     # laptop is nobody's business and would only date the record
-    return {"source": src.name, "kit_default": not bool(a.contract),
-            "contract_id": contract_id, "sha256": sha256_of(dest)}
+    return text, {"source": src.name, "kit_default": not bool(a.contract),
+                  "contract_id": contract_id, "sha256": digest_of(text)}
 
 
-def write_values(a, bundle: pathlib.Path) -> set:
+def values_section(a) -> tuple:
+    """The operator's values file, structure intact, values gone.
+
+    Returns (text, the set of plaintext values removed). That set is what the
+    redaction self-check scans the finished document for, which is what makes
+    the promise checkable rather than merely stated.
+    """
     import yaml
     removed: set = set()
     values = yaml.safe_load(pathlib.Path(a.customer_values).read_text()) or {}
-    (bundle / "values.redacted.yaml").write_text(
-        "# Your values file, structurally intact, with every secret-looking value\n"
-        f"# replaced by {REDACTED} (keys matching: password|token|secret|key|apikey,\n"
-        "# and everything nested beneath them). The SHAPE is the contribution.\n"
-        + yaml.safe_dump(redact(values, removed=removed), sort_keys=False))
-    return removed
+    return normalise(yaml.safe_dump(redact(values, removed=removed),
+                                    sort_keys=False)), removed
 
 
 
@@ -387,7 +729,7 @@ def read_report_scope(contract_path: pathlib.Path) -> dict:
 ALLOWED_TRIGGERS = ("explicit-command-only", "scheduled")
 
 
-def check_report_scope(scope: dict, bundle_names: list, destination: str,
+def check_report_scope(scope: dict, section_names: list, destination: str,
                        station_doc: dict) -> None:
     """The contract's own limits, checked locally before a byte moves."""
     import fnmatch
@@ -446,16 +788,28 @@ def check_report_scope(scope: dict, bundle_names: list, destination: str,
         problems.append(f"report_scope.destination is '{want_dest}' but the submit target is "
                         f"'{destination}' — one destination, and it is the one you wrote down")
 
-    allowed = scope.get("allowed_files")
+    # `allowed_files` was the clause when the report was six files in a tarball.
+    # It is REFUSED rather than silently ignored: a customer who wrote down
+    # which files may leave has written a bound, and a bound this tool no longer
+    # reads is worse than one it cannot satisfy. The refusal names the new
+    # spelling and the section names, so the edit is a minute's work.
+    if scope.get("allowed_files") is not None:
+        problems.append(
+            "report_scope.allowed_files names bundle FILES, and this report is one file "
+            "with named sections. Rename the clause to report_scope.allowed_sections and "
+            f"list section names ({', '.join(sorted(SECTION_KEYS))}). Nothing was sent — "
+            "a bound we cannot read is not a bound we will guess at.")
+
+    allowed = scope.get("allowed_sections")
     if allowed:
-        for name in bundle_names:
+        for name in section_names:
             if not any(fnmatch.fnmatch(name, pat) for pat in allowed):
-                problems.append(f"bundle member '{name}' is outside report_scope.allowed_files")
+                problems.append(f"section '{name}' is outside report_scope.allowed_sections")
 
     if scope.get("require_redaction_verified") and not station_doc.get(
             "redaction", {}).get("verified"):
         problems.append("report_scope.require_redaction_verified is set and redaction was not "
-                        "verified against the written archive")
+                        "verified against the written report")
 
     if problems:
         print("\n!! report_scope refuses this submission — nothing was sent:")
@@ -490,8 +844,15 @@ def registry_env(host: str) -> dict:
     return env
 
 
-def phase_submit(a, archive: pathlib.Path, station_doc: dict,
+def phase_submit(a, report: pathlib.Path, station_doc: dict,
                  contract_path: pathlib.Path) -> int:
+    """Push the one file. THE PAYLOAD AND THE DOCUMENT ARE NOW THE SAME OBJECT.
+
+    Before, a JSON payload was assembled beside the archive and validated, and
+    the archive rode along beside it — so the thing checked against report.v1
+    was not the thing an operator had read. Now `station-report.yaml` is parsed,
+    validated, and pushed: what leaves is what they opened.
+    """
     scope = read_report_scope(contract_path)
     destination = a.submit_destination or scope.get("destination") or a.registry
     if not destination:
@@ -502,20 +863,17 @@ def phase_submit(a, archive: pathlib.Path, station_doc: dict,
     station_name = station_doc["station"]
     print("\n== submit — validating what would leave this perimeter")
 
-    payload = out_payload = None
     payload = dict(station_doc)
     validate_report(payload)
-    check_report_scope(scope, [f["name"] for f in payload["files"]], destination, payload)
+    check_report_scope(scope, [s["name"] for s in payload["sections"]], destination, payload)
 
-    out_payload = archive.parent / f"report-{station_name}-{a.submit_tag}.json"
-    out_payload.write_text(json.dumps(payload, indent=2) + "\n")
-    print(f"   report.v1 OK — every field below is in the schema, and the schema has no "
-          f"field that could hold your content")
-    print(f"   payload:     {out_payload}")
-    print(f"   open it. that is what it is for.")
+    print("   report.v1 OK — every field in this document is in the schema, and the "
+          "schema has no field that could hold your content")
+    print(f"   sending:     {report}")
+    print(f"   open it. that is what it is for — it is the file, not a summary of it.")
     print(f"   destination: {destination}/vexa/stations/{station_name}/bundles:{a.submit_tag}")
-    print(f"   carrying:    {archive.name} ({archive.stat().st_size} bytes), "
-          f"{len(payload['files'])} member(s)")
+    print(f"   carrying:    {report.name} ({report.stat().st_size} bytes), "
+          f"{len(payload['sections'])} section(s)")
 
     if a.submit_dry_run:
         print("   --submit-dry-run: nothing sent.")
@@ -524,9 +882,9 @@ def phase_submit(a, archive: pathlib.Path, station_doc: dict,
     ref = f"{destination}/vexa/stations/{station_name}/bundles:{a.submit_tag}"
     plain = (["--plain-http"] if a.submit_plain_http
              else (["--insecure"] if a.submit_insecure else []))
-    cmd = ["oras", "push", *plain, "--artifact-type", BUNDLE_ARTIFACT_TYPE, ref,
-           archive.name, out_payload.name]
-    proc = subprocess.run(cmd, cwd=str(archive.parent), capture_output=True, text=True,
+    cmd = ["oras", "push", *plain, "--artifact-type", REPORT_ARTIFACT_TYPE, ref,
+           report.name]
+    proc = subprocess.run(cmd, cwd=str(report.parent), capture_output=True, text=True,
                           env=registry_env(destination))
     sys.stdout.write(proc.stdout)
     if proc.returncode != 0:
@@ -545,7 +903,9 @@ def phase_submit(a, archive: pathlib.Path, station_doc: dict,
     return 0
 
 
-BUNDLE_ARTIFACT_TYPE = "application/vnd.vexa.station-bundle.v1+gzip"
+# The artifact type says what a puller is about to get, so it changed with the
+# shape: one YAML document, not a gzipped tree.
+REPORT_ARTIFACT_TYPE = "application/vnd.vexa.station-report.v1+yaml"
 
 
 # ── the ladder: T1-T3 collection, and T4's deliberate absence from it ───────
@@ -589,13 +949,13 @@ def phase_report(a, contract_path: pathlib.Path) -> int:
     Distinct from the install bundle above, and the distinction is carried in
     the payload as `bundle_kind` rather than inferred. No phase ran here — no
     preflight, no install, no smoke — so there is no receipt for any of them,
-    and a bundle that carries none is complete rather than incomplete. The
+    and a report that carries none is complete rather than incomplete. The
     ingest side reads the same field and applies the matching role set.
 
-    What travels: `station.json` (the report itself, with the tier blocks) and
-    `contract.yaml` (so the bundle states the policy it was produced under,
-    beside the data, in one signed archive). Nothing else — and `allowed_files`
-    in the contract still has the final say on that.
+    What travels: this document, with the tier blocks and the contract verbatim
+    — so the report states the policy it was produced under, beside the data,
+    in one file. Nothing else, and `allowed_sections` in the contract still has
+    the final say on that.
     """
     scope = read_report_scope(contract_path)
     c = _collectors()
@@ -609,63 +969,64 @@ def phase_report(a, contract_path: pathlib.Path) -> int:
         print("report_scope.tier is 0 (silent). Nothing collected, nothing sent.")
         return 0
 
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="vexa-report-"))
-    try:
-        bundle = tmp / "station"
-        bundle.mkdir()
-        shutil.copyfile(contract_path, bundle / "contract.yaml")
-        contract_text = contract_path.read_text()
+    doc = Doc()
+    contract_text = normalise(contract_path.read_text())
+    doc.add("contract_document", contract_text)
+    # ONE line, not six. No phase ran and no values file travels, so a report
+    # carrying none of those sections is complete rather than incomplete —
+    # naming each one missing would turn a correct document into a list of
+    # apologies.
+    doc.absent("profile, values and the phase receipts",
+               "this is a telemetry report, not a validation run: no phase ran and no "
+               "values file travels, so there is nothing to carry. `vexa_validate.py "
+               "--customer-values ...` produces the install shape that has them.")
 
-        station = {
-            "schema_version": 1,
-            "bundle_kind": "telemetry",
-            "tier": tier,
-            "station": a.station or a.namespace,
-            "generated_at": datetime.datetime.now(datetime.timezone.utc)
-                                    .isoformat(timespec="seconds"),
-            "generator": "kit/validate/vexa_validate.py --report",
-            "kit": {**git_revision(), "station_chart_version": station_chart_version()},
-            "kubernetes": {"server_version": kube_server_version(a.kubeconfig)},
-            "provider": {"name": a.provider or "unknown"},
-            "namespaces": {"target": a.namespace,
-                           "release_prefix": a.release_prefix or None},
-            "contract": {
-                "source": contract_path.name,
-                "kit_default": False,
-                "contract_id": _contract_id(contract_text),
-                "sha256": hashlib.sha256(contract_path.read_bytes()).hexdigest(),
-            },
-            "phases": {},
-            "tiers": {"flows": bool(a.flows)},
-            # A telemetry bundle carries no customer values, so there is
-            # nothing to redact. Said as a number rather than left null: a
-            # null here would read as "not checked".
-            "redaction": {"verified": True, "values_redacted": 0, "leaks": 0,
-                          "note": "telemetry bundle: no values file travels, "
-                                  "nothing to redact"},
-            **blocks,
-        }
-        station["contents"] = sorted([p.name for p in bundle.iterdir()] + ["station.json"])
-        station["files"] = sorted(
-            ({"name": f.name, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
-             for f in bundle.iterdir() if f.is_file()),
-            key=lambda r: r["name"])
-        (bundle / "station.json").write_text(json.dumps(station, indent=2) + "\n")
+    station = {
+        "schema_version": 1,
+        "bundle_kind": "telemetry",
+        "tier": tier,
+        "station": a.station or a.namespace,
+        "generated_at": datetime.datetime.now(datetime.timezone.utc)
+                                .isoformat(timespec="seconds"),
+        "generator": "kit/validate/vexa_validate.py --report",
+        "kit": {**git_revision(), "station_chart_version": station_chart_version()},
+        "kubernetes": {"server_version": kube_server_version(a.kubeconfig)},
+        "provider": {"name": a.provider or "unknown"},
+        "namespaces": {"target": a.namespace,
+                       "release_prefix": a.release_prefix or None},
+        "contract": {
+            "source": contract_path.name,
+            "kit_default": False,
+            "contract_id": _contract_id(contract_text),
+            "sha256": digest_of(contract_text),
+        },
+        "phases": {},
+        "tiers": {"flows": bool(a.flows)},
+        # A telemetry report carries no customer values, so there is nothing to
+        # redact. Said as a number rather than left null: a null here would
+        # read as "not checked".
+        "redaction": {"verified": True, "values_redacted": 0, "leaks": 0,
+                      "note": "telemetry report: no values file travels, "
+                              "nothing to redact"},
+        **blocks,
+        **doc.sections,
+        "sections": doc.manifest,
+        "absent": doc.gaps,
+        "refuses": REFUSES,
+    }
 
-        out_dir = pathlib.Path(a.out).resolve()
-        out_dir.mkdir(parents=True, exist_ok=True)
-        archive = out_dir / "station-report.tar.gz"
-        with tarfile.open(archive, "w:gz") as tar:
-            tar.add(bundle, arcname="station")
-        print(f"\ntelemetry bundle (tier {tier} — {c.TIER_NAMES[tier]}): {archive}")
-        for name in station["contents"]:
-            print(f"  station/{name}")
-        if not a.submit:
-            print("\nnothing was sent. --submit sends it; --submit-dry-run shows the payload.")
-            return 0
-        return phase_submit(a, archive, station, contract_path)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    out_dir = pathlib.Path(a.out).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    text = render_yaml(station)
+    report = out_dir / OUTPUT_NAME
+    report.write_text(text)
+    print(f"\ntelemetry report (tier {tier} — {c.TIER_NAMES[tier]}): {report}"
+          f"   ({len(text.splitlines())} lines)")
+    if not a.submit:
+        print("\nnothing was sent. Read it, then --submit sends exactly this file; "
+              "--submit-dry-run validates it and sends nothing.")
+        return 0
+    return phase_submit(a, report, station, contract_path)
 
 
 def _contract_id(text: str):
@@ -793,13 +1154,14 @@ def main(argv=None) -> int:
     ap.add_argument("--namespace", default="vexa-staging")
     ap.add_argument("--kubeconfig")
     ap.add_argument("--customer-values",
-                    help="the values file you edit and keep; redacted into the bundle. "
+                    help="the values file you edit and keep; redacted into the report. "
                          "Required for a validation run; a --report or --export-diagnostics "
                          "run carries no values file and does not take one.")
     ap.add_argument("--contract", help="contract this environment verifies against "
                                        "(default kit/verify/policy.example.yaml)")
     ap.add_argument("--provider", help="provider profile name under kit/providers/")
-    ap.add_argument("--out", default=".", help="where station.tar.gz is written")
+    ap.add_argument("--out", default=".",
+                    help=f"directory to write {OUTPUT_NAME} into (default: here)")
     # preflight pass-through
     ap.add_argument("--manifests")
     ap.add_argument("--station", help="station name recorded in station.json; the publisher's "
@@ -823,7 +1185,7 @@ def main(argv=None) -> int:
     ap.add_argument("--admit-timeout", type=int, default=240)
     ap.add_argument("--min-segments", type=int, default=3)
     ap.add_argument("--non-interactive", action="store_true")
-    # bundle
+    # the report
     ap.add_argument("--verify-redaction", dest="verify_redaction", action="store_true",
                     default=True, help="refuse to finish if a redacted value survives (default)")
     ap.add_argument("--no-verify-redaction", dest="verify_redaction", action="store_false")
@@ -834,13 +1196,13 @@ def main(argv=None) -> int:
                          "already pull from. Explicit command only: nothing sends on its own.")
     ap.add_argument("--submit-destination",
                     help="registry host; default report_scope.destination, then --registry")
-    ap.add_argument("--submit-tag", help="bundle tag; default today's UTC date")
+    ap.add_argument("--submit-tag", help="the tag this report is pushed under; default today's UTC date")
     ap.add_argument("--submit-dry-run", action="store_true",
                     help="validate and print the payload; send nothing")
     ap.add_argument("--submit-plain-http", action="store_true")
     ap.add_argument("--submit-insecure", action="store_true")
     ap.add_argument("--continue-on-fail", action="store_true",
-                    help="build the bundle even if a phase FAILs (a failing run is "
+                    help="write the report even if a phase FAILs (a failing run is "
                          "still evidence — and often the most useful kind to send)")
     # ── the telemetry ladder ────────────────────────────────────────────────
     ap.add_argument("--report", action="store_true",
@@ -893,46 +1255,69 @@ def main(argv=None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="vexa-station-"))
-    bundle = tmp / "station"
-    bundle.mkdir()
+    # A SCRATCH directory, not a bundle root. The phases are separate programs
+    # that write receipts as files, so they need somewhere to write them; what
+    # the operator gets is one document assembled from that, and this directory
+    # is deleted before the command returns.
+    work = tmp / "phases"
+    work.mkdir()
 
     phases = {}
-    phases["preflight"] = phase_preflight(a, bundle)
+    phases["preflight"] = phase_preflight(a, work)
     hard_fail = phases["preflight"]["verdict"] == "FAIL"
     if hard_fail and not a.continue_on_fail:
         print("\npreflight FAILED — fix the findings above and rerun. "
-              f"Findings: {bundle / 'preflight-receipt.txt'}\n"
-              "(--continue-on-fail bundles the failure instead, which is a perfectly "
-              "good thing to send us.)")
-        shutil.copyfile(bundle / "preflight-receipt.txt", out_dir / "preflight-receipt.txt")
+              f"Findings: {out_dir / 'preflight-receipt.txt'}\n"
+              "(--continue-on-fail writes the failure into the report instead, which is a "
+              "perfectly good thing to send us.)")
+        shutil.copyfile(work / "preflight-receipt.txt", out_dir / "preflight-receipt.txt")
         shutil.rmtree(tmp, ignore_errors=True)
         return 1
 
-    phases["install"] = phase_install(a, bundle)
+    phases["install"] = phase_install(a, work)
     if phases["install"].get("exit_code"):
         hard_fail = True
         if not a.continue_on_fail:
             print("\ninstall FAILED — see install-log.txt")
-            shutil.copyfile(bundle / "install-log.txt", out_dir / "install-log.txt")
+            shutil.copyfile(work / "install-log.txt", out_dir / "install-log.txt")
             shutil.rmtree(tmp, ignore_errors=True)
             return 1
 
-    phases["smoke"] = phase_smoke(a, bundle)
+    phases["smoke"] = phase_smoke(a, work)
     hard_fail = hard_fail or phases["smoke"]["verdict"] == "FAIL"
 
-    # ── the bundle ──────────────────────────────────────────────────────────
-    print("\n== bundling the station record")
-    provider_meta = write_profile(a, bundle)
-    contract_meta = write_contract(a, bundle)
-    secrets = write_values(a, bundle)
+    # ── the report ──────────────────────────────────────────────────────────
+    print("\n== writing the station record")
+    provider_text, provider_meta = profile_section(a)
+    contract_text, contract_meta = contract_section(a)
+    values_text, secrets = values_section(a)
+
+    doc = Doc()
+    doc.add("profile", provider_text)
+    doc.add("values", values_text)
+    doc.add("contract_document", contract_text)
+    for name, path in (("preflight_receipt", work / "preflight-receipt.txt"),
+                       ("smoke_receipt", work / (phases["smoke"].get("receipt") or ""))):
+        if path.is_file():
+            doc.add(name, path.read_text())
+        else:
+            doc.absent(name, "the phase produced no receipt — see its verdict and exit "
+                             "code above, and the console below if there is one")
+    for name, path in (("install_log", work / "install-log.txt"),
+                       ("smoke_console", work / "smoke-console.txt")):
+        if path.is_file():
+            doc.add_console(name, path.read_text())
+    if phases["install"].get("skipped"):
+        doc.absent("install_log", "install was not requested (--install); nothing ran, so "
+                                  "there is no log rather than an empty one")
 
     station = {
         # report.v1 (spec/report.v1.schema.json). This document IS the report:
         # the manifest that travels is the manifest the operator can read, not
         # a second one assembled for us out of sight.
         "schema_version": 1,
-        # Stated, not inferred. The ingest applies a different required-file
-        # set to each kind, and a telemetry bundle carrying no smoke receipt is
+        # Stated, not inferred. The ingest applies a different required-section
+        # set to each kind, and a telemetry report carrying no smoke receipt is
         # complete rather than incomplete.
         "bundle_kind": "install",
         # The station's NAME is what the publisher's ingest checks its
@@ -953,18 +1338,8 @@ def main(argv=None) -> int:
         "redaction": {"verified": None, "values_redacted": len(secrets), "leaks": None},
     }
 
-    if a.verify_redaction:
-        leaks = scan_for_leaks(bundle, secrets)
-        station["redaction"]["verified"] = not leaks
-        station["redaction"]["leaks"] = len(leaks)
-        if leaks:
-            station["redaction"]["leaking_files"] = sorted({p for p, _ in leaks})
-    else:
-        station["redaction"]["verified"] = False
-        station["redaction"]["note"] = "--no-verify-redaction: NOT checked"
-
     # A validation run is itself a T1 event — an install happened and a verdict
-    # exists — so when the contract declares a rung, the install bundle carries
+    # exists — so when the contract declares a rung, the install report carries
     # it too. Collected through the same gated path as the cadenced one: no
     # second implementation, and nothing above the declared tier is reachable.
     _scope = read_report_scope(pathlib.Path(a.contract) if a.contract
@@ -975,67 +1350,55 @@ def main(argv=None) -> int:
             station.update(collect_tier_blocks(a, _scope))
         except Exception as e:                                   # noqa: BLE001
             # A collector failing must never lose a validation run that already
-            # happened. The bundle ships without the ladder blocks and says so.
+            # happened. The report ships without the ladder blocks and says so.
             print(f"note ladder collection skipped: {e}")
+            doc.absent("telemetry blocks", f"the ladder collector raised {type(e).__name__}; "
+                                           "the validation run itself is unaffected")
 
-    # station.json lists itself: the manifest a reader checks the archive against
-    # is only useful if it is complete.
-    station["contents"] = sorted([p.name for p in bundle.iterdir()] + ["station.json"])
-    # ...and it lists them WITH their digests, under the key the publisher's
-    # ingest actually reads. `contents` alone is a list of names a tampered
-    # bundle satisfies trivially; `files` is what makes S3 a real check.
-    station["files"] = sorted(
-        ({"name": f.name, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
-         for f in bundle.iterdir() if f.is_file()),
-        key=lambda r: r["name"],
-    )
-    (bundle / "station.json").write_text(json.dumps(station, indent=2) + "\n")
+    # The sections themselves, then the manifest OVER them. `sections` is what
+    # makes the document checkable rather than merely readable — a list of names
+    # a tampered report satisfies trivially, a list of digests it does not.
+    station.update(doc.sections)
+    station["sections"] = doc.manifest
+    station["absent"] = doc.gaps
+    station["refuses"] = REFUSES
 
-    archive = out_dir / "station.tar.gz"
-    with tarfile.open(archive, "w:gz") as tar:
-        tar.add(bundle, arcname="station")
+    report, text, leaks = write_report(station, out_dir, a.verify_redaction, secrets)
 
-    # Check what was actually written, not what we think we wrote: re-extract
-    # the archive and scan that. A bug between the staging directory and the tar
-    # would otherwise be invisible.
-    leak_exit = 0
-    if a.verify_redaction:
-        with tempfile.TemporaryDirectory() as verify_dir:
-            with tarfile.open(archive) as tar:
-                try:
-                    tar.extractall(verify_dir, filter="data")
-                except TypeError:          # python < 3.12 has no extraction filters
-                    tar.extractall(verify_dir)
-            leaks = scan_for_leaks(pathlib.Path(verify_dir), secrets)
-        leak_exit = 3 if leaks else 0
+    # The trimmed console, whole, on the operator's own disk. It is not part of
+    # what leaves and it is not referenced by the manifest: it exists so that a
+    # trim costs readability and never evidence.
+    for name, whole in sorted(doc.overflow.items()):
+        spill = out_dir / f"{OUTPUT_NAME.rsplit('.', 1)[0]}-{name.replace('_', '-')}.txt"
+        spill.write_text(whole)
+        print(f"  (kept whole, locally, and never sent: {spill})")
 
     shutil.rmtree(tmp, ignore_errors=True)
 
-    print(f"\nbundle: {archive}")
-    for name in station["contents"]:
-        print(f"  station/{name}")
+    print(f"\n{report}   ({len(text.splitlines())} lines)")
+    for row in station["sections"]:
+        print(f"  {row['sha256'][:12]}  {row['name']}")
     print(f"\nphases: preflight {phases['preflight']['verdict']}"
           f" · install {'skipped' if phases['install'].get('skipped') else 'ran'}"
           f" · smoke {phases['smoke']['verdict']}")
-    if leak_exit:
-        print(f"\n!! REDACTION FAILED — {len(leaks)} plaintext secret occurrence(s) "
-              f"survived into {archive.name}")
-        for path, idx in leaks:
-            print(f"   {path}: secret #{idx} (value withheld)")
-        print("   DO NOT SEND THIS FILE. Report the finding to Vexa without attaching it.")
+    if leaks:
+        print(f"\n!! REDACTION FAILED — {len(leaks)} withheld value(s) survived into "
+              f"{report.name}")
+        print("   The file was written so you can inspect it. DO NOT SEND IT.")
+        print("   Report the finding to Vexa without attaching it.")
         return 3
     if a.verify_redaction:
-        print(f"redaction: {len(secrets)} value(s) removed, 0 found in the archive")
+        print(f"redaction: {len(secrets)} value(s) removed, 0 found in the report")
     if a.submit:
-        rc = phase_submit(a, archive, station, pathlib.Path(a.contract) if a.contract
+        rc = phase_submit(a, report, station, pathlib.Path(a.contract) if a.contract
                           else KIT / "verify" / "policy.example.yaml")
         if rc:
             return rc
         return 1 if hard_fail else 0
 
-    print("\nsend station.tar.gz back to Vexa — it is your configuration contribution;"
-          " it contains NO secrets")
-    print("or let the channel carry it: re-run with --submit (nothing sends on its own)")
+    print(f"\nread {OUTPUT_NAME} — it is one file and it explains itself. Then send it "
+          "back to Vexa: it is your configuration contribution and it contains NO secrets.")
+    print("Or let the channel carry it: re-run with --submit (nothing sends on its own).")
     return 1 if hard_fail else 0
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""vexa-station — ingest a customer's station bundle, then gate publishes on
+"""vexa-station — ingest a customer's station report, then gate publishes on
 the station's own contract.
 
 The channel publisher (`vexa_channel.py`) answers "may this release exist?".
@@ -8,10 +8,10 @@ This tool answers the other half: "may this release be published AT this
 customer's station, given what that station's contract requires?" — the
 per-release guarantees document, made executable.
 
-  ingest  unpack a station bundle (profile.env, values.redacted.yaml,
-          contract.yaml, preflight-receipt, smoke-receipt, station.json) into
-          stations/<name>/ after checking it is complete, self-consistent and
-          free of plaintext secrets
+  ingest  read a station report (ONE commented YAML file: the provider
+          profile, the redacted values, the contract, the phase receipts, and
+          a manifest of section digests) into stations/<name>/ after checking
+          it is complete, self-consistent and free of plaintext secrets
   gate    render a packaged chart with the station's values and refuse the
           publish unless the render survives the station's environment and
           every `require:` item in its contract is met by evidence or
@@ -22,46 +22,78 @@ the channel publisher's C1..C9. There is no silent path: an unmet contract
 item needs an explicit, loudly recorded waiver, which becomes visible data in
 the gate report.
 
-  S1 bundle shape        archive members are safe, one bundle root
-  S2 completeness        the file roles this bundle KIND requires are present
-  S3 manifest identity   station.json names this station and its digests match
+  S1 report shape        one YAML document, a mapping, report.v1, bounded size
+  S2 completeness        the section roles this report KIND requires are present
+  S3 manifest identity   the report names this station, its section digests
+                         match the text, and nothing undeclared rides along
   S4 no plaintext secrets  defense in depth over the customer's redaction
   S5 render              helm template succeeds with the station's values
   S6 resources           every container declares cpu+memory requests+limits
   S7 no hostPath         no workload mounts a host path
   S8 digest-pinned       every image reference carries @sha256:
   S9 contract            every require: item is evidenced or waived
-  S10 report scope       the bundle does not exceed the station's declared
+  S10 report scope       the report does not exceed the station's declared
                          telemetry tier — WE ENFORCE THEIR POLICY AGAINST
                          OURSELVES, which is the half of the promise worth
                          anything: a customer can read the packager and see
                          that it cannot collect above its rung, but only this
-                         check proves we would not KEEP a bundle that did.
+                         check proves we would not KEEP a report that did.
+
+WHAT CHANGED WITH THE SINGLE FILE, since a check that quietly stopped checking
+is the failure this file exists to prevent. S1 no longer walks archive members
+for traversal, links and a single root, because there is no archive: it bounds
+the file's size and refuses anything that is not exactly one YAML mapping. S2
+and S3 hold unchanged in substance and are expressed against SECTIONS instead
+of files — a declared section must be present, its sha256 must match the text
+that is there to read, and a top-level key that is neither a manifest field nor
+a declared section is a refusal. S4 gained reach rather than losing it: it
+scans the whole document AND parses the values and profile sections back into
+their own formats, so a credential inside a section is caught by the same two
+scans that used to run over files.
 """
 import argparse
+import hashlib
 import json
 import pathlib
 import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from vexa_channel import CheckFailure, sha256_file, utcnow  # noqa: E402
 
-MANIFEST_NAME = "station.json"
+REPORT_NAME = "station-report.yaml"
 
-# role -> accepted filenames. The role is what the gate reasons about; the
-# extension is the customer's choice of format.
+# A station report is a document a person is expected to read before sending
+# it. This is not a memory limit, it is that claim in bytes: anything larger
+# than this was not read by anybody, whatever it says.
+MAX_REPORT_BYTES = 4 * 1024 * 1024
+
+# role -> the section key that fills it. The role is what the gate reasons
+# about; the key is what the packager writes.
 BUNDLE_ROLES = {
-    "profile": ("profile.env",),
-    "values": ("values.redacted.yaml", "values.redacted.yml"),
-    "contract": ("contract.yaml", "contract.yml", "contract.json"),
-    "preflight_receipt": ("preflight-receipt.txt", "preflight-receipt.json", "preflight-receipt.md"),
-    "smoke_receipt": ("smoke-receipt.json", "smoke-receipt.txt", "smoke-receipt.md"),
-    "manifest": (MANIFEST_NAME,),
+    "profile": "profile",
+    "values": "values",
+    "contract": "contract_document",
+    "preflight_receipt": "preflight_receipt",
+    "smoke_receipt": "smoke_receipt",
+}
+
+# Sections a report may carry beyond the required roles. Optional because a
+# run that did not install has no install log and a smoke that wrote its
+# receipt cleanly may carry no console.
+OPTIONAL_SECTIONS = ("install_log", "smoke_console")
+
+# Everything else a report may carry at the top level. A key outside this set
+# and outside the declared sections is refused by S3 — the ingest is the second
+# enforcer of report.v1's closed field set, on the side the customer cannot
+# audit.
+MANIFEST_KEYS = {
+    "schema_version", "bundle_kind", "tier", "station", "generated_at", "generator",
+    "kit", "kubernetes", "provider", "namespaces", "contract", "phases", "tiers",
+    "redaction", "release", "health", "usage", "sections", "absent", "refuses",
 }
 
 WORKLOAD_KINDS = ("Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod", "ReplicaSet")
@@ -137,136 +169,159 @@ def scan_patterns(text, findings, where):
                 findings.append(f"{where}:{n}: looks like a {label} in plaintext")
 
 
-def scan_bundle_for_secrets(root):
-    """S4 — refuse a bundle carrying anything credential-shaped. Defense in
-    depth: the customer redacts, we refuse to hold what they missed."""
+def scan_report_for_secrets(report, sections):
+    """S4 — refuse a report carrying anything credential-shaped. Defense in
+    depth: the customer redacts, we refuse to hold what they missed.
+
+    Three scans, and the second and third are why folding six files into one
+    did not cost this check anything. The whole document is pattern-scanned
+    line by line. Then each section is parsed back into ITS OWN format — the
+    values section as YAML, the profile section as an env file — so a
+    secret-shaped key carrying a real value is caught inside a block scalar
+    exactly as it was caught inside a file. A scan of the outer document alone
+    would see those sections as one long string and find nothing.
+    """
     import yaml
 
     findings = []
-    for p in sorted(root.rglob("*")):
-        if not p.is_file():
-            continue
-        rel = p.relative_to(root).as_posix()
-        try:
-            text = p.read_text()
-        except UnicodeDecodeError:
-            continue
-        scan_patterns(text, findings, rel)
-        if p.suffix in (".yaml", ".yml"):
+    scan_mapping({k: v for k, v in report.items() if k not in sections},
+                 findings, REPORT_NAME)
+    for name, text in sorted(sections.items()):
+        where = f"{REPORT_NAME}[{name}]"
+        scan_patterns(text, findings, where)
+        if name in ("values", "contract_document"):
             try:
                 for doc in yaml.safe_load_all(text):
-                    scan_mapping(doc, findings, rel)
+                    scan_mapping(doc, findings, where)
             except yaml.YAMLError as e:
-                raise CheckFailure("S4", f"{rel} is not parseable YAML: {e}")
-        elif p.suffix == ".json":
-            try:
-                scan_mapping(json.loads(text), findings, rel)
-            except json.JSONDecodeError as e:
-                raise CheckFailure("S4", f"{rel} is not parseable JSON: {e}")
-        elif p.name.endswith(".env"):
-            scan_env_text(text, findings, rel)
+                raise CheckFailure("S4", f"section '{name}' is not parseable YAML: {e}")
+        elif name == "profile":
+            scan_env_text(text, findings, where)
     return findings
 
 
-# ------------------------------------------------------------------- bundle
+# ------------------------------------------------------------------- report
 
 
-def safe_members(tf):
-    """S1 — no absolute paths, no traversal, no links, one bundle root."""
-    roots = set()
-    for m in tf.getmembers():
-        name = m.name.lstrip("./")
-        if not name:
-            continue
-        if m.issym() or m.islnk():
-            raise CheckFailure("S1", f"bundle member '{m.name}' is a link; refusing")
-        if m.name.startswith("/") or ".." in pathlib.PurePosixPath(m.name).parts:
-            raise CheckFailure("S1", f"bundle member '{m.name}' escapes the bundle root")
-        parts = pathlib.PurePosixPath(name).parts
-        if len(parts) > 1:
-            roots.add(parts[0])
-        yield m
-    if len(roots) > 1:
-        raise CheckFailure("S1", f"bundle has {len(roots)} top-level directories: {sorted(roots)}")
+def load_report(path):
+    """S1 — one YAML document, a mapping, report.v1, and small enough to read.
+
+    The old S1 walked a tar for absolute paths, `..` and links, and refused
+    more than one top-level directory. None of those exist for a file that is
+    never extracted, so the check is not weakened — its subject is gone. What
+    remains is the same question in the new shape: is this one document of the
+    kind we accept, and is it a size a human could have read before sending it?
+    """
+    if not path.is_file():
+        raise CheckFailure("S1", f"station report {path} does not exist")
+    size = path.stat().st_size
+    if size > MAX_REPORT_BYTES:
+        raise CheckFailure("S1", f"{path.name} is {size} bytes, above the {MAX_REPORT_BYTES} "
+                                 "byte ceiling. A station report is a document somebody read "
+                                 "before sending it; this one was not.")
+    try:
+        text = path.read_text()
+    except UnicodeDecodeError as e:
+        raise CheckFailure("S1", f"{path.name} is not text: {e}")
+    import yaml
+    try:
+        docs = [d for d in yaml.safe_load_all(text)]
+    except yaml.YAMLError as e:
+        raise CheckFailure("S1", f"{path.name} is not parseable YAML: {e}")
+    if len(docs) != 1:
+        raise CheckFailure("S1", f"{path.name} carries {len(docs)} YAML documents; "
+                                 "a station report is exactly one")
+    report = docs[0]
+    if not isinstance(report, dict):
+        raise CheckFailure("S1", f"{path.name} is not a mapping")
+    if report.get("schema_version") != 1:
+        raise CheckFailure("S1", f"{path.name} declares schema_version "
+                                 f"{report.get('schema_version')!r}; this ingest reads "
+                                 "report.v1")
+    return report, text
 
 
-def bundle_root(tmp):
-    entries = [p for p in tmp.iterdir() if not p.name.startswith(".")]
-    if len(entries) == 1 and entries[0].is_dir():
-        return entries[0]
-    return tmp
-
-
-# Which roles each bundle KIND must carry. An install bundle is an operator's
-# validation run and carries all six. A TELEMETRY bundle is a ladder
+# Which roles each report KIND must carry. An install report is an operator's
+# validation run and carries all five. A TELEMETRY report is a ladder
 # submission from the station itself: no phase ran, so there is no preflight
 # receipt and no smoke receipt to carry, and requiring one would mean either
 # refusing every T2 submission or having the sender manufacture an empty
-# receipt — a fabricated artifact in a signed bundle, which is the worse of
+# receipt — a fabricated section in a signed report, which is the worse of
 # the two by a distance.
 KIND_ROLES = {
     "install": tuple(BUNDLE_ROLES),
-    "telemetry": ("contract", "manifest"),
+    "telemetry": ("contract",),
 }
 
 
-def locate_roles(root, kind="install"):
-    """S2 — every role this bundle kind requires, present exactly once."""
+def sections_of(report):
+    """Every top-level key that carries a section body, by name."""
+    known = set(BUNDLE_ROLES.values()) | set(OPTIONAL_SECTIONS)
+    return {k: v for k, v in report.items() if k in known and isinstance(v, str)}
+
+
+def locate_roles(report, kind="install"):
+    """S2 — every role this report kind requires, present and non-empty."""
     found, missing = {}, []
-    required = KIND_ROLES.get(kind, KIND_ROLES["install"])
-    for role, names in ((r, BUNDLE_ROLES[r]) for r in required):
-        # kit/validate names receipts with a run timestamp — smoke-receipt-
-        # 20260824-165011.md — because an operator runs smoke more than once.
-        # Matching only the bare name refused every genuine bundle (rehearsal
-        # 2026-08-24). Accept the dated form; more than one is still ambiguous
-        # and still refused below.
-        hits = []
-        for n in names:
-            if (root / n).is_file():
-                hits.append(root / n)
-                continue
-            stem, _, ext = n.rpartition(".")
-            hits.extend(sorted(h for h in root.glob(f"{stem}-*.{ext}") if h.is_file()))
-        if not hits:
-            missing.append(f"{role} (one of: {', '.join(names)})")
-        elif len(hits) > 1:
-            raise CheckFailure("S2", f"role '{role}' matched {len(hits)} files: "
-                                     f"{[h.name for h in hits]} — the bundle must be unambiguous")
+    sections = sections_of(report)
+    for role in KIND_ROLES.get(kind, KIND_ROLES["install"]):
+        key = BUNDLE_ROLES[role]
+        text = sections.get(key)
+        if not text or not text.strip():
+            missing.append(f"{role} (section '{key}')")
         else:
-            found[role] = hits[0]
+            found[role] = key
     if missing:
-        raise CheckFailure("S2", "bundle is incomplete; missing " + "; ".join(missing))
+        raise CheckFailure("S2", "report is incomplete; missing " + "; ".join(missing))
     return found
 
 
-def check_manifest(manifest, station, root, files):
-    """S3 — station.json names this station and its digests match the bytes."""
-    if manifest.get("station") != station:
-        raise CheckFailure("S3", f"station.json declares station "
-                                 f"'{manifest.get('station')}' but --station is '{station}'")
-    declared = manifest.get("files")
+def sha256_text(text):
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def check_manifest(report, station, roles):
+    """S3 — the report names this station, and its digests match the text.
+
+    Same three claims as the file version, over sections: every declared
+    section is present and hashes to what was declared, nothing undeclared
+    rides along, and every required role is declared rather than merely
+    present. The third is what stops a section being smuggled in below a
+    manifest that does not mention it.
+    """
+    if report.get("station") != station:
+        raise CheckFailure("S3", f"the report declares station "
+                                 f"'{report.get('station')}' but --station is '{station}'")
+    declared = report.get("sections")
     if not isinstance(declared, list) or not declared:
-        raise CheckFailure("S3", "station.json declares no files[]")
-    on_disk = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
-    on_disk.discard(MANIFEST_NAME)
+        raise CheckFailure("S3", "the report declares no sections[]")
+    present = sections_of(report)
     for row in declared:
+        if not isinstance(row, dict):
+            raise CheckFailure("S3", f"sections[] carries {row!r}, which is not a mapping")
         name, want = row.get("name"), row.get("sha256")
-        p = root / (name or "")
-        if not name or not p.is_file():
-            raise CheckFailure("S3", f"station.json declares '{name}' which is not in the bundle")
-        got = sha256_file(p)
+        text = present.get(name)
+        if not name or text is None:
+            raise CheckFailure("S3", f"the report declares section '{name}', which is not in "
+                                     "the document")
+        got = sha256_text(text)
         if want != got:
-            raise CheckFailure("S3", f"'{name}' digest mismatch — station.json says {want}, "
-                                     f"the bytes are {got}")
-        on_disk.discard(name)
-    if on_disk:
-        raise CheckFailure("S3", f"bundle carries files station.json does not declare: "
-                                 f"{sorted(on_disk)}")
-    for role, p in files.items():
-        if role == "manifest":
-            continue
-        if p.relative_to(root).as_posix() not in {r["name"] for r in declared}:
-            raise CheckFailure("S3", f"required file '{p.name}' is undeclared in station.json")
+            raise CheckFailure("S3", f"section '{name}' digest mismatch — the manifest says "
+                                     f"{want}, the text is {got}")
+        present.pop(name)
+    if present:
+        raise CheckFailure("S3", f"the report carries sections its manifest does not declare: "
+                                 f"{sorted(present)}")
+    names = {row["name"] for row in declared}
+    for role, key in roles.items():
+        if key not in names:
+            raise CheckFailure("S3", f"required section '{key}' ({role}) is undeclared in "
+                                     "sections[]")
+    stray = set(report) - MANIFEST_KEYS - names
+    if stray:
+        raise CheckFailure("S3", f"the report carries top-level keys that are neither manifest "
+                                 f"fields nor declared sections: {sorted(stray)} — report.v1 is "
+                                 "a closed schema and this is where we hold ourselves to it")
 
 
 # ------------------------------------------------------------------ S10 · scope
@@ -284,12 +339,12 @@ def _tier_blocks():
     return collectors.TIER_BLOCKS, collectors.MAX_SUBMITTABLE_TIER
 
 
-def contract_tier(contract_path):
-    """The tier the STATION's own contract declares. Their file, our limit."""
+def contract_tier(contract_text):
+    """The tier the STATION's own contract declares. Their document, our limit."""
     import yaml
     try:
-        doc = yaml.safe_load(pathlib.Path(contract_path).read_text()) or {}
-    except (OSError, ValueError):
+        doc = yaml.safe_load(contract_text) or {}
+    except yaml.YAMLError:
         return None
     scope = doc.get("report_scope")
     if not isinstance(scope, dict) or not scope:
@@ -301,7 +356,7 @@ def contract_tier(contract_path):
     return tier if isinstance(tier, int) and not isinstance(tier, bool) else None
 
 
-def check_report_scope_tier(manifest, contract_path):
+def check_report_scope_tier(manifest, contract_text):
     """S10 — refuse a bundle that exceeds the station's declared report scope.
 
     Three ways a bundle can exceed it, and each gets its own sentence, because
@@ -319,11 +374,11 @@ def check_report_scope_tier(manifest, contract_path):
     exchange they cannot audit.
     """
     blocks, max_submittable = _tier_blocks()
-    declared = contract_tier(contract_path)
+    declared = contract_tier(contract_text)
     if declared is None:
         raise CheckFailure(
-            "S10", f"the station's contract at {pathlib.Path(contract_path).name} carries no "
-                   "report_scope — refusing to ingest a bundle under a policy nobody wrote "
+            "S10", "the contract section of this report carries no "
+                   "report_scope — refusing to ingest a report under a policy nobody wrote "
                    "down. report_scope is the clause that bounds what may leave their "
                    "perimeter; without it there is no bound to enforce, and we do not get "
                    "to pick one on their behalf. (A report_scope with no `tier` is fine — "
@@ -367,90 +422,88 @@ def check_report_scope_tier(manifest, contract_path):
 
 def cmd_ingest(args):
     bundle = pathlib.Path(args.bundle)
-    if not bundle.is_file():
-        raise CheckFailure("S1", f"bundle {bundle} does not exist")
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="vexa-station-"))
-    try:
-        with tarfile.open(bundle, "r:*") as tf:
-            for m in safe_members(tf):
-                try:
-                    tf.extract(m, tmp, filter="data")
-                except TypeError:  # python < 3.12
-                    tf.extract(m, tmp)
-        root = bundle_root(tmp)
-        # The KIND is read from station.json before the roles are located,
-        # because it decides which roles are required. Locating first and then
-        # asking would refuse every telemetry bundle at S2 for the absence of
-        # a receipt no telemetry run produces.
-        manifest_path = root / MANIFEST_NAME
-        if not manifest_path.is_file():
-            raise CheckFailure("S2", f"bundle carries no {MANIFEST_NAME}")
-        manifest = json.loads(manifest_path.read_text())
-        kind = manifest.get("bundle_kind", "install")
-        if kind not in KIND_ROLES:
-            raise CheckFailure("S2", f"station.json declares bundle_kind '{kind}'; "
-                                     f"known kinds are {sorted(KIND_ROLES)}")
-        files = locate_roles(root, kind)
-        check_manifest(manifest, args.station, root, files)
-        findings = scan_bundle_for_secrets(root)
-        if findings:
-            raise CheckFailure("S4", "bundle carries plaintext credential material — "
-                                     "refusing to ingest:\n  - " + "\n  - ".join(findings))
-        # S10 — the station's OWN contract, as carried in this bundle, decides
-        # what we are allowed to keep. Read from the bundle rather than from
-        # our copy on disk: our copy is what we last ingested, and a station
-        # that has TIGHTENED its scope must have that take effect on the very
-        # bundle that tells us so.
-        scope = check_report_scope_tier(manifest, files["contract"])
+    manifest, _text = load_report(bundle)
+    # The KIND is read before the roles are located, because it decides which
+    # roles are required. Locating first and then asking would refuse every
+    # telemetry report at S2 for the absence of a receipt no telemetry run
+    # produces.
+    kind = manifest.get("bundle_kind", "install")
+    if kind not in KIND_ROLES:
+        raise CheckFailure("S2", f"the report declares bundle_kind '{kind}'; "
+                                 f"known kinds are {sorted(KIND_ROLES)}")
+    roles = locate_roles(manifest, kind)
+    check_manifest(manifest, args.station, roles)
+    sections = sections_of(manifest)
+    findings = scan_report_for_secrets(manifest, sections)
+    if findings:
+        raise CheckFailure("S4", "the report carries plaintext credential material — "
+                                 "refusing to ingest:\n  - " + "\n  - ".join(findings))
+    # S10 — the station's OWN contract, as carried in this report, decides what
+    # we are allowed to keep. Read from the report rather than from our copy on
+    # disk: our copy is what we last ingested, and a station that has TIGHTENED
+    # its scope must have that take effect on the very report that tells us so.
+    scope = check_report_scope_tier(manifest, sections[roles["contract"]])
 
-        dest = pathlib.Path(args.stations_dir) / args.station
-        if dest.exists() and not args.force:
-            raise CheckFailure("S2", f"{dest} already exists; pass --force to re-ingest")
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.copytree(root, dest)
-        receipt = {
-            "station": args.station,
-            "ingested_at": utcnow(),
-            "bundle": bundle.name,
-            "bundle_sha256": sha256_file(bundle),
-            "manifest": {k: manifest.get(k) for k in
-                         ("schema_version", "customer", "environment", "kit_version", "created_at")},
-            "files": [{"name": r["name"], "sha256": r["sha256"]} for r in manifest["files"]],
-            "bundle_kind": kind,
-            "report_scope": scope,
-            "checks_passed": ["S1", "S2", "S3", "S4", "S10"],
-        }
-        (dest / "ingest-receipt.json").write_text(json.dumps(receipt, indent=1) + "\n")
-        print(f"ingested station '{args.station}' -> {dest} at {receipt['ingested_at']}")
-        for row in receipt["files"]:
-            print(f"  {row['sha256'][:12]}  {row['name']}")
+    dest = pathlib.Path(args.stations_dir) / args.station
+    if dest.exists() and not args.force:
+        raise CheckFailure("S2", f"{dest} already exists; pass --force to re-ingest")
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    # The report VERBATIM, and nothing extracted out of it. The sections are
+    # not written back out as files: what the customer sent is one document,
+    # and a directory of derived copies is a second version of it that can
+    # disagree with the first.
+    shutil.copyfile(bundle, dest / REPORT_NAME)
+    receipt = {
+        "station": args.station,
+        "ingested_at": utcnow(),
+        "bundle": bundle.name,
+        "bundle_sha256": sha256_file(bundle),
+        # The identity fields, and only the ones this report actually carried —
+        # a row of nulls for the M1 shape's keys reads as "we looked and there
+        # was nothing there", which is not what an absent key means.
+        "manifest": {k: manifest[k] for k in
+                     ("schema_version", "bundle_kind", "tier", "generated_at", "generator",
+                      "customer", "environment", "kit_version", "created_at")
+                     if manifest.get(k) is not None},
+        "sections": [{"name": r["name"], "sha256": r["sha256"]}
+                     for r in manifest["sections"]],
+        "bundle_kind": kind,
+        "report_scope": scope,
+        "checks_passed": ["S1", "S2", "S3", "S4", "S10"],
+    }
+    (dest / "ingest-receipt.json").write_text(json.dumps(receipt, indent=1) + "\n")
+    print(f"ingested station '{args.station}' -> {dest} at {receipt['ingested_at']}")
+    for row in receipt["sections"]:
+        print(f"  {row['sha256'][:12]}  {row['name']}")
 
-        # The durable half. `stations/<name>/` is a working directory on one
-        # laptop and gitignored by design; the ledger is where a station's
-        # receipts and derived state survive the laptop. `ingest` is the sole
-        # writer of stations/* there — see publisher/vexa_stations.py.
-        import os
+    # The durable half. `stations/<name>/` is a working directory on one
+    # laptop and gitignored by design; the ledger is where a station's
+    # receipts and derived state survive the laptop. `ingest` is the sole
+    # writer of stations/* there — see publisher/vexa_stations.py.
+    import os
 
-        if getattr(args, "ledger", None) or os.environ.get("VEXA_STATIONS_DIR"):
-            if not args.channel:
-                raise CheckFailure("S2", "--ledger needs --channel: a station's state is "
-                                         "recorded under the channel it subscribes to")
-            import vexa_stations
+    if getattr(args, "ledger", None) or os.environ.get("VEXA_STATIONS_DIR"):
+        if not args.channel:
+            raise CheckFailure("S2", "--ledger needs --channel: a station's state is "
+                                     "recorded under the channel it subscribes to")
+        import vexa_stations
 
-            values = dest / "values.redacted.yaml"
-            out = vexa_stations.record_ingest(
-                vexa_stations.resolve_root(getattr(args, "ledger", None)),
-                channel=args.channel, station=args.station, receipt=receipt,
-                manifest=manifest, bundle=bundle,
-                values_text=values.read_text() if values.is_file() else "",
-            )
-            print(f"ledger: {out['channel']}/{out['station']} recorded; flags: "
-                  f"{', '.join(out['flags']) or 'none'} "
-                  f"({out['commit'][:12] if out['commit'] else 'no change'})")
-        return 0
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        # The manifest WITHOUT the section bodies. The report itself is stored
+        # verbatim beside the receipt, so writing the bodies a second time into
+        # the reduced manifest would be two copies that can disagree — and the
+        # ledger's job is the reduction, not the archive.
+        out = vexa_stations.record_ingest(
+            vexa_stations.resolve_root(getattr(args, "ledger", None)),
+            channel=args.channel, station=args.station, receipt=receipt,
+            manifest={k: v for k, v in manifest.items() if k not in sections},
+            bundle=bundle, values_text=sections.get("values", ""),
+        )
+        print(f"ledger: {out['channel']}/{out['station']} recorded; flags: "
+              f"{', '.join(out['flags']) or 'none'} "
+              f"({out['commit'][:12] if out['commit'] else 'no change'})")
+    return 0
 
 
 # ------------------------------------------------- pulling a bundle back down
@@ -494,13 +547,13 @@ def cmd_ingest_from_registry(args):
         if r.returncode != 0:
             raise CheckFailure("S1", f"cannot pull {ref}:{tag}: "
                                      f"{(r.stderr or '').strip()[-300:]}")
-        archives = sorted(tmp.glob("*.tar.gz"))
-        if len(archives) != 1:
-            raise CheckFailure("S1", f"{ref}:{tag} carries {len(archives)} .tar.gz members; "
-                                     f"a station bundle is exactly one")
-        print(f"pulled {ref}:{tag} -> {archives[0].name} "
-              f"(sha256 {sha256_file(archives[0])[:12]}…)")
-        args.bundle = str(archives[0])
+        reports = sorted(tmp.glob("*.yaml")) + sorted(tmp.glob("*.yml"))
+        if len(reports) != 1:
+            raise CheckFailure("S1", f"{ref}:{tag} carries {len(reports)} YAML members; "
+                                     f"a station report is exactly one")
+        print(f"pulled {ref}:{tag} -> {reports[0].name} "
+              f"(sha256 {sha256_file(reports[0])[:12]}…)")
+        args.bundle = str(reports[0])
         return cmd_ingest(args)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -868,13 +921,16 @@ def delivery_scope_checks(scope, docs):
     return rows
 
 
-def load_contract(path):
+def load_contract(text):
+    """The contract, parsed from the report's own contract section."""
     import yaml
 
-    text = pathlib.Path(path).read_text()
-    data = json.loads(text) if str(path).endswith(".json") else yaml.safe_load(text)
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise CheckFailure("S9", f"the contract section is not parseable YAML: {e}")
     if not isinstance(data, dict):
-        raise CheckFailure("S9", f"{path} is not a contract mapping")
+        raise CheckFailure("S9", "the contract section is not a contract mapping")
     return data
 
 
@@ -1004,21 +1060,30 @@ def cmd_gate(args):
     station_dir = pathlib.Path(args.stations_dir) / args.station
     if not station_dir.is_dir():
         raise CheckFailure("S2", f"station '{args.station}' is not ingested ({station_dir} missing)")
-    values = next((station_dir / n for n in BUNDLE_ROLES["values"] if (station_dir / n).is_file()), None)
-    contract_path = next((station_dir / n for n in BUNDLE_ROLES["contract"]
-                          if (station_dir / n).is_file()), None)
-    if not values or not contract_path:
-        raise CheckFailure("S2", f"station '{args.station}' has no values/contract — re-ingest it")
+    station_report, _ = load_report(station_dir / REPORT_NAME)
+    sections = sections_of(station_report)
+    values_text = sections.get(BUNDLE_ROLES["values"])
+    contract_text = sections.get(BUNDLE_ROLES["contract"])
+    if not values_text or not contract_text:
+        raise CheckFailure("S2", f"station '{args.station}' has no values/contract section — "
+                                 "re-ingest it")
 
     waivers = parse_waivers(args)
-    contract = load_contract(contract_path)
+    contract = load_contract(contract_text)
     requirements = contract_requirements(contract)
     guarantees = load_guarantees(args.evidence)
 
     chart = pathlib.Path(args.chart)
     if not chart.exists():
         raise CheckFailure("S5", f"chart {chart} does not exist")
-    docs = render_chart(chart, values, args.release_name)
+    # `helm template` takes a FILE, so the values section becomes one for the
+    # length of the render and no longer. The station directory keeps one
+    # artifact — the report the customer sent — and this temporary copy cannot
+    # drift from it because it does not outlive the command.
+    with tempfile.TemporaryDirectory(prefix="vexa-gate-") as scratch:
+        values = pathlib.Path(scratch) / "values.redacted.yaml"
+        values.write_text(values_text)
+        docs = render_chart(chart, values, args.release_name)
 
     env_checks = [
         ("S6", "every container declares cpu+memory requests and limits", check_resources(docs)),
@@ -1056,9 +1121,12 @@ def cmd_gate(args):
     ctx = {
         "station": args.station, "date": date, "at": utcnow(), "verdict": verdict,
         "chart_name": chart.name, "chart_sha256": sha256_file(chart),
-        "values_sha256": sha256_file(values),
+        # The digests are over the section TEXT — the same bytes the ingest
+        # hashed and the same bytes a reader sees in the report — so a gate
+        # report and a station report name the same object.
+        "values_sha256": sha256_text(values_text),
         "contract_id": contract.get("contract_id", "<unnamed>"),
-        "contract_sha256": sha256_file(contract_path),
+        "contract_sha256": sha256_text(contract_text),
         "evidence": f"`{args.evidence}`" if args.evidence else "none supplied",
         "env_rows": env_rows, "contract_rows": contract_rows,
         "waivers": waivers, "failures": failures, "delivery_scope": scope,
@@ -1112,18 +1180,19 @@ def main(argv=None):
     p.add_argument("--stations-dir", default=str(pathlib.Path(__file__).resolve().parent.parent / "stations"))
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    i = sub.add_parser("ingest", help="validate and unpack a customer station bundle")
-    i.add_argument("--bundle", help="station bundle tar.gz produced by kit validate "
-                                    "(or use --from-registry)")
-    i.add_argument("--station", required=True, help="station name; must match station.json")
+    i = sub.add_parser("ingest", help="validate and record a customer station report")
+    i.add_argument("--bundle", metavar="STATION_REPORT_YAML",
+                   help="the station report (station-report.yaml) produced by kit validate "
+                        "(or use --from-registry)")
+    i.add_argument("--station", required=True, help="station name; must match the report")
     i.add_argument("--force", action="store_true", help="replace an already-ingested station")
     i.add_argument("--from-registry", metavar="REGISTRY",
-                   help="pull the bundle from <REGISTRY>/vexa/stations/<station>/bundles "
+                   help="pull the report from <REGISTRY>/vexa/stations/<station>/bundles "
                         "instead of reading --bundle from disk (the submit path's return leg)")
-    i.add_argument("--bundle-tag", help="which submitted bundle; default the newest")
+    i.add_argument("--bundle-tag", help="which submitted report; default the newest")
     i.add_argument("--channel", help="the channel this station subscribes to; required with --ledger")
     i.add_argument("--ledger", help="checkout of the vexa-stations ledger; on a successful ingest "
-                   "the bundle and its receipt are stored verbatim under "
+                   "the report and its receipt are stored verbatim under "
                    "channels/<channel>/stations/<station>/receipts/ and state.yaml is "
                    "recomputed. Defaults to $VEXA_STATIONS_DIR.")
     i.add_argument("--plain-http", action="store_true")

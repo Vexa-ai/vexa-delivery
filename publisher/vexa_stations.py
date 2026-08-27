@@ -497,13 +497,21 @@ def cmd_record_ingest(args) -> int:
     root = resolve_root(args.ledger)
     sdir = pathlib.Path(args.station_dir)
     receipt = json.loads((sdir / "ingest-receipt.json").read_text())
-    manifest_path = sdir / "station.json"
-    manifest = json.loads(manifest_path.read_text())
-    values = sdir / "values.redacted.yaml"
+    # The ingested station report — one file, sections included. The reduction
+    # takes the identity and the verdicts; the section bodies stay in the report
+    # itself, which is stored verbatim beside the receipt.
+    import yaml
+
+    report = yaml.safe_load((sdir / "station-report.yaml").read_text()) or {}
+    values_text = report.get("values") or ""
+    manifest = {k: v for k, v in report.items()
+                if not isinstance(v, str) or k not in
+                ("profile", "values", "contract_document", "preflight_receipt",
+                 "install_log", "smoke_receipt", "smoke_console")}
     out = record_ingest(root, channel=args.channel, station=args.station, receipt=receipt,
                         manifest=manifest,
                         bundle=pathlib.Path(args.bundle) if args.bundle else None,
-                        values_text=values.read_text() if values.is_file() else "")
+                        values_text=values_text)
     print(f"ledger: {out['channel']}/{out['station']} -> {out['path']}; flags: "
           f"{', '.join(out['flags']) or 'none'} ({out['commit'] or 'no change'})")
     return 0
@@ -542,7 +550,7 @@ def main(argv=None) -> int:
     ri.add_argument("--station", required=True)
     ri.add_argument("--station-dir", required=True,
                     help="stations/<name>/ as written by vexa_station.py ingest")
-    ri.add_argument("--bundle", help="the bundle tarball, stored verbatim in receipts/")
+    ri.add_argument("--bundle", help="the station report, stored verbatim in receipts/")
 
     pin = sub.add_parser("pin", help="move a station's pin (a promotion)")
     pin.add_argument("--channel", required=True)
