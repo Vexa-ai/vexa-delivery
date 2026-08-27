@@ -1,30 +1,16 @@
 # vexa-delivery
 
-**Signed, pull-only delivery channels for self-hosted software.**
-
-Your cluster stays yours. vexa-delivery keeps a self-hosted deployment current through a
-channel your cluster pulls from — the open channel, or a private channel: every entry is
-digest-pinned and cosign-signed, verified
-inside your perimeter against keys you pin, rolled automatically on staging, and promoted
-to production only under your own attestation. The publisher holds no access to your
-environment — nothing is ever pushed, and the only thing that travels back is a report you
-create and choose to send.
-
-Everything in this repository is Apache-2.0: the publisher that builds and signs channel
-entries, the kit a subscribing cluster installs, and the station runners that validate
-entries in real environments. [Vexa](https://github.com/Vexa-ai/vexa), the open-source
-meeting-intelligence platform, is the first workload — this machinery delivers Vexa's own
-cloud production.
-
-## Four moves
-
-**Your running self-hosted Vexa service that stays up to date:**
+**Your running self-hosted [Vexa](https://github.com/Vexa-ai/vexa) service that stays up to
+date.**
 
 1. **Bring your own cloud** — k8s, GCloud, AWS, OpenShift. A namespace in a cluster, or an
    entire fresh one.
 2. **Install Vexa Delivery.**
 3. **Set it to consume the public images — or a private channel.**
 4. **Cluster running, self-updating on new images published.**
+
+Everything is open source, images public on Docker Hub. Nothing reaches in: your cluster
+pulls, verifies with keys you pin, and promotes to production on your attestation.
 
 > **Not built yet.** Every channel is credentialed today — the free one in step 3 is
 > [issue #9](https://github.com/Vexa-ai/vexa-delivery/issues/9), not a running service.
@@ -34,7 +20,7 @@ Already running Vexa? Start at [docs/upgrade](docs/upgrade.mdx).
 
 ## How it works
 
-Publish → gate → channel → pull → admission → smoke → station bundle → back to the gate.
+Publish → gate → channel → pull → admission → smoke → station report → back to the gate.
 The loop, with what each part checks and who holds it, is in
 [docs/how-it-works](docs/how-it-works.mdx).
 
