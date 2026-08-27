@@ -51,7 +51,7 @@ support — not software features.
 
 | Path | What it is |
 |---|---|
-| `publisher/` | builds, signs and publishes channel entries; manages subscriber credentials |
+| `publisher/` | builds, signs and publishes channel entries |
 | `kit/` | the subscriber-side kit: bootstrap, preflight, install, smoke — five steps, one command each |
 | `station/` | station runners that validate entries in real environments and report verdicts |
 | `contracts/` | the delivery contracts entries are validated against |
@@ -74,11 +74,13 @@ support — not software features.
 
 This machinery runs Vexa's own cloud production and delivers Vexa releases today. Built for
 Vexa; the pattern — signed pull-only channels, attestation-gated promotion, evidence
-receipts — is general, and extracting a vendor-neutral core is on the roadmap.
+receipts — is general.
 
 ## Getting started
 
-Start at [docs/install](docs/install.mdx) — five steps from a kit you verify with your own key.
+Start at [docs/install](docs/install.mdx) — five steps from a kit you verify with your own
+key. Channels are credentialed today, both paths — [request access](mailto:dmitry@vexa.ai)
+and your credential, channel key and bootstrap parameters arrive by mail.
 
 ## Contributing
 
