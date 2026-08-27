@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "vexa-admin-api-6b7c8d9e0-fghij",
+        "ownerReferences": [{"kind": "ReplicaSet", "name": "vexa-admin-api-6b7c8d9e0"}]
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "admin-api",
+            "env": [
+              {"name": "DATABASE_PASSWORD", "value": "leaky-value-123456"},
+              {"name": "WORKERS", "value": "4"}
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "containerStatuses": [
+          {
+            "name": "admin-api",
+            "image": "vexaai/admin-api:leaky-value-123456",
+            "imageID": "docker-pullable://vexaai/admin-api@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+            "restartCount": 0
+          }
+        ]
+      }
+    }
+  ]
+}

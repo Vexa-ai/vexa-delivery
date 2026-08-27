@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""A fake psql driven by <fixtures>/psql.json.
+
+The file is a list of {"match": <substring of the SQL>, "rows": [[...]]} or
+{"match": ..., "exit": N}. First match wins; no match exits 1, which is how an
+unreachable table or a refused permission reaches the tool.
+
+It also ASSERTS the read-only contract: the tool must have set PGOPTIONS with
+default_transaction_read_only=on before invoking us. A test that could pass
+without that would not be testing the thing the docs promise.
+"""
+import json
+import os
+import pathlib
+import sys
+
+FIX = pathlib.Path(os.environ["VEXA_TEST_FIXTURES"])
+UNIT = "\x1f"
+
+pgoptions = os.environ.get("PGOPTIONS", "")
+if "default_transaction_read_only=on" not in pgoptions:
+    sys.stderr.write("fake psql: session was not opened read-only (PGOPTIONS=%r)\n" % pgoptions)
+    sys.exit(99)
+
+argv = sys.argv[1:]
+sql = argv[argv.index("-c") + 1] if "-c" in argv else ""
+
+rules = json.loads((FIX / "psql.json").read_text()) if (FIX / "psql.json").is_file() else []
+for rule in rules:
+    if rule["match"] in " ".join(sql.split()):
+        if "exit" in rule:
+            sys.stderr.write("fake psql: rule says exit %d\n" % rule["exit"])
+            sys.exit(rule["exit"])
+        for row in rule.get("rows", []):
+            sys.stdout.write(UNIT.join(str(c) for c in row) + "\n")
+        sys.exit(0)
+
+sys.stderr.write("fake psql: no rule matches\n")
+sys.exit(1)

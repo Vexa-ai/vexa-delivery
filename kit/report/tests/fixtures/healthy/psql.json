@@ -1,0 +1,25 @@
+[
+  {"match": "pg_database_size(current_database())", "rows": [["3221225472"]]},
+  {"match": "current_setting('server_version')", "rows": [["16.3"]]},
+  {"match": "SELECT version()", "rows": [["PostgreSQL 16.3 on x86_64-pc-linux-gnu"]]},
+  {"match": "SELECT current_database()", "rows": [["vexa"]]},
+
+  {"match": "FROM alembic_version", "exit": 1},
+
+  {"match": "FROM pg_extension",
+   "rows": [["pgcrypto", "1.3"], ["plpgsql", "1.0"], ["uuid-ossp", "1.1"]]},
+
+  {"match": "FROM pg_class c JOIN pg_namespace",
+   "rows": [
+     ["public", "api_tokens", "37", "163840"],
+     ["public", "meetings", "418", "2359296"],
+     ["public", "transcriptions", "-1", "1073741824"],
+     ["public", "users", "12", "81920"]
+   ]},
+
+  {"match": "AS colliding_keys", "rows": [["2"]]},
+  {"match": "o.ctid <> m.ctid", "rows": [["5"]]},
+  {"match": "i.indisunique AND i.indisvalid", "rows": [["0"]]},
+  {"match": "AND NOT i.indisvalid", "rows": [["0"]]},
+  {"match": "SELECT count(*) FROM meetings WHERE status NOT IN", "rows": [["418"]]}
+]

@@ -160,6 +160,14 @@ vexa-validate: >-
   at onboarding and at every upgrade you want a receipt for; reach for the
   individual tools only when you are debugging one leg of it.
 
+vexa-state-report: >-
+  Run it FIRST on a deployment that already has history — which is nearly every
+  deployment — before anyone plans an upgrade to it. It reads the cluster and
+  the database and writes a bundle of plain files describing the state an
+  upgrade has to survive, so the rehearsal happens on a copy of your estate
+  rather than on a guess at it. It reads and never writes, and it prints a path
+  and stops: nothing transmits.
+
 kit-bootstrap: >-
   The first command a new station ever runs: fetch the kit tree from the
   channel and verify its signature against the channel public key and nothing
