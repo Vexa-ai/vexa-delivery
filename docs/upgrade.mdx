@@ -18,6 +18,228 @@ python3 kit/report/vexa_state_report.py --namespace vexa --dry-run   # the comma
 python3 kit/report/vexa_state_report.py --namespace vexa             # writes state-report.yaml
 ```
 
+It writes one file. Here is a real one, from a live cluster, whole and unedited — this is what you would be sending:
+
+<Accordion title="state-report.yaml — complete, 213 lines">
+
+```yaml
+# vexa-state-report 0.4.0 — the shape of this deployment's environment.
+#
+# WHAT THIS IS. The output of one read-only `kubectl get` sweep of a single
+# namespace. No database connection, no pods/exec, no credentials of any kind,
+# no SQL. Run `--dry-run` to see every command that produced it.
+#
+# WHY IT EXISTS. You already run Vexa. This says what shape your environment
+# is, so what gets built for you works with what you already have and asks for
+# nothing you do not.
+#
+# WHAT IS NOT IN IT. No schema, no rows, no counts, no meeting content, no
+# transcripts. No credentials, and no Secret or ConfigMap values — where a
+# setting comes from one, only its name is recorded. No node names, no service
+# addresses, no ingress hostnames.
+#
+# IT HAS NOT BEEN SENT ANYWHERE. The tool that wrote it has no transmit path:
+# no --submit, no destination, no endpoint. Read it, then send it by hand — or
+# do not.
+
+tool: vexa-state-report
+tool_version: '0.4.0'
+schema_version: 4
+generated_at: '2026-08-27T20:38:18Z'
+namespace: vexa-staging
+read_with: kubectl get -o json, read-only. Nothing else was contacted.
+kit: '553c848-dirty'
+
+
+# 1 · PLATFORM — what this runs on. Distribution and version, the cloud
+# underneath (read from the node providerID scheme; the instance ids are
+# dropped), the node shapes available to schedule on, and the storage classes
+# and volumes this cluster already has. Node NAMES are not collected: shapes
+# are grouped, which is the same fact without the inventory.
+platform:
+  kubernetes: v1.35.7
+  distribution: Kubernetes
+  distribution_note: >-
+    clusterversion.config.openshift.io was not readable, which is what plain
+    Kubernetes and a missing ClusterRole both look like
+  cloud: Linode
+  node_shapes_note: 'grouped by shape; node names are not collected'
+  node_shapes:
+    - count: 2
+      instance_type: g6-standard-4
+      region: us-sea
+      capacity: cpu 4 · memory 7.8Gi · pods 110
+      gpu: null
+      arch: amd64
+      os: Debian GNU/Linux 13 (trixie)
+      kubelet: v1.35.6
+      runtime: 'containerd://2.2.6'
+  storage_classes:
+    - linode-block-storage · linodebs.csi.linode.com · Delete
+    - linode-block-storage-retain · linodebs.csi.linode.com · Retain · DEFAULT
+  volumes:
+    - data-vexa-vexa-minio-0 · 10Gi · linode-block-storage-retain · Bound
+    - data-vexa-vexa-postgres-0 · 10Gi · linode-block-storage-retain · Bound
+    - vexa-vexa-agent-workspaces · 10Gi · linode-block-storage-retain · Bound
+    - vexa-vexa-redis-data · 10Gi · linode-block-storage-retain · Bound
+
+
+# 2 · VERSIONS AND VALUES — every workload, the image and the digest ACTUALLY
+# running, replicas, the requests and limits each container declares, and the
+# settings it carries. The digest is what says 0.10 exactly rather than
+# roughly. Settings are allowlist-first: a name matching
+# password|token|secret|key|apikey is dropped, and so is anything not on the
+# allowlist, so what is here is the customisation and nothing else.
+# `provided_externally` names the settings that come from a Secret or
+# ConfigMap — the name only, never the value.
+workloads:
+  - kind: Deployment
+    name: vexa-vexa-redis
+    chart: vexa-0.12.35
+    replicas: '1 ready of 1 desired'
+    containers:
+      - name: redis
+        image: >-
+          valkey/valkey:8-alpine@sha256:e0eb7c480958d32bdc4357a74bdd70653ae15f2f9b4c93c4a5a9fad1dc471c84
+        registry: docker.io
+        tag: '8-alpine'
+        running_digest: 'sha256:e0eb7c480958d32bdc4357a74bdd70653ae15f2f9b4c93c4a5a9fad1dc471c84'
+        requests: cpu 100m · memory 256Mi
+        limits: cpu 1 · memory 1Gi
+  - kind: StatefulSet
+    name: vexa-vexa-minio
+    chart: vexa-0.12.35
+    replicas: '1 ready of 1 desired'
+    containers:
+      - name: minio
+        image: >-
+          minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+        registry: docker.io
+        tag: latest
+        running_digest: 'sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e'
+        requests: cpu 100m · memory 256Mi
+        limits: cpu 500m · memory 1Gi
+  - kind: StatefulSet
+    name: vexa-vexa-postgres
+    chart: vexa-0.12.35
+    replicas: '1 ready of 1 desired'
+    containers:
+      - name: postgres
+        image: >-
+          postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+        registry: docker.io
+        tag: '17-alpine'
+        running_digest: 'sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73'
+        requests: cpu 200m · memory 512Mi
+        limits: cpu 4 · memory 4Gi
+
+
+# 3 · RESOURCES — the namespace's quotas and LimitRanges, and the containers
+# that declare no resources of their own. This is here because it broke a real
+# upgrade: a ResourceQuota covering cpu or memory makes Kubernetes refuse any
+# pod that declares neither request nor limit, unless a LimitRange supplies a
+# default. Vexa's per-meeting bot pods declare none by design. `finding` below
+# is present only when all three conditions hold at once.
+resources:
+  quotas: []
+  limit_ranges: []
+  containers_declaring_no_resources: []
+
+
+# 4 · WIRING — which components exist and how they are connected. The database
+# and transcription especially: in-cluster or external, how each is ADDRESSED
+# (the setting's name, never its value), version, and GPU or CPU. Every fact
+# here was read from the cluster. Nothing connected to the database.
+wiring:
+  database:
+    where: in-cluster
+    workload: vexa-vexa-postgres
+    version: '17-alpine'
+    image: >-
+      postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    resources: cpu 200m · memory 512Mi
+    addressed_by: null
+  redis:
+    where: in-cluster
+    workload: vexa-vexa-redis
+    version: '8-alpine'
+    image: >-
+      valkey/valkey:8-alpine@sha256:e0eb7c480958d32bdc4357a74bdd70653ae15f2f9b4c93c4a5a9fad1dc471c84
+    resources: cpu 100m · memory 256Mi
+    addressed_by: null
+  transcription: []
+  services_note: 'type and ports; addresses are not collected'
+  services:
+    - vexa-vexa-admin-api · ClusterIP · 8001/TCP
+    - vexa-vexa-agent-api · ClusterIP · 8100/TCP
+    - vexa-vexa-gateway · ClusterIP · 8000/TCP
+    - vexa-vexa-meeting-api · ClusterIP · 8080/TCP
+    - vexa-vexa-minio · ClusterIP · 9000/TCP,9001/TCP
+    - vexa-vexa-postgres · ClusterIP · 5432/TCP
+    - vexa-vexa-redis · ClusterIP · 6379/TCP
+    - vexa-vexa-runtime · ClusterIP · 8090/TCP
+    - vexa-vexa-terminal · ClusterIP · 3000/TCP
+  ingresses_note: 'class, TLS and backends; hostnames are not collected'
+  ingresses: []
+
+
+# 5 · REGISTRY — where images actually come from, so an upgrade does not sit
+# in ImagePullBackOff behind a corporate mirror. Observed from image
+# references, pull secrets and any readable mirror configuration. Stated as
+# observed, never inferred.
+registry:
+  registries_referenced:
+    - docker.io (3 containers)
+  image_pull_credentials: null
+  cluster_mirror_config: null
+  cluster_mirror_note: >-
+    ImageDigestMirrorSet is an OpenShift, cluster-scoped resource and was not
+    readable (kubectl get imagedigestmirrorsets.config.openshift.io exited 1)
+    — which is what a non-OpenShift cluster and a missing ClusterRole both
+    look like. A mirror configured at the container runtime would not be
+    visible to any kubectl read either.
+  reachability: >-
+    every image reference points at a public registry (docker.io). Whether the
+    pull goes direct or through a transparent proxy is not observable from
+    here.
+
+
+# WHAT COULD NOT BE READ. Recorded rather than defaulted to zero or to an
+# empty list: a fabricated zero in a document whose whole purpose is to say
+# what you already have is worse than a stated gap. An empty list here means
+# everything was readable.
+absent:
+  - what: transcription
+    reason: >-
+      no workload matched 'whisper|transcri|asr|diariz|stt' — widen it with
+      --transcription-match. ABSENT, not 'CPU'.
+
+
+# WHAT THE TOOL REFUSES, each enforced by code rather than intent. Read the
+# source: it is one file, Apache-2.0, and `--dry-run` prints every command.
+refuses:
+  - 'transmit: there is no submit path in this tool'
+  - 'write: every call is kubectl get or kubectl version; no other verb exists here'
+  - 'connect: no database client, no SQL, no flag that would take a password'
+  - 'content: no schema, no rows, no counts, no meeting data, no Secret values'
+
+
+# THE REDACTION SELF-CHECK. `withheld_values` counts the values this run SAW
+# and chose not to record. The finished document is then scanned for every one
+# of them; `verified: true` means none survived. A survivor exits 3 and names
+# the count, never the value.
+redaction:
+  rule: >-
+    values under keys matching password|token|secret|key|apikey become
+    REDACTED; settings capture is allowlist-first, so most values are never
+    written rather than redacted after
+  withheld_values: 3
+  verified: true
+  leaks: 0
+```
+
+</Accordion>
+
 ## Us
 
 1. We build your bundle and give you [a channel](channel) — its name, its public key, and a pull-only credential.

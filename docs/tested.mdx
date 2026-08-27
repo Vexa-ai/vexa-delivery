@@ -68,6 +68,24 @@ One fact frames all of it: **almost everything below was run on Linode LKE, most
 | **Rollback by pin** | On the adopted throwaway: back in 10 s, every pod kept its UID ([throwaway adoption](receipts/2026-08-25-throwaway-adoption)) | On our own production, or on any estate under traffic. Two steps back is a data restore and has not been rehearsed |
 | **Scale, upgrade under load, failure injection, break-glass** | Nothing | Stated here once so that no row above is read as implying it |
 
+## The from-docs run, 2026-08-27
+
+A fresh anonymous clone, on a throwaway Linode cluster provisioned for the purpose, following [Install](install) and [Upgrade](upgrade) as written.
+
+| What | Result |
+|---|---|
+| Anonymous `git clone`, then the reporter's `--dry-run` | ran, exit 0 |
+| [Preflight](preflight) on a never-before-seen cluster (LKE, Kubernetes v1.35.7) | **PASS**, all nine checks |
+| `install.sh` — pinned Argo CD v3.5.1, pinned Kyverno v1.19.0, both ClusterPolicies, the ApplicationSet, both Applications | installed |
+| Staging synced chart `0.12.35`; production created and parked at `UNPINNED` | as documented |
+| Postgres, Redis and MinIO admitted and Running under the admission policy | Running |
+| **The state reporter against that live deployment** | one `state-report.yaml`, 222 lines, exit 0 — [the example on the upgrade page is that file](upgrade) |
+| Vexa's own images admitted | **denied** — see below |
+
+**Two defects the fixtures could not have found, both fixed the same day.** Node capacity printed as `8138636Ki`, and because the grouping key carried that exact figure, two identical machines appeared as two shapes — on a fifty-node cluster that is fifty rows instead of one. Capacities now round to `7.8Gi` and identical nodes group.
+
+**And one that mattered more.** Run with the install command the docs carried that morning, every Vexa image was refused by our own policy — `no signatures found` — because without `--signature-repository` the installer strips the repository line from the admission policy and Kyverno looks for signatures beside the image on Docker Hub. The cluster installs clean, Argo reports Healthy, and not one Vexa pod is admitted. The flag is now in the documented command, in `install.sh --help`, and in the onboarding template. With it set, the signatures are found; verifying them needs the channel's public key, which the operator holds.
+
 ## Known gaps, and the issue each one lives in
 
 Stated so you can pick one up, not so we look complete.
@@ -75,7 +93,6 @@ Stated so you can pick one up, not so we look complete.
 | Gap | Issue |
 |---|---|
 | **The free channel does not exist.** Every channel is credentialed; the landing's step 3 describes a service that is not running. | [#9](https://github.com/Vexa-ai/vexa-delivery/issues/9) |
-| **The state reporter has never read a real deployment.** 46 tests, all against fixtures. The first person to run it against a live estate finds what fixtures cannot. | [#5](https://github.com/Vexa-ai/vexa-delivery/issues/5) |
 | **Required values are documented, not enforced.** A deployment missing its transcription configuration reports Synced and Healthy and cannot dispatch a bot; the contract should refuse it instead. | [#6](https://github.com/Vexa-ai/vexa-delivery/issues/6) |
 | **Only Linode LKE is exercised end to end.** Every other provider profile is declared and never run. | per-provider pages |
 | **No audio has reached the pipeline in any delivery run.** The smoke step is implemented and never completed on any platform. | — |
