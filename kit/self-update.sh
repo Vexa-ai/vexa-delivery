@@ -72,7 +72,7 @@ ISO_DOCKER_CONFIG="${TMPDIR:-/tmp}/vexa-channel-dockercfg"
 mkdir -p "$ISO_DOCKER_CONFIG"
 # Carry the credentials `oras login` already stored, minus the helper keys:
 # blanking auths outright makes cosign UNAUTHORIZED against an authenticated
-# channel registry, which is the enterprise shape (rehearsal 2026-08-24).
+# channel registry, which is the common shape (rehearsal 2026-08-24).
 python3 - "$HOME/.docker/config.json" > "$ISO_DOCKER_CONFIG/config.json" <<'PYCFG'
 import base64, json, os, sys
 try:

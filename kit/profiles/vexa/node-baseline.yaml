@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Vexa Enterprise node baseline — the delivered TOGGLES. Image identity never
+# Vexa Delivery node baseline — the delivered TOGGLES. Image identity never
 # lives here: digests are baked per release by the publisher's `chart` verb
 # (pins-<version>.yaml, generated from the candidate map at the tag).
 global:

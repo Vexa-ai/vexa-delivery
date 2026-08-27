@@ -5,7 +5,7 @@
 # moves. Nothing on the vendor side can move it.
 #
 # ${...} placeholders are filled by kit/install.sh; this file is configuration
-# we ship, not an agent — the running software is stock Argo CD.
+# we ship — the running software is stock Argo CD.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

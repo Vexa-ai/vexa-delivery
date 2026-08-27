@@ -21,25 +21,22 @@ usage: install.sh --provider <name> --registry <host[:port]> --channel <name> \\
 required
   --provider        one of: $(find "$HERE/providers" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | tr '\n' ' ')
   --registry        channel registry host[:port]
-  --customer-values customer-local values file injected into the subscription
-                    (default: profiles/vexa/customer-values.example.yaml)
-  --channel         channel name, e.g. enterprise-stable
+  --channel         channel name, e.g. acme-stable
   --channel-pubkey  cosign public key the admission policy pins
 
 options
-  --staging-ns      namespace for enterprise-staging   (default vexa-staging)
-  --prod-ns         namespace for enterprise-prod      (default vexa-prod)
+  --customer-values customer-local values file injected into the subscription
+                    (default: profiles/vexa/customer-values.example.yaml)
+  --staging-ns      namespace the staging Application deploys into
+                    (default vexa-staging)
+  --prod-ns         namespace the production Application deploys into
+                    (default vexa-prod)
   --prod-pin        channel position prod follows      (default: none — prod
                     Application is created only when you set a pin; moving the
                     pin is YOUR gate)
   --signature-repository  OCI repo where cosign signatures live (default:
                     alongside each image)
   --registry-user   username for an AUTHENTICATED channel registry. The
-  --chart-name NAME  chart to install from the channel (default: vexa). An estate
-                    channel serves vexa-platform, not vexa.
-  --release-name N  Helm release name (default: vexa). MUST match the existing
-                    release when adopting a live cluster — Helm keys its release
-                    Secret on this and a mismatch installs a second copy.
                     password is read from the VEXA_CHANNEL_PASS environment
                     variable, never from argv. Required whenever your channel
                     registry needs credentials to pull: without it Argo CD's
@@ -48,6 +45,11 @@ options
                     signature read paths are anonymous so it is not needed
                     for admission, but it is needed if you mirror the channel
                     into your own authenticated registry.
+  --chart-name NAME  chart to install from the channel (default: vexa). An
+                    estate channel serves the vexa-platform chart.
+  --release-name N  Helm release name (default: vexa). MUST match the existing
+                    release when adopting a live cluster — Helm keys its release
+                    Secret on this and a mismatch installs a second copy.
   --registry-ca     PEM file of the registry's CA (corporate/self-signed):
                     mounted into Kyverno as a trust bundle
   --registry-insecure  registry TLS cert is not trusted by Argo CD (self-signed
@@ -228,7 +230,7 @@ if ! $DRY_RUN; then
     kc -n "$KYVERNO_NS" rollout status deploy/kyverno-admission-controller --timeout=180s
   fi
   if [ -n "$REGISTRY_CA" ]; then
-    # enterprise registries behind a corporate CA: give Kyverno a trust bundle
+    # registries behind a corporate CA: give Kyverno a trust bundle
     # (Mozilla roots + the corporate CA) so signature fetch and digest
     # resolution both keep working. Argo trusts the registry via the repo
     # secret; nodes need the CA in their own containerd trust (provider docs).
@@ -268,7 +270,7 @@ PYEOF
 echo "== registering channel registry with Argo CD"
 REGISTRY_CRED_FIELDS=""
 if [ -n "$REGISTRY_USER" ]; then
-  # An authenticated channel is the enterprise shape; a repo secret without a
+  # An authenticated channel is the common shape; a repo secret without a
   # credential makes repo-server fail the pull with 401 and the Application
   # never leaves Unknown.
   REGISTRY_CRED_FIELDS="  username: ${REGISTRY_USER}"$'\n'"  password: ${VEXA_CHANNEL_PASS}"
@@ -449,7 +451,7 @@ text = text.replace("\${CUSTOMER_VALUES_OBJECT}", cv_block)
 sys.stdout.write(text)
 PYEOF
 if [ -z "$PROD_PIN" ]; then
-  echo "   prod pin not set: the enterprise-prod Application tracks position 'UNPINNED' (a"
+  echo "   prod pin not set: the production Application tracks position 'UNPINNED' (a"
   echo "   non-existent tag — it will sync nothing). Set your pin when your gate passes:"
   echo "     kubectl -n ${ARGOCD_NS} patch applicationset vexa-channel-subscription --type=json \\"
   echo "       -p '[{\"op\":\"replace\",\"path\":\"/spec/generators/0/list/elements/1/position\",\"value\":\"vX.Y.Z\"}]'"

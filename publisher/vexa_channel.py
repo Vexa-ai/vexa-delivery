@@ -2511,7 +2511,7 @@ def main(argv=None):
 
     u = sub.add_parser("push", help="push entry to OCI registry, sign, move channel tag")
     u.add_argument("--entry", required=True)
-    u.add_argument("--ref", required=True, help="repository ref without tag, e.g. host/base/channel/enterprise-stable")
+    u.add_argument("--ref", required=True, help="repository ref without tag, e.g. host/base/channel/acme-stable")
     u.add_argument("--channel-tag", help="floating tag to move, e.g. `current`. A full ref "
                    "(host/base/channel/x:current) is accepted and normalised to its tag.")
     u.add_argument("--sign-key")

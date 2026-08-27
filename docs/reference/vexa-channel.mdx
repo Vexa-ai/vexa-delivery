@@ -149,7 +149,7 @@ usage: vexa-channel push [-h] --entry ENTRY --ref REF [--channel-tag CHANNEL_TAG
 options:
   -h, --help            show this help message and exit
   --entry ENTRY
-  --ref REF             repository ref without tag, e.g. host/base/channel/enterprise-stable
+  --ref REF             repository ref without tag, e.g. host/base/channel/acme-stable
   --channel-tag CHANNEL_TAG
                         floating tag to move, e.g. `current`. A full ref
                         (host/base/channel/x:current) is accepted and normalised to its tag.
@@ -332,7 +332,7 @@ options:
 
 ## `attest`
 
-Record a signed, structured claim about a release: a station's verdict, a soak result, anything a downstream contract can `require:` by name. This is how the internal channel accumulates evidence that the enterprise entry is later built from.
+Record a signed, structured claim about a release: a station's verdict, a soak result, anything a downstream contract can `require:` by name. This is how the internal channel accumulates evidence that the published channel entry is later built from.
 
 ```text
 usage: vexa-channel attest [-h] --kind {prod-soak,security-hardening,station-verdict}

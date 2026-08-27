@@ -1,11 +1,11 @@
 # publisher — vexa-channel
 
-Turns a released Vexa version into a signed enterprise channel entry. Consumes released artifacts
+Turns a released Vexa version into a signed channel entry. Consumes released artifacts
 and receipts only — no clusters, no production credentials, by charter.
 
 ```
 python3 publisher/vexa_channel.py fetch  --release v0.12.23 --out work/inputs
-python3 publisher/vexa_channel.py build  --release v0.12.23 --channel enterprise-stable \
+python3 publisher/vexa_channel.py build  --release v0.12.23 --channel acme-stable \
     --entry-seq 1 --vexa-repo ~/dev/vexa \
     --delivery-receipt <internal delivery receipt> \
     --archive work/inputs/vexa-core-v0.12.23.tar.gz \
@@ -13,8 +13,8 @@ python3 publisher/vexa_channel.py build  --release v0.12.23 --channel enterprise
     --trusted-root work/inputs/trusted-root.jsonl \
     --identity sha256:<pubkey fp> --signing-mode test_key --out work/entry
 python3 publisher/vexa_channel.py verify --entry work/entry --archive ... --pubkey ...
-python3 publisher/vexa_channel.py push   --entry work/entry --ref <host>/vexa/channel/enterprise-stable \
-    --channel-tag <host>/vexa/channel/enterprise-stable:current --sign-key <key>
+python3 publisher/vexa_channel.py push   --entry work/entry --ref <host>/vexa/channel/acme-stable \
+    --channel-tag <host>/vexa/channel/acme-stable:current --sign-key <key>
 ```
 
 Named cross-checks C1–C9 (tag identity, map identity, map↔receipt pin, receipt identity,

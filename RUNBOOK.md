@@ -79,7 +79,7 @@ The only network step, and it reaches GitHub, not a cluster.
 
 ```bash
 python3 publisher/vexa_channel.py build --release vX.Y.Z \
-  --channel enterprise-stable --entry-seq N --supersedes vX.Y.(Z-1) \
+  --channel acme-stable --entry-seq N --supersedes vX.Y.(Z-1) \
   --vexa-repo ~/dev/vexa --delivery-receipt <receipt> \
   --archive work/in/vexa-core-vX.Y.Z.tar.gz \
   --provenance-bundle work/in/source-provenance.sigstore.json \
@@ -103,7 +103,7 @@ channel's candidate lane possible (§ 6).
 # the open-source vexa chart, digests baked in, pushed to the channel
 python3 publisher/vexa_channel.py chart --release vX.Y.Z --vexa-repo ~/dev/vexa \
   --baseline kit/profiles/vexa/node-baseline.yaml --out-dir work/chart \
-  --push oci://<REG>/vexa/channel/enterprise-stable/charts
+  --push oci://<REG>/vexa/channel/acme-stable/charts
 ```
 
 The chart's semver **is** the channel position a station follows.
@@ -168,7 +168,7 @@ export COSIGN_BIN=$HOME/.local/bin/cosign-2.6.5
 
 python3 publisher/vexa_channel.py sign-images \
   --candidate-map work/entry/evidence/candidate-images.json \
-  --key <channel.key> --signature-repository <REG>/vexa/channel/enterprise-stable/sigs
+  --key <channel.key> --signature-repository <REG>/vexa/channel/acme-stable/sigs
 ```
 
 **The publisher signs with cosign 2.6.5, not with ambient `cosign`.**
@@ -194,8 +194,8 @@ admission: both deny as unsigned.
 
 ```bash
 python3 publisher/vexa_channel.py push --entry work/entry \
-  --ref <REG>/vexa/channel/enterprise-stable --sign-key <channel.key> \
-  --ledger ~/dev/vexa-stations
+  --ref <REG>/vexa/channel/acme-stable --sign-key <channel.key> \
+  --ledger <stations-ledger>
 ```
 
 Immutable tag only; the chart's semver is the pointer. Two toolchain checks run
@@ -223,13 +223,13 @@ and had never worked once.
 
 `--ledger` (or `$VEXA_STATIONS_DIR`) makes `push` the **sole writer** of
 `channels/<channel>/channel.yaml` in
-[`DmitriyG228/vexa-stations`](https://github.com/DmitriyG228/vexa-stations) (private),
+the stations ledger (a private repository),
 and that file — not the registry — is the **authority for `entry_seq`**. The
 copy inside the published entry is derived from it. The write is last in the
 path, after the push it records, and it is one commit by pathspec.
 
 ```bash
-python3 publisher/vexa_stations.py --ledger ~/dev/vexa-stations show
+python3 publisher/vexa_stations.py --ledger <stations-ledger> show
 ```
 
 reads the whole ledger: every channel's sequence and current entry, every
@@ -265,15 +265,15 @@ the gating differs.
 |---|---|---|
 | `vexa-internal` | the platform — our own stack | our staging (`current`) + our prod (pin) |
 | `pilot-stable` | OSS + Minutes, that customer's contract and key | their dev (`current`) + later their prod (pin) |
-| `enterprise-stable` | the standard bundle for a shape | future sprint customers |
+| `<shape>-stable` | the standard bundle for a shape | future sprint customers |
 
 Inside a subscriber's cluster the two environments are two elements of one
 `ApplicationSet` ([`kit/argocd/applicationset.yaml`](kit/argocd/applicationset.yaml)):
 
 | Position | Follows | Sync |
 |---|---|---|
-| `enterprise-staging` | `*` — the newest published chart version | automated, `prune: true`, `selfHeal: true` |
-| `enterprise-prod` | a pin string, and only the subscriber moves it | **no automated sync at all** |
+| staging (element `env: enterprise-staging`) | `*` — the newest published chart version | automated, `prune: true`, `selfHeal: true` |
+| production (element `env: enterprise-prod`) | a pin string, and only the subscriber moves it | **no automated sync at all** |
 
 The release train's stage→prod ceremony collapses into **publish → staging
 proves → pin move = prod deploy**, and rollback is the pin move back.
@@ -391,7 +391,7 @@ appears — **naming files, never values**.
 
 ```bash
 python3 publisher/vexa_station.py ingest --bundle <station.tar.gz> --station <name> \
-  --channel <chan> --ledger ~/dev/vexa-stations [--force]
+  --channel <chan> --ledger <stations-ledger> [--force]
 ```
 
 **S1..S4** run before anything is unpacked: bundle shape, completeness,
@@ -417,7 +417,7 @@ A pin move is the one write a human makes, and it refuses to run without a
 reason:
 
 ```bash
-python3 publisher/vexa_stations.py --ledger ~/dev/vexa-stations pin \
+python3 publisher/vexa_stations.py --ledger <stations-ledger> pin \
   --channel <chan> --station <name> --position 0.12.35 \
   --justification "dev station receipt <path>: PASS on <date>"
 ```
@@ -741,7 +741,7 @@ A subscriber whose registry needs credentials passes
 
 **`vexa-platform` is just another subscriber with a private channel.** The
 chain consumes itself: candidates first, verdicts accumulate, and the
-enterprise entry is built from what the internal stations already signed.
+published entry is built from what the internal stations already signed.
 
 **The migration is done when two proofs hold**, and the first pin-move delivery
 flows:
@@ -754,7 +754,7 @@ flows:
 ```bash
 # 0 contract INSTANCES are records and live in vexa-stations, not here; every
 #   script below takes the contract as a --policy path, so point it at a checkout
-STATIONS=${VEXA_STATIONS_DIR:-~/dev/vexa-stations}
+STATIONS=${VEXA_STATIONS_DIR:?set to your stations-ledger checkout}
 
 # 1 candidate entry — BEFORE prod runs it: no receipt, no soak, by definition
 python3 publisher/vexa_channel.py build --release vX.Y.Z --channel vexa-internal \
@@ -774,8 +774,8 @@ python3 publisher/vexa_channel.py attest --kind station-verdict --release vX.Y.Z
 sh kit/verify/vexa-verify.sh ... --policy "$STATIONS"/channels/vexa-internal/contracts/internal-prod.json
 sh kit/verify/approve.sh --release X.Y.Z ... --policy "$STATIONS"/channels/vexa-internal/contracts/internal-prod.json
 
-# 4 enterprise entry, built FROM the accumulated evidence
-python3 publisher/vexa_channel.py build --release vX.Y.Z --channel enterprise-stable \
+# 4 published entry, built FROM the accumulated evidence
+python3 publisher/vexa_channel.py build --release vX.Y.Z --channel acme-stable \
   --delivery-receipt ... --extra-evidence other=station-verdict...=... --out work/entry
 ```
 

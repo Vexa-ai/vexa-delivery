@@ -39,7 +39,7 @@ customer files by any out-of-band means and the evidence bundle attaches as file
   "severity": "sev1|sev2|sev3",
   "kind": "install|upgrade|admission_refusal|health_rollback|platform_change|question|break_glass_request",
   "channel_ref": {                     // the delivery coordinates the ticket is about
-    "channel": "enterprise-stable",
+    "channel": "acme-stable",
     "entry_seq": 7,
     "release": "v0.12.23",
     "entry_digest": "sha256:…"

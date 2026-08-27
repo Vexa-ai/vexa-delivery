@@ -26,38 +26,37 @@ usage: vexa-preflight [-h] --namespace NAMESPACE [--manifests MANIFESTS] [--snap
 vexa-preflight — cluster conformance preflight for your private channel.
 
 Answers, BEFORE first sync and on every upgrade, in plain language: will this
-cluster run what the conveyor delivers? Every check is anchored to a failure
-observed in the field (handoff §6, 2026-08-20/21) — customer clusters carry
-taints, LimitRanges and admission policies we do not control, and the first
-sync is the wrong moment to learn that.
+cluster run what the channel delivers? Every check is anchored to a failure
+observed in the field — clusters carry taints, LimitRanges and admission
+policies we do not control, and the first sync is the wrong moment to learn
+that.
 
 Checks
   P1 taints-tolerations   every delivered workload can schedule on ≥1 node
-                          (anchor: LKE addon pods stranded 6h by a cluster-wide
-                          custom taint, vexa-platform#337; Argo's own pods
-                          Pending on tainted nodes, argocd spike finding 5)
+                          (anchor: addon pods stranded 6h by a cluster-wide
+                          custom taint; Argo's own pods Pending on tainted
+                          nodes)
   P2 limitranges          every container declares requests+limits, and the
                           declared values fit the namespace LimitRange
-                          (anchor: a customer LimitRange squeezed undeclared bot
-                          pods to 64Mi, vexa#1005; sizing env vars were dead
-                          code for a month, vexa-platform#338)
+                          (anchor: a LimitRange squeezed undeclared bot pods to
+                          64Mi; sizing env vars were dead code for a month)
   P3 resourcequota        quota headroom covers the declared sums
   P4 pod-security         OpenShift SCC restricted-v2: explicit UIDs/fsGroups
                           outside the namespace range are REJECTED (mutation
                           fixes the rest); PSA restricted: runAsNonRoot,
-                          seccomp, drop-ALL required (anchor: openshift
-                          readiness audit 2026-08-19 — the hardened workloads
-                          are exactly the SCC-rejected ones)
+                          seccomp, drop-ALL required (anchor: an OpenShift
+                          readiness review — the hardened workloads are exactly
+                          the SCC-rejected ones)
   P5 networkpolicy        default-deny detection, DNS egress, registry
                           reachability (static + optional live probe)
   P6 shm                  the bot's 2Gi Memory-medium /dev/shm counts against
                           its memory limit; LimitRange max and node allocatable
-                          must fit it (anchor: audit §6 — 2Gi shm vs 2560Mi
-                          limit is production's actual configuration)
+                          must fit it (anchor: 2Gi shm against a 2560Mi limit is
+                          production's actual configuration)
   P7 image-pull           the cluster can actually pull a release image by
                           digest with the namespace's pull secrets (anchor:
-                          spike finding 8 — images "pulled" only because nodes
-                          had them cached; a real install fails here)
+                          images "pulled" only because nodes had them cached;
+                          a real install fails here)
   P8 storage              a default StorageClass exists if the manifests carry
                           PVCs
   P9 kubernetes version   sanity floor

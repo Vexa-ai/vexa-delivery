@@ -37,7 +37,7 @@ echo "test-key-placeholder" > "$TMP/channel.pub"
 
 run() {
   bash "$KIT/install.sh" --provider lke --registry reg.example:5000 \
-    --channel enterprise-stable --channel-pubkey "$TMP/channel.pub" \
+    --channel acme-stable --channel-pubkey "$TMP/channel.pub" \
     --skip-preflight --dry-run "$@" 2>&1
 }
 

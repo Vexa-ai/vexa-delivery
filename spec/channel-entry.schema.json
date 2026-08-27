@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vexa.ai/schemas/ee/channel-entry.v1.json",
-  "title": "Vexa enterprise channel entry",
-  "description": "One release on one enterprise channel: the exact image-digest set plus the evidence bundle proving that set earned promotion. Generalized from the internal prod-delivery-receipt.v1 schema; this is the customer-facing contract. Every evidence file is listed with its sha256 so the bundle verifies offline; entry.json itself is the signed subject.",
+  "title": "Vexa Delivery channel entry",
+  "description": "One release on one channel: the exact image-digest set plus the evidence bundle proving that set earned promotion. Generalized from the internal prod-delivery-receipt.v1 schema; this is the customer-facing contract. Every evidence file is listed with its sha256 so the bundle verifies offline; entry.json itself is the signed subject.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -34,7 +34,7 @@
         "name": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
-          "description": "Channel identifier, e.g. enterprise-stable. One channel = one ordered stream of entries."
+          "description": "Channel identifier, e.g. acme-stable. One channel = one ordered stream of entries."
         },
         "entry_seq": {
           "type": "integer",

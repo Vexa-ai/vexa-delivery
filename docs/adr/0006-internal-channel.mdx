@@ -7,8 +7,8 @@ description: "Our own staging → prod runs on the same channel machinery we sel
 
 ## Context
 
-The conveyor was built outside-in: enterprise customers subscribe to a channel of
-frozen, evidence-carrying releases. But our own staging → prod promotion still ran
+The machinery was built outside-in: subscribers pull a channel of frozen,
+evidence-carrying releases. But our own staging → prod promotion still ran
 on hand deploys — `helm upgrade` plus `kubectl set image` forks, documented drift
 tables that themselves went stale, and rollbacks that silently stripped out-of-band
 hotfixes (see the vexa-platform handover docs, 2026-07). The vendor of a delivery
@@ -33,7 +33,7 @@ entries are published **before** production runs, not after.
    The verifier pulls each required attestation from the channel, verifies its
    signature against the pinned key, matches its subject digests against the
    entry's images, and checks release, station, and verdict.
-4. The enterprise `published` entry is then **built from the accumulated
+4. The `published` entry is then **built from the accumulated
    evidence** — delivery receipt, soak, hardening, and the station verdicts all
    ride in the bundle. What a customer receives is the record of what our own
    chain already consumed and signed.

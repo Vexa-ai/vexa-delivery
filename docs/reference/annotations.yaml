@@ -81,8 +81,8 @@ vexa-channel sign-images: >-
 vexa-channel attest: >-
   Record a signed, structured claim about a release: a station's verdict, a
   soak result, anything a downstream contract can `require:` by name. This is
-  how the internal channel accumulates evidence that the enterprise entry is
-  later built from.
+  how the internal channel accumulates evidence that the published channel entry
+  is later built from.
 
 vexa-station ingest: >-
   Take the `station.tar.gz` a customer sent back and unpack it into

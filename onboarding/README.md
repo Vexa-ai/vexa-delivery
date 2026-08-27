@@ -1,4 +1,4 @@
-# Onboarding pack — Vexa Enterprise subscriber (MVP0 template)
+# Onboarding pack — Vexa Delivery subscriber (MVP0 template)
 
 What a new subscriber receives (assembled per pilot, founder-gated since
 customer-visible):

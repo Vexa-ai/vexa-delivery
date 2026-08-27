@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# vexa-kit release — publisher side of the kit's own conveyor.
+# vexa-kit release — publisher side of the kit's own delivery path.
 #
 # The kit is what a customer runs inside their perimeter, so it must arrive the
 # same way everything else does: as a versioned, signed OCI artifact on the
@@ -22,7 +22,7 @@ usage: release.sh --registry <host[:port]> --channel <name> --version vX.Y.Z \\
 
 required
   --registry     channel registry host[:port]
-  --channel      channel name, e.g. enterprise-stable
+  --channel      channel name, e.g. acme-stable
   --version      kit version to publish, vX.Y.Z (semver, 'v' prefix required)
   --sign-key     cosign private key; the pushed digest is signed with it
 
@@ -78,7 +78,7 @@ ISO_DOCKER_CONFIG="${TMPDIR:-/tmp}/vexa-channel-dockercfg"
 mkdir -p "$ISO_DOCKER_CONFIG"
 # Carry the credentials `oras login` already stored, minus the helper keys:
 # blanking auths outright makes cosign UNAUTHORIZED against an authenticated
-# channel registry, which is the enterprise shape (rehearsal 2026-08-24).
+# channel registry, which is the common shape (rehearsal 2026-08-24).
 python3 - "$HOME/.docker/config.json" > "$ISO_DOCKER_CONFIG/config.json" <<'PYCFG'
 import base64, json, os, sys
 try:

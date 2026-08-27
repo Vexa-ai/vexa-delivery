@@ -23,25 +23,22 @@ usage: install.sh --provider <name> --registry <host[:port]> --channel <name> \
 required
   --provider        one of: aws-eks azure-aks gcp-gke generic lke openshift 
   --registry        channel registry host[:port]
-  --customer-values customer-local values file injected into the subscription
-                    (default: profiles/vexa/customer-values.example.yaml)
-  --channel         channel name, e.g. enterprise-stable
+  --channel         channel name, e.g. acme-stable
   --channel-pubkey  cosign public key the admission policy pins
 
 options
-  --staging-ns      namespace for enterprise-staging   (default vexa-staging)
-  --prod-ns         namespace for enterprise-prod      (default vexa-prod)
+  --customer-values customer-local values file injected into the subscription
+                    (default: profiles/vexa/customer-values.example.yaml)
+  --staging-ns      namespace the staging Application deploys into
+                    (default vexa-staging)
+  --prod-ns         namespace the production Application deploys into
+                    (default vexa-prod)
   --prod-pin        channel position prod follows      (default: none — prod
                     Application is created only when you set a pin; moving the
                     pin is YOUR gate)
   --signature-repository  OCI repo where cosign signatures live (default:
                     alongside each image)
   --registry-user   username for an AUTHENTICATED channel registry. The
-  --chart-name NAME  chart to install from the channel (default: vexa). An estate
-                    channel serves vexa-platform, not vexa.
-  --release-name N  Helm release name (default: vexa). MUST match the existing
-                    release when adopting a live cluster — Helm keys its release
-                    Secret on this and a mismatch installs a second copy.
                     password is read from the VEXA_CHANNEL_PASS environment
                     variable, never from argv. Required whenever your channel
                     registry needs credentials to pull: without it Argo CD's
@@ -50,6 +47,11 @@ options
                     signature read paths are anonymous so it is not needed
                     for admission, but it is needed if you mirror the channel
                     into your own authenticated registry.
+  --chart-name NAME  chart to install from the channel (default: vexa). An
+                    estate channel serves the vexa-platform chart.
+  --release-name N  Helm release name (default: vexa). MUST match the existing
+                    release when adopting a live cluster — Helm keys its release
+                    Secret on this and a mismatch installs a second copy.
   --registry-ca     PEM file of the registry's CA (corporate/self-signed):
                     mounted into Kyverno as a trust bundle
   --registry-insecure  registry TLS cert is not trusted by Argo CD (self-signed

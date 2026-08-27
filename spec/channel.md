@@ -1,4 +1,4 @@
-# The enterprise channel — layout, signing, verification
+# The channel — layout, signing, verification
 
 One channel is one ordered stream of **channel entries**. An entry is one release: the exact
 image-digest set plus the evidence bundle proving that set earned promotion. The customer's
@@ -188,5 +188,5 @@ channel.
 4. Sync: Argo CD renders the digest-pinned chart with the customer's local values; admission
    (Kyverno) independently re-verifies image signatures and digest-pinning before a byte runs.
 
-Steps 1–3 are the conformance the kit's policy encodes; step 4 is stock Argo CD + Kyverno — we
-ship configuration, not an agent.
+Steps 1–3 are the conformance the kit's policy encodes; step 4 is stock Argo CD + Kyverno,
+configured by files the customer can read.
