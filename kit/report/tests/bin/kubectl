@@ -7,6 +7,13 @@ VEXA_TEST_FIXTURES names a directory. `get <resource>` prints
 real kubectl does when RBAC refuses it, which is the case the tool must
 degrade through rather than crash on.
 
+A read in ANOTHER namespace — `get <resource> -n argocd` — is answered from
+<fixtures>/<namespace>/<resource>.json and NEVER from the flat file, so a
+fixture without that directory is a cluster where the operator has no RBAC
+next door. Without the split, "is Argo CD installed" would be answered by this
+namespace's own deployments, which is the wrong answer arriving quietly.
+VEXA_TEST_NAMESPACE names the primary namespace (default `vexa`).
+
 VEXA_TEST_KUBECTL_LOG, when set, records every invocation one per line. That is
 how the test suite checks that `--dry-run` prints the commands a real run
 ACTUALLY issues, rather than a second, drifting description of them.
@@ -38,7 +45,15 @@ if argv and argv[0] == "version":
 
 if argv and argv[0] == "get":
     resource = argv[1]
-    path = FIX / ("%s.json" % resource)
+    namespace = None
+    for i, flag in enumerate(argv):
+        if flag == "-n" and i + 1 < len(argv):
+            namespace = argv[i + 1]
+    primary = os.environ.get("VEXA_TEST_NAMESPACE", "vexa")
+    if namespace and namespace != primary:
+        path = FIX / namespace / ("%s.json" % resource)
+    else:
+        path = FIX / ("%s.json" % resource)
     if not path.is_file():
         sys.stderr.write('Error from server (Forbidden): %s is forbidden\n' % resource)
         sys.exit(1)

@@ -339,7 +339,8 @@ class TestHealthyRun(unittest.TestCase):
             self.assertGreater(len(comments), 30,
                                "the explanation is supposed to be IN the file")
             for heading in ("1 · PLATFORM", "2 · VERSIONS AND VALUES", "3 · RESOURCES",
-                            "4 · WIRING", "5 · REGISTRY"):
+                            "4 · WIRING", "5 · REGISTRY", "6 · ADMISSION",
+                            "7 · NETWORK POLICY", "8 · THE INSTALL ALREADY HERE"):
                 self.assertIn(heading, r.text, heading)
 
     def test_platform_is_read_by_shape_and_never_by_name(self):
@@ -473,8 +474,180 @@ class TestHealthyRun(unittest.TestCase):
             self.assertTrue(doc["redaction"]["verified"])
             self.assertEqual(doc["redaction"]["leaks"], 0)
             self.assertGreater(doc["redaction"]["withheld_values"], 0)
-            self.assertEqual(doc["absent"], [])
+            # This estate grants nothing in the argocd and kyverno namespaces,
+            # which is the normal case: a namespace admin cannot read next
+            # door. Those two are the only gaps, and both name a reason.
+            self.assertEqual([row["what"] for row in doc["absent"]],
+                             ["Argo CD (namespace argocd)",
+                              "Kyverno (namespace kyverno)"])
+            self.assertTrue(all(row["reason"] for row in doc["absent"]))
             self.assertIn("IT HAS NOT BEEN SENT ANYWHERE", r.text)
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class TestNodeTaints(unittest.TestCase):
+    """A taint is why a delivered workload never schedules, and the values file
+    we hand back ships an empty `tolerations: []` for somebody to fill in. So
+    the taints have to be IN the report, and grouped rather than per node."""
+
+    def test_a_taint_is_reported_and_splits_the_shape_it_is_on(self):
+        with Run("healthy") as r:
+            shapes = r.doc["platform"]["node_shapes"]
+            gpu = next(s for s in shapes if s["gpu"])
+            self.assertEqual(gpu["taints"], "nvidia.com/gpu=true:NoSchedule")
+            self.assertEqual(gpu["count"], 1)
+            self.assertNotIn("node-gpu-1", r.text)     # still no node names
+
+    def test_untainted_nodes_say_none_and_still_group_as_one_shape(self):
+        # "none" rather than a missing field: an absent field reads as "we did
+        # not look", which is the one thing this document may not imply.
+        with Run("healthy") as r:
+            shapes = r.doc["platform"]["node_shapes"]
+            plain = next(s for s in shapes if not s["gpu"])
+            self.assertEqual(plain["taints"], "none")
+            self.assertEqual(plain["count"], 2)
+            self.assertTrue(all("taints" in s for s in shapes))
+
+    def test_unreadable_nodes_are_a_gap_and_not_an_untainted_cluster(self):
+        with Run("empty") as r:
+            self.assertNotIn("node_shapes", r.doc["platform"])
+            self.assertIn("node shapes",
+                          " ".join(row["what"] for row in r.doc["absent"]))
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class TestAdmission(unittest.TestCase):
+    """The namespace's own admission posture — the whole OpenShift rejection
+    class, and invisible from every other section of the document."""
+
+    def test_pod_security_labels_are_read_off_the_namespace(self):
+        with Run("healthy") as r:
+            admission = r.doc["admission"]
+            self.assertIn("enforce baseline (v1.28)", admission["pod_security"])
+            self.assertIn("audit restricted", admission["pod_security"])
+            self.assertIn("warn restricted", admission["pod_security"])
+
+    def test_openshift_scc_ranges_are_reported_when_they_are_there(self):
+        with Run("mirrored") as r:
+            admission = r.doc["admission"]
+            self.assertEqual(admission["pod_security"], "enforce restricted (v1.28)")
+            self.assertIn("uid-range 1000660000/10000", admission["openshift_scc"])
+            self.assertIn("supplemental-groups 1000660000/10000",
+                          admission["openshift_scc"])
+
+    def test_no_labels_is_said_plainly_and_the_default_is_not_guessed(self):
+        with Run("with-limitrange") as r:
+            posture = r.doc["admission"]["pod_security"]
+            self.assertIn("no pod-security.kubernetes.io labels", posture)
+            self.assertIn("cannot see what that is", posture)
+
+    def test_an_unreadable_namespace_is_absent_and_never_permissive(self):
+        with Run("empty") as r:
+            self.assertTrue(r.doc["admission"]["pod_security"].startswith("absent"))
+            gap = next(row for row in r.doc["absent"]
+                       if row["what"] == "admission posture")
+            self.assertIn("NOT assumed permissive", gap["reason"])
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class TestNetworkPolicy(unittest.TestCase):
+    """Whether this namespace can reach a registry at all — by shape, because
+    the rule bodies carry internal addresses and nothing here needs them."""
+
+    def test_a_default_deny_egress_policy_is_named_as_what_it_is(self):
+        with Run("mirrored") as r:
+            netpol = r.doc["network_policy"]
+            self.assertEqual(len(netpol["policies"]), 2)
+            self.assertIn("default-deny-egress · Egress · selects every pod",
+                          netpol["policies"][0])
+            self.assertIn("denies ALL egress", netpol["egress"])
+
+    def test_rule_bodies_never_reach_the_document(self):
+        # The fixture's rules name kube-system and port 53. The shape is
+        # reported; the rule is not, because a rule body carries addresses.
+        with Run("mirrored") as r:
+            rendered = json.dumps(r.doc["network_policy"])
+            for token in ("kube-system", "namespaceSelector", "matchLabels", "UDP"):
+                self.assertNotIn(token, rendered, token)
+
+    def test_an_ingress_only_policy_does_not_read_as_blocked_egress(self):
+        with Run("healthy") as r:
+            netpol = r.doc["network_policy"]
+            self.assertIn("selects some pods", netpol["policies"][0])
+            self.assertIn("no policy here restricts egress", netpol["egress"])
+
+    def test_no_policies_at_all_is_a_different_sentence_from_unreadable(self):
+        with Run("with-limitrange") as r:
+            self.assertEqual(r.doc["network_policy"]["policies"], [])
+            self.assertIn("no NetworkPolicies", r.doc["network_policy"]["egress"])
+        with Run("empty") as r:
+            self.assertTrue(r.doc["network_policy"]["egress"].startswith("absent"))
+            gap = next(row for row in r.doc["absent"]
+                       if row["what"] == "network policies")
+            self.assertIn("NOT read as 'nothing blocks'", gap["reason"])
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class TestTheExistingInstall(unittest.TestCase):
+    """The release name is the documented footgun: a `--release-name` that
+    matches nothing installs a second copy of the estate, and succeeds."""
+
+    def test_the_release_name_is_read_from_the_labels_that_carry_it(self):
+        with Run("healthy") as r:
+            install = r.doc["install"]
+            self.assertEqual(install["release_names"], ["vexa (2 workloads)"])
+            self.assertEqual(install["managed_by"], "Helm")
+            self.assertNotIn("finding", install)
+
+    def test_two_release_names_in_one_namespace_are_flagged_plainly(self):
+        with Run("mirrored") as r:
+            install = r.doc["install"]
+            self.assertEqual(install["release_names"],
+                             ["vexa (1 workload)", "vexa-preprod (1 workload)"])
+            self.assertIn("MORE THAN ONE release name", install["finding"])
+            self.assertIn("second copy", install["finding"])
+
+    def test_no_release_label_anywhere_is_a_gap_rather_than_a_guess(self):
+        with Run("empty") as r:
+            self.assertIsNone(r.doc["install"]["release_names"])
+            gap = next(row for row in r.doc["absent"]
+                       if row["what"] == "helm release name")
+            self.assertIn("not guessed", gap["reason"])
+
+    def test_no_helm_binary_and_no_secret_read_produced_this(self):
+        with Run("healthy") as r:
+            for line in r.commands():
+                self.assertNotIn("secret", line)
+                self.assertFalse(line.startswith("helm "), line)
+
+    def test_argo_cd_and_kyverno_are_reported_where_they_run(self):
+        with Run("mirrored") as r:
+            install = r.doc["install"]
+            self.assertIn("present in namespace argocd", install["argo_cd"])
+            self.assertIn("v2.11.3", install["argo_cd"])
+            self.assertIn("present in namespace kyverno", install["kyverno"])
+            self.assertIn("v1.12.5", install["kyverno"])
+
+    def test_a_namespace_we_cannot_read_is_absent_and_not_not_installed(self):
+        # "not installed" and "no RBAC over there" look identical from inside
+        # one namespace, and only one of them is safe to act on.
+        with Run("healthy") as r:
+            for key in ("argo_cd", "kyverno"):
+                self.assertTrue(r.doc["install"][key].startswith("absent"), key)
+                self.assertIn("look identical", r.doc["install"][key])
+            named = [row["what"] for row in r.doc["absent"]]
+            self.assertIn("Argo CD (namespace argocd)", named)
+            self.assertIn("Kyverno (namespace kyverno)", named)
+
+    def test_the_reads_next_door_are_scoped_to_those_namespaces(self):
+        with Run("healthy") as r:
+            executed = "\n".join(r.commands())
+            self.assertIn("get deployments.apps -n argocd -o json", executed)
+            self.assertIn("get deployments.apps -n kyverno -o json", executed)
+            # the namespace's own object is read BY NAME: the other namespaces
+            # in the cluster are never listed
+            self.assertIn("get namespace vexa -o json", executed)
+            self.assertNotIn("get namespaces -o json", executed)
 
 
 @unittest.skipIf(yaml is None, "PyYAML not installed")
@@ -498,8 +671,12 @@ class TestAbsentOverZero(unittest.TestCase):
                 self.assertIn(what, named, what)
 
     def test_it_stays_inside_the_budget_when_there_is_nothing_to_report(self):
+        # A cluster that refuses EVERY read is the one case where the document
+        # is mostly the gap list, and every gap costs its own line plus a
+        # reason. It is still shorter than a real estate's report; the budget
+        # that matters is the healthy one, which is checked at 300.
         with Run("empty") as r:
-            self.assertLess(len(r.text.splitlines()), 200)
+            self.assertLess(len(r.text.splitlines()), 240)
 
     def test_a_section_with_nothing_to_say_is_omitted_rather_than_faked(self):
         with Run("empty") as r:

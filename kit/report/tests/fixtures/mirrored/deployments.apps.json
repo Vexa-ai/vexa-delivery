@@ -87,6 +87,7 @@
         "name": "vexa-admin-api",
         "labels": {
           "app.kubernetes.io/name": "admin-api",
+          "app.kubernetes.io/instance": "vexa-preprod",
           "helm.sh/chart": "vexa-0.10.4"
         }
       },

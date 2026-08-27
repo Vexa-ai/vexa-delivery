@@ -7,7 +7,7 @@ written to one file**. No database connection, no `pods/exec`, no credentials
 of any kind, no SQL.
 
 An operator runs it on a deployment that already exists and gets
-`state-report.yaml`: roughly 150–250 lines of commented YAML describing the
+`state-report.yaml`: roughly 200–300 lines of commented YAML describing the
 shape of their environment. They read it, then they send it by hand — or they
 do not. Nothing in the tool transmits.
 
@@ -21,12 +21,27 @@ Operator-facing page: [`docs/upgrade.mdx`](../../docs/upgrade.mdx).
 
 | | |
 |---|---|
-| **1 platform** | Kubernetes or OpenShift, version, the cloud underneath, node shapes, storage classes and volumes |
+| **1 platform** | Kubernetes or OpenShift, version, the cloud underneath, node shapes **and the taints on them**, storage classes and volumes |
 | **2 wiring** | which components exist and how they are connected — the database and transcription especially: in-cluster or external, how each is addressed, versions, GPU or CPU |
 | **3 resources** | requests and limits per container, and the namespace's ResourceQuotas and LimitRanges |
 | **4 versions** | the image tags and digests **actually running** |
 | **5 values** | the settings this deployment has customised |
 | **6 registry** | Docker Hub or a mirror — as observed, never inferred |
+| **7 admission** | the namespace's Pod Security labels and, on OpenShift, its SCC UID and group ranges — what it will let run at all |
+| **8 network** | the NetworkPolicies, by shape: whether anything default-denies egress. Rule bodies are not read |
+| **9 install** | the Helm release name already here, and whether Argo CD or Kyverno already run |
+
+The last three were added because the sibling preflight
+([`kit/preflight/`](../preflight/)) checks all of them — P1 taints, P4 pod
+security, P5 NetworkPolicy — while the report collected none of them, so the
+document could not be built against. Each answers a question that changes what
+we ship: a taint needs a matching toleration in the values file we hand back
+(which ships `tolerations: []` for exactly that); `restricted` admission or an
+SCC range decides whether workloads run non-root with a seccomp profile and no
+capabilities, and whether they may pin a UID at all; a default-deny egress
+policy decides whether the cluster can reach a registry; and the release name
+decides whether an upgrade lands on the running estate or installs a **second
+copy of it beside the first, against the same database**.
 
 **Never collected:** schema, rows, row counts, SQL of any kind, transcripts,
 meeting content, credentials. Also not collected, because they are inventory
@@ -59,6 +74,11 @@ tests/                 fixture-driven, offline
 tests/bin/kubectl      a fake kubectl that answers from a fixture directory
                        and logs every invocation
 tests/fixtures/<case>/ the estate each case describes
+tests/fixtures/<case>/<ns>/
+                       a read in ANOTHER namespace (`-n argocd`) is answered
+                       only from here, never from the flat file — a fixture
+                       without the directory is an estate where the operator
+                       has no RBAC next door
 ```
 
 `make test-report` runs them. There is no cluster and no network anywhere in
@@ -76,12 +96,17 @@ Two extension points, both deliberately small:
   all. Everything else is dropped before it is written, so redaction is the
   second net rather than the only one.
 
-Two rules a patch has to respect:
+Three rules a patch has to respect:
 
 - **Does it describe the shape we must fit into?** Node shapes, quotas, ingress
   class, resource limits, GPU-vs-CPU, image digests, replica counts,
   allowlisted non-secret settings — yes. Anything describing their *data* — no,
   and no amount of usefulness changes that.
+- **Stay inside the budget.** The whole document has to be read end to end by
+  the person deciding whether to send it, so ~300 lines on a real estate is the
+  ceiling, not a guideline. Prefer one line to five: shape over rule bodies,
+  a grouped count over a list of names, one sentence in the section comment
+  over a field repeating it.
 - **Do not name a field after a secret.** The redaction rule is deliberately
   blunt and empties anything under a key matching
   `password|token|secret|key|apikey`. Two fields shipped named that way and lost

@@ -6,6 +6,7 @@
         "labels": {
           "app.kubernetes.io/name": "whisperlive",
           "app.kubernetes.io/version": "0.10.4",
+          "app.kubernetes.io/managed-by": "Helm",
           "helm.sh/chart": "vexa-0.10.4"
         },
         "annotations": {
@@ -44,7 +45,9 @@
     {
       "metadata": {
         "name": "vexa-admin-api",
-        "labels": {"app.kubernetes.io/name": "admin-api", "helm.sh/chart": "vexa-0.10.4"}
+        "labels": {"app.kubernetes.io/name": "admin-api", "helm.sh/chart": "vexa-0.10.4",
+                   "app.kubernetes.io/instance": "vexa",
+                   "app.kubernetes.io/managed-by": "Helm"}
       },
       "spec": {
         "replicas": 1,

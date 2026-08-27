@@ -168,9 +168,11 @@ vexa-state-report: >-
   describing the shape of that environment: platform and version, how the
   database and transcription are wired, per-container resources against the
   namespace's quotas and LimitRanges, the image digests actually running, the
-  settings you have customised, and where your images come from. Start with
-  `--dry-run`, which connects to nothing and prints every command it would run.
-  It prints a path and stops: nothing transmits.
+  settings you have customised, where your images come from, the taints on your
+  nodes, what your namespace's Pod Security labels and NetworkPolicies will let
+  run, and the name of the release already installed. Start with `--dry-run`,
+  which connects to nothing and prints every command it would run. It prints a
+  path and stops: nothing transmits.
 
 kit-bootstrap: >-
   The first command a new station ever runs: fetch the kit tree from the

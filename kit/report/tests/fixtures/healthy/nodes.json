@@ -31,7 +31,14 @@
         }
       },
       "spec": {
-        "providerID": "lke://12341"
+        "providerID": "lke://12341",
+        "taints": [
+          {
+            "key": "nvidia.com/gpu",
+            "value": "true",
+            "effect": "NoSchedule"
+          }
+        ]
       }
     },
     {

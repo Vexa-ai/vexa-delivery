@@ -10,7 +10,7 @@ Source: `kit/report/vexa_state_report.py` · audience: customer
 
 ## When you use this
 
-Run it FIRST on a deployment that already exists. It is a read-only `kubectl get` sweep of one namespace — no database connection, no `pods/exec`, no credentials of any kind, no SQL — and it writes one commented YAML file describing the shape of that environment: platform and version, how the database and transcription are wired, per-container resources against the namespace's quotas and LimitRanges, the image digests actually running, the settings you have customised, and where your images come from. Start with `--dry-run`, which connects to nothing and prints every command it would run. It prints a path and stops: nothing transmits.
+Run it FIRST on a deployment that already exists. It is a read-only `kubectl get` sweep of one namespace — no database connection, no `pods/exec`, no credentials of any kind, no SQL — and it writes one commented YAML file describing the shape of that environment: platform and version, how the database and transcription are wired, per-container resources against the namespace's quotas and LimitRanges, the image digests actually running, the settings you have customised, where your images come from, the taints on your nodes, what your namespace's Pod Security labels and NetworkPolicies will let run, and the name of the release already installed. Start with `--dry-run`, which connects to nothing and prints every command it would run. It prints a path and stops: nothing transmits.
 
 ## Usage
 
@@ -59,6 +59,19 @@ WHAT IT COLLECTS, and the list is complete:
                   does not overwrite a deliberate choice
   6. REGISTRY     whether images come from Docker Hub or through a mirror —
                   reported as observed, never as inferred
+  7. ADMISSION    what this namespace will let run: its Pod Security labels
+                  and, on OpenShift, the SCC UID and group ranges. This is
+                  what decides whether the delivered workloads need
+                  runAsNonRoot, a seccomp profile and dropped capabilities
+  8. NETWORK      the NetworkPolicies in the namespace, by SHAPE — whether
+                  anything default-denies egress, which is what decides
+                  whether this cluster can reach a registry at all. Rule
+                  bodies are not read: they carry internal addresses and are
+                  not needed to build
+  9. INSTALL      the name of the Helm release already here, and whether Argo
+                  CD or Kyverno already run. A `--release-name` that matches
+                  nothing installs a SECOND copy of the estate beside the
+                  running one, against the same database
 
 NEVER COLLECTED: schema, rows, row counts, SQL of any kind, transcripts,
 meeting content, credentials. The database appears here only as a COMPONENT —
@@ -123,8 +136,10 @@ reader will see above it in the YAML. That is the whole contract:
     everything in that set, so an allowlist you extended stays checkable;
   * BUDGET IS A FEATURE. This file is read end to end by somebody deciding
     whether to send it. Prefer one compact line to five nested ones; say each
-    fact once. Roughly 150-250 lines, comments included, is the shape;
-  * ONE TEST FOR WHETHER IT BELONGS: is it one of the six things above? Node
+    fact once. Roughly 200-300 lines, comments included, is the shape, and
+    300 is a ceiling rather than a guideline — a section that would push past
+    it summarises instead of growing, and says what it summarised;
+  * ONE TEST FOR WHETHER IT BELONGS: is it one of the nine things above? Node
     shapes, quotas, ingress class, resource limits, GPU-vs-CPU, image digests,
     replica counts, allowlisted non-secret settings — yes. Anything describing
     their data — no, and no amount of usefulness changes that.
@@ -167,7 +182,8 @@ why we ask for it
 
 what it collects
 
-  1 platform    Kubernetes or OpenShift, version, cloud, node shapes, storage
+  1 platform    Kubernetes or OpenShift, version, cloud, node shapes and the
+                taints on them, storage
   2 wiring      which components exist and how they are connected — database
                 and transcription especially: in-cluster or external, how each
                 is addressed, versions, GPU or CPU
@@ -176,10 +192,16 @@ what it collects
   4 versions    image tags and digests actually running
   5 values      the settings this deployment has customised
   6 registry    Docker Hub or a mirror — as observed, never inferred
+  7 admission   the namespace's Pod Security labels and, on OpenShift, its SCC
+                ranges — what it will let run at all
+  8 network     the NetworkPolicies, by shape: whether anything default-denies
+                egress. Rule bodies are not read
+  9 install     the Helm release name already here, and whether Argo CD or
+                Kyverno already run
 
 what you get
 
-  state-report.yaml — one file, roughly 150-250 lines, every block carrying a
+  state-report.yaml — one file, roughly 200-300 lines, every block carrying a
   plain-English comment above it. No directory, no archive, nothing to extract.
   You are meant to read all of it before any of it is sent.
 
