@@ -67,11 +67,11 @@ An unrecognized link fails immediately. `--non-interactive` rehearses without th
 
 ```bash
 python3 kit/validate/vexa_validate.py --namespace vexa-staging \
-  --customer-values my-values.yaml --flows [--meeting-url URL | --non-interactive]
+  --customer-values my-values.yaml --flows
 ```
 
-Runs steps 2 and 4 — add `--install` (with `--provider --registry --channel --channel-pubkey`) to run step 3 between them. Exit codes: `0` pass · `1` phase failed · `2` usage · `3` redaction leak.
+Runs steps 2 and 4; add `--install` for step 3 between them. Exit codes: `0` pass · `1` phase failed · `2` usage · `3` redaction leak.
 
-It writes **`station.tar.gz`**: your provider profile (`profile.env`), your values with every value under a key matching `password|token|secret|key|apikey` turned into `REDACTED`, the contract, the preflight and smoke receipts plus the raw smoke console, and `station.json`. `--verify-redaction` (on by default) re-extracts the finished archive and exits `3` if a removed value still appears, naming files, never values. Look at the file, then send it by hand — nothing transmits it.
+Writes `station.tar.gz` — your profile, your values with secrets redacted, the contract, and the receipts. Read it, then send it.
 
 Next: [The station gate](station-gate) · [Operations](operations) · [Isolated networks](security#isolated-networks)
