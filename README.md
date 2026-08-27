@@ -3,7 +3,8 @@
 **Signed, pull-only delivery channels for self-hosted software.**
 
 Your cluster stays yours. vexa-delivery keeps a self-hosted deployment current through a
-channel your cluster pulls from: every entry is digest-pinned and cosign-signed, verified
+channel your cluster pulls from — the open channel, free for everyone, or a tailored channel
+operated with us: every entry is digest-pinned and cosign-signed, verified
 inside your perimeter against keys you pin, rolled automatically on staging, and promoted
 to production only under your own attestation. The publisher holds no access to your
 environment — nothing is ever pushed, and the only thing that travels back is a report you
