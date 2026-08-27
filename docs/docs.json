@@ -13,45 +13,64 @@
         "tab": "Product",
         "groups": [
           {
-            "group": "Guide",
+            "group": "Start",
             "pages": [
               "index",
-              "how-it-works",
-              "tested",
+              "how-it-works"
+            ]
+          },
+          {
+            "group": "1 \u00b7 Install",
+            "pages": [
               "install",
               "upgrade",
+              "preflight"
+            ]
+          },
+          {
+            "group": "2 \u00b7 Subscribe to the channel",
+            "pages": [
               "channel",
-              "station-gate",
-              "preflight",
-              "verify",
-              "telemetry-ladder",
+              "verify"
+            ]
+          },
+          {
+            "group": "3 \u00b7 It updates itself",
+            "pages": [
               "operations",
+              "station-gate",
+              "telemetry-ladder"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "tested",
               "security",
               "governance",
               "support",
-              "co-design"
-            ]
-          },
-          {
-            "group": "Command reference",
-            "pages": [
-              "reference/vexa-preflight",
-              "reference/vexa-smoke",
-              "reference/vexa-validate",
-              "reference/vexa-state-report",
-              "reference/kit-bootstrap",
-              "reference/kit-install",
-              "reference/kit-self-update"
-            ]
-          },
-          {
-            "group": "Environments",
-            "pages": [
-              "environments/kubernetes",
-              "environments/gke",
-              "environments/eks",
-              "environments/aks",
-              "environments/openshift"
+              {
+                "group": "Environments",
+                "pages": [
+                  "environments/kubernetes",
+                  "environments/gke",
+                  "environments/eks",
+                  "environments/aks",
+                  "environments/openshift"
+                ]
+              },
+              {
+                "group": "Command reference",
+                "pages": [
+                  "reference/vexa-state-report",
+                  "reference/vexa-preflight",
+                  "reference/vexa-smoke",
+                  "reference/vexa-validate",
+                  "reference/kit-bootstrap",
+                  "reference/kit-install",
+                  "reference/kit-self-update"
+                ]
+              }
             ]
           },
           {
