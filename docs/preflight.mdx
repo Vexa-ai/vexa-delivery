@@ -3,7 +3,7 @@ title: "Preflight"
 description: "Know before first sync whether your cluster will run what the channel delivers."
 ---
 
-**Preflight answers one question before anything is installed: will this cluster run what the channel delivers?** It fails closed, so a conflict with your taints, quotas or admission profile surfaces now instead of during your first sync. Run it again before every upgrade.
+It fails closed, so a conflict with your taints, quotas or admission profile surfaces now instead of during your first sync. Run it again before every upgrade.
 
 ```bash
 python3 kit/preflight/vexa_preflight.py --namespace vexa-staging \
