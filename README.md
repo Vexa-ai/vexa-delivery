@@ -32,22 +32,20 @@ every promotion carries the evidence that justified it.
 Everything Vexa runs on is open source and publicly published — images on Docker Hub,
 charts and code in the open repositories.
 
-- **The open channel** is designed to deliver those public releases exactly as published —
-  digest-pinned, signed, pulled from Docker Hub — so a self-hosted deployment stays current
-  automatically, with community support. **It is not running yet**
-  ([issue #9](https://github.com/Vexa-ai/vexa-delivery/issues/9)); every channel is
+- **The open channel** carries what upstream publishes: your deployment stays current with
+  the latest open-source release, automatically. Community support. **It is not running
+  yet** ([issue #9](https://github.com/Vexa-ai/vexa-delivery/issues/9)); every channel is
   credentialed today.
-- **A private channel** is operated with us for your company: releases arrive
-  attestation-complete with the full evidence set (gate reports, station verdicts from real
-  environments), gated against your own specification before anything reaches you, with a
-  support lane behind it.
+- **A private channel** is for what upstream does not have yet — a fix your environment
+  needs now. We build it into your channel so you have it immediately, and the same change
+  goes upstream as a pull request, so you converge back to the open release instead of
+  carrying a fork. Releases arrive attestation-complete with the full evidence set, gated
+  against your own specification, with a support lane behind it.
 
-The channel is two-way, and the return path differs. On the open channel, the way back is
-GitHub issues — plus any station report you choose to share. On a private channel, the
-return path is part of the contract: a ticket lane with response commitments, and the
-[telemetry rung you set](docs/telemetry-ladder.mdx) — from silent to receipts to health
-counters to diagnostics, never content. The more your side chooses to send back, the faster
-your deployment improves — that bandwidth is what a private channel is for.
+The channel is two-way. On the open channel the way back is GitHub issues, plus any station
+report you choose to share. On a private channel it is part of the contract: a ticket lane
+with response commitments and the [telemetry rung you set](docs/telemetry-ladder.mdx) —
+never content.
 
 The software is identical on both paths, and switching paths is a subscription change, not a
 migration.
