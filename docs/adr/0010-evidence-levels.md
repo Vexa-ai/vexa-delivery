@@ -40,12 +40,59 @@ reassemble it differently:
   identifiers that did not change. An image that moves into a new bundle brings its
   provenance, its SBOM, its scan, and — through the merge commit and the source
   chain — the compliance, security and value reasoning of the PRs that produced it.
-- **set-level attestations do not transfer.** A soak over ten images says those
-  ten ran together in prod for a window. It says nothing about a new set of three,
-  and a verifier must not read it as if it did.
+- **set-level attestations do not transfer — but most of them are not really
+  set-level.** See the next section: prod validation decomposes to the image and
+  is assigned there, so it *does* travel. What is left at the assembly level is
+  only what is genuinely about the assembly.
 
 So the answer to the question is **both, and never each other's**: the image holds
 what is true of the image; the assembly holds what is true of the assembly.
+
+## Prod validation is assigned to the IMAGES
+
+*(Founder ruling, 2026-08-28: "prod validation keys can be directly assigned to
+those images — that's the way.")*
+
+The first draft treated the prod soak as a set claim and concluded it could not be
+inherited by a recombined bundle. That conclusion was useless: it means a customer
+inherits nothing from our production running, which is the whole value we generate
+for them.
+
+**The soak decomposes.** Its subject is already an array of image digests
+(`prod-soak-attestation.schema.json`), so the claim *"this digest was exercised in
+production during this window"* is per-image on its face. Assign it there, and
+inheritance stops being a design problem: a bundle assembled from any combination
+of those images inherits each image's prod evidence automatically, because the
+evidence is bound to the digest and the digest did not change.
+
+So the assembly level shrinks to what is genuinely about an assembly:
+
+| Claim | Decomposes to the image? |
+|---|---|
+| **prod soak** | **yes** — "this digest ran in prod, window W, configuration C" |
+| **build provenance · SBOM · CVE scan** | yes, already |
+| **station verdict** | **no** — it asserts *this set* satisfied *this contract*. A subset did not, and a superset certainly did not |
+| **delivery receipt** | **no** — it is about a delivery that happened |
+
+### What must ride with the per-image claim, or it means nothing
+
+*"This image ran in prod"* is too weak on its own: an image can run in production
+for a month and never have the code path a different configuration will exercise.
+So the per-image soak carries **the configuration it was exercised under**, and the
+vocabulary for that already exists — `validation-contract.schema.json`:
+
+- `dependencies[]` with `kind`, `fidelity` (*"real by default"*), and a
+  `justification` REQUIRED for any fidelity that is not real;
+- **`proves`** — one line, what this fidelity genuinely establishes;
+- **`does_not_prove`** — one line, what a reader must NOT conclude. The schema calls
+  this field *"the point of the document"*, and it is;
+- **`unproven_claims[]`** — claims an absent or dummy dependency makes unavailable,
+  *"written out so a receipt cannot accidentally assert them."*
+
+A consumer running a configuration outside the one an image was soaked under does
+not get a weaker version of the claim. They get the claim, plus the explicit
+statement of what it does not prove for them — and their contract decides whether
+that is enough.
 
 ## Why this is not a compromise
 
