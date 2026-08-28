@@ -773,12 +773,25 @@ python3 publisher/vexa_channel.py build --release vX.Y.Z --channel vexa-internal
 python3 publisher/vexa_channel.py push --entry work/candidate \
   --ref <REG>/vexa/channel/vexa-internal --sign-key <channel.key>
 
-# 2 staging station verifies against ITS contract; if ELIGIBLE, signs the verdict
+# 2 staging station verifies against ITS contract; if ELIGIBLE, signs the verdict.
+#   --verdict-out WRITES verdict.json from the run that proved it. Until
+#   2026-08-28 this file was transcribed by a person from the VERDICT line
+#   below, and nothing bound the signed claim to the run that produced it.
+#   --verdict-log binds the two: its sha256 rides in the predicate as
+#   verdict_log_sha256. Omit it and the run says so out loud.
 sh kit/verify/vexa-verify.sh --entry-ref <REG>/vexa/channel/vexa-internal:vX.Y.Z \
-  --pubkey channel.pub --policy contracts/internal-staging.json
+  --pubkey channel.pub --policy contracts/internal-staging.json \
+  --station vexa-staging --verdict-out verdict.json --verdict-log verify.log \
+  2>&1 | tee verify.log
 python3 publisher/vexa_channel.py attest --kind station-verdict --release vX.Y.Z \
   --metrics verdict.json --key <channel.key> --out work/att \
   --push <REG>/vexa/channel/vexa-internal
+
+#   ⛔ station verdicts are an OSS-RELEASE-TRAIN artifact. The predicate's
+#   `release` must match ^v[0-9]+\.[0-9]+\.[0-9]+$, so an ESTATE release
+#   (0.12.23-estate-20260825) cannot carry one — by design: an estate channel
+#   gates on `validation_contract` instead (internal-estate.json). Pinned by
+#   kit/verify/tests/test_verdict_out.sh check 4b.
 
 # 3 prod station: its contract REQUIRES staging's signature
 #   (require_attestations: [{kind: station-verdict, station: vexa-staging}])

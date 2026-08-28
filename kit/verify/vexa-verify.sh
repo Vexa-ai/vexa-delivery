@@ -11,10 +11,17 @@
 #
 # usage: vexa-verify.sh --entry-ref <registry/path:tag> --pubkey <file>
 #                       [--policy <file>] [--workdir <dir>] [--insecure] [--plain-http]
+#                       [--station <name> --verdict-out <file> [--verdict-log <file>]]
+#
+# --verdict-out writes the station-verdict PREDICATE this run just proved, ready
+# for `vexa_channel.py attest --kind station-verdict --metrics <file>`. Until
+# this existed the predicate was transcribed by a person from the line below,
+# and nothing bound the signed claim to the run that produced it.
 set -eu
 
 ENTRY_REF=""; PUBKEY=""; POLICY=""; WORKDIR="/tmp/vexa-verify"; INSECURE=""; PLAIN_HTTP=""
 REQUIRE_APPROVAL=""; APPROVAL_NS="argocd"
+STATION=""; VERDICT_OUT=""; VERDICT_LOG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --entry-ref) ENTRY_REF=$2; shift 2;;
@@ -22,6 +29,9 @@ while [ $# -gt 0 ]; do
     --policy) POLICY=$2; shift 2;;
     --workdir) WORKDIR=$2; shift 2;;
     --require-approval) REQUIRE_APPROVAL=$2; shift 2;;
+    --station) STATION=$2; shift 2;;
+    --verdict-out) VERDICT_OUT=$2; shift 2;;
+    --verdict-log) VERDICT_LOG=$2; shift 2;;
     --approval-namespace) APPROVAL_NS=$2; shift 2;;
     --insecure) INSECURE=1; shift;;
     --plain-http) PLAIN_HTTP=1; shift;;
@@ -30,6 +40,17 @@ while [ $# -gt 0 ]; do
 done
 if [ -z "$ENTRY_REF" ] || [ -z "$PUBKEY" ]; then
   echo "usage: --entry-ref REF --pubkey FILE [--policy FILE]" >&2; exit 2
+fi
+# A verdict is a claim about a contract, made by a named station. Refuse to emit
+# one that cannot say who made it or what it was rendered against - an
+# unattributable verdict is worse than none, because it looks signed.
+if [ -n "$VERDICT_OUT" ]; then
+  if [ -z "$STATION" ]; then
+    echo "--verdict-out requires --station: the predicate names which station made the claim" >&2; exit 2
+  fi
+  if [ -z "$POLICY" ]; then
+    echo "--verdict-out requires --policy: a verdict is rendered AGAINST a contract, and carries its id and sha256" >&2; exit 2
+  fi
 fi
 
 FAILED=0
@@ -585,4 +606,53 @@ if [ -n "$CONTRACT_ID" ]; then
   echo "VERDICT: ELIGIBLE — $release verified against contract $CONTRACT_ID @ sha256:$CONTRACT_SHA"
 else
   echo "VERDICT: ELIGIBLE — $release satisfies every check (no contract file supplied)"
+fi
+
+# ------------------------------------------------- the verdict, as a FILE
+#
+# Only ELIGIBLE verdicts are ever written: a failed verification exits above and
+# produces nothing, which is what the schema means by "a failed verification
+# simply produces no attestation".
+#
+# The subject is the entry's image digest set, verbatim — the same set the
+# consuming verifier matches against, so a verdict cannot be transplanted onto a
+# different release. Predicate shape and required fields:
+# spec/station-verdict-attestation.schema.json (additionalProperties: false).
+if [ -n "$VERDICT_OUT" ]; then
+  vlog_sha=""
+  if [ -n "$VERDICT_LOG" ] && [ -f "$VERDICT_LOG" ]; then
+    vlog_sha=$(sha256sum "$VERDICT_LOG" | cut -d' ' -f1)
+  fi
+  at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  # jq builds it so the digest set is copied, never retyped.
+  jq -n \
+    --slurpfile entry entry.json \
+    --arg release "$release" \
+    --arg station "$STATION" \
+    --arg contract_id "$CONTRACT_ID" \
+    --arg contract_sha256 "$CONTRACT_SHA" \
+    --arg at "$at" \
+    --arg vlog "$vlog_sha" \
+    --arg entry_ref "$ENTRY_REF" \
+    '{
+      _type: "https://in-toto.io/Statement/v1",
+      subject: [ $entry[0].images[]
+                 | { name: .name,
+                     digest: { "sha256": (.index_digest | sub("^sha256:"; "")) } } ],
+      predicateType: "https://vexa.ai/attestations/station-verdict/v1",
+      predicate: ({
+        release: $release,
+        station: $station,
+        contract_id: $contract_id,
+        contract_sha256: $contract_sha256,
+        verdict: "ELIGIBLE",
+        at: $at,
+        source: $entry_ref
+      } + (if $vlog == "" then {} else { verdict_log_sha256: $vlog } end))
+    }' > "$VERDICT_OUT"
+  ok "verdict written to $VERDICT_OUT (station $STATION)"
+  if [ -z "$vlog_sha" ]; then
+    echo "NOTE  no --verdict-log given, so the predicate carries no verdict_log_sha256;"
+    echo "      the signed claim is then not bound to a transcript of this run."
+  fi
 fi
