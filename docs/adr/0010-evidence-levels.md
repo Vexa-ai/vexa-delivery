@@ -16,10 +16,12 @@ only the train evidence it was part of?
 nothing larger.**
 
 ```
-  commit                  compliance · security · value · rights · licence
-  (git SHA)               claims about SOURCE
+  PULL REQUEST            compliance · security · value · rights · licence
+  (repo#number,           claims about a CHANGE AND ITS ARGUMENT
+   pinned to its
+   merge commit SHA)
       │
-      │  bound by SLSA source provenance over the release archive
+      │  merge commit → release archive → SLSA source provenance
       ▼
   image digest            build provenance · SBOM · CVE scan
   (sha256:…)              claims about an ARTIFACT
@@ -34,10 +36,10 @@ nothing larger.**
 thought experiment — it is what this channel does. Disassemble a set and
 reassemble it differently:
 
-- **commit-level and image-level attestations follow each image.** They are bound
-  to a SHA that did not change. An image that moves into a new bundle brings its
-  provenance, its SBOM, its scan, and — through the source chain — the compliance,
-  security and value reasoning of the commit that produced it.
+- **PR-level and image-level attestations follow each image.** They are bound to
+  identifiers that did not change. An image that moves into a new bundle brings its
+  provenance, its SBOM, its scan, and — through the merge commit and the source
+  chain — the compliance, security and value reasoning of the PRs that produced it.
 - **set-level attestations do not transfer.** A soak over ten images says those
   ten ran together in prod for a window. It says nothing about a new set of three,
   and a verifier must not read it as if it did.
@@ -59,8 +61,40 @@ than a promoted one, using one contract language and two acceptance policies.
 
 ## What a PR-level attestation asserts
 
-Subject: the **commit SHA**. Predicate: one leg per named check, each carrying a
-verdict and its basis.
+Subject: the **pull request** — `repo#number` — **pinned to its merge commit SHA**.
+Predicate: one leg per named check, each carrying a verdict and its basis.
+
+**Why the PR and not the commit** (founder correction, 2026-08-28: *"PR has
+narrative — not commit"*). A commit is a diff. A PR is a diff **with an argument
+attached**, and compliance and value are judgments about the argument, not about
+the bytes. Binding them to a commit would apply this ADR's own test — *a claim
+binds to the thing it is actually about* — inconsistently, which the first draft
+of this ADR did.
+
+The durability objection that produced that first draft was simply wrong: a PR
+number is permanent and addressable forever. What is transient is the PR's
+*branch*, not the PR.
+
+**And `Vexa-ai/vexa` already decided this.** `merge-card` is choke point 1 of the
+delivery constitution (ADR-0029 there): main accepts a PR only when **both its
+value and its diff are accepted** — `pr-value` green plus the `state:
+value-signed` human sign-off, and a fresh non-author review. It is a required
+status check. The unit at which value is judged is already the PR; this ADR now
+matches it instead of contradicting it.
+
+The merge commit is carried alongside as the **binding**, not the subject: it is
+how a PR's claims reach an image, via the release archive and its SLSA provenance.
+
+### Two consequences of choosing the PR
+
+1. **A commit that reaches main without a PR carries none of this.** Direct pushes
+   exist. Such a commit must show as `unproven` in the roll-up rather than being
+   silently absent — a change that landed with no narrative, no value sign-off and
+   no non-author review is precisely the thing a reviewer should be able to see.
+2. **A release contains many PRs**, so an entry's evidence carries one attestation
+   per PR in the range. That is a real growth in the evidence set and probably
+   wants a roll-up object — a per-release summary that names each PR and its
+   verdicts, with the individual attestations addressable beneath it.
 
 Most of the machinery exists in `Vexa-ai/vexa` and is not yet attested —
 `gates.yml` (34 named gates including `licenses`, `image-licenses`,
@@ -79,7 +113,7 @@ Legs, with what already produces them:
 | `architecture` | gates `isolation`, `graph`, `exports`, `arch-report` |
 | `contract-compatibility` | gates `contract-version`, `contract-conformance` |
 | `docs-truth` | `docs-current.yml` |
-| `value` | `pr-value.yml` |
+| `value` | `pr-value.yml` + `merge-card` (`state: value-signed`, a named human) |
 | `security` | ⛔ nothing today |
 | `compliance` | ⛔ nothing today |
 | `reversibility` | ⛔ nothing today — a bank asks; we cannot answer |
@@ -115,6 +149,8 @@ Therefore, structurally, not as a warning:
 
 - Four legs have no producer. They are `unproven` until they do, and the
   attestation is honest about it rather than silent.
+- Commits that land without a PR have no PR-level evidence, by construction. The
+  roll-up must show that rather than omit it.
 - The train's evidence set becomes the union of what its images carry plus what the
   assembly earned — not a flat list, and consumers must be able to ask at which
   level a claim was made.
