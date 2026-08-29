@@ -6,4 +6,4 @@ description: >-
   (subscription, contracts, admission, substrate floor), delivered and
   reconciled through the channel itself. The app is deterministic because the
   channel pins it; the station is deterministic because this bundle pins IT.
-version: 1.0.7
+version: 1.0.8

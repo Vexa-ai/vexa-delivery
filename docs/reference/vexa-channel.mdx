@@ -14,7 +14,7 @@ Emitted from `python3 publisher/vexa_channel.py --help`.
 
 ```text
 usage: vexa-channel [-h]
-                    {fetch,build,verify,push,chart,refresh,revoke,platform-chart,platform-entry,sign-images,attest} ...
+                    {fetch,build,verify,push,chart,station-chart,refresh,revoke,platform-chart,platform-entry,sign-images,attest} ...
 
 vexa-channel — turn a released Vexa version into a channel entry. The publisher consumes released
 artifacts and receipts, never clusters, and holds no production credentials. Subcommands: fetch
@@ -33,12 +33,14 @@ the shape Kyverno 1.19 will ask for — sha256-<digest>.sig in the signature rep
 verifies against the channel key. A pin is a promise; T2 is the proof.
 
 positional arguments:
-  {fetch,build,verify,push,chart,refresh,revoke,platform-chart,platform-entry,sign-images,attest}
+  {fetch,build,verify,push,chart,station-chart,refresh,revoke,platform-chart,platform-entry,sign-images,attest}
     fetch               fetch archive + provenance + trusted root via gh
     build               assemble and cross-check a channel entry
     verify              offline verification of a built entry
     push                push entry to OCI registry, sign, move channel tag
     chart               package the OSS chart with digest pins baked; optionally push OCI
+    station-chart       package the station bundle with the entry contracts injected from the
+                        stations ledger
     refresh             re-stamp an entry's expiry: same release, next seq, new horizon
     revoke              append to (or start, or re-publish) the channel's signed revocation list
     platform-chart      package the proprietary vexa-platform chart with cluster-captured digest
@@ -184,6 +186,32 @@ options:
                         Default: the release version, the pre-2026-08-24 behaviour
   --out-dir OUT_DIR
   --push PUSH           oci://host/path/charts destination
+  --insecure
+```
+
+## `station-chart`
+
+Package the station bundle for a channel, with that channel's entry contracts injected from the stations ledger. Reach for it whenever the station's own machinery changes or a contract is amended — the contract is an INPUT here, never a file in this repository, because an embedded copy that drifts from the record renders and admits and produces verdicts naming a contract id whose bytes are in no ledger. The bytes ride verbatim, each pinned by sha256 in the packaging receipt, and a chart missing a contract it needs refuses to render.
+
+```text
+usage: vexa-channel station-chart [-h] [--chart-dir CHART_DIR] [--contract SLOT=PATH]
+                                  [--chart-version CHART_VERSION] --out-dir OUT_DIR
+                                  [--receipt RECEIPT] [--push PUSH] [--insecure]
+
+options:
+  -h, --help            show this help message and exit
+  --chart-dir CHART_DIR
+                        the station bundle chart (read-only; copied before edit)
+  --contract SLOT=PATH  slot=path to the contract RECORD in the stations ledger, repeatable; slot
+                        is 'staging' or 'prod' and names the ConfigMap it becomes. The bytes ride
+                        verbatim and are pinned by sha256 in the receipt.
+  --chart-version CHART_VERSION
+                        chart revision (Chart.yaml version); default: what the chart already
+                        declares
+  --out-dir OUT_DIR
+  --receipt RECEIPT     where the packaging receipt is written (default <out-dir>/station-chart-
+                        receipt.json)
+  --push PUSH           oci://host/path/station destination
   --insecure
 ```
 

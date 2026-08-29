@@ -16,12 +16,20 @@ subscriber's render would be a different defect wearing this one's clothes.
 import pathlib
 import shutil
 import subprocess
+import sys
 import unittest
 
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-CHART = ROOT / "station/chart"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from station_chart_fixture import PACKAGED_CHART as CHART  # noqa: E402
+
+# The chart with its contracts INJECTED — `station/chart` in the source tree no
+# longer renders, by design: the entry contract is a publish input taken from the
+# stations ledger, and a chart with none refuses rather than falling back to an
+# empty policy. See publisher/tests/station_chart_fixture.py.
 
 BASE = [
     "--set", "channelPublicKey=x",

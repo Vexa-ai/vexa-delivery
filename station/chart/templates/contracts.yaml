@@ -23,6 +23,28 @@ ConfigMap in the station namespace. Same word, two documents, two readers, two
 namespaces. See `_receipt-sender.tpl`.
 */}}
 {{- if .Values.subscription.enabled }}
+{{- /*
+THE CONTRACT IS AN INPUT, NOT A FILE IN THE VENDOR'S REPOSITORY (2026-08-29).
+`files/contracts/` is EMPTY in the source tree; it is filled at packaging time
+by `vexa_channel.py station-chart --contract <slot>=<record>`, which copies the
+BYTES of the record in the vexa-stations ledger and pins each by sha256 in its
+receipt. This repository carries schemas and examples; instances are records and
+live with the records.
+
+It used to carry an embedded `internal-prod.json`, and both ledger records say
+that copy must not bind an estate. Nothing enforced it. So the render FAILS here
+rather than falling back: an empty `.Files.Get` would otherwise produce a
+ConfigMap with an EMPTY `policy.json`, and a verifier handed an empty policy
+checks nothing while printing OK for every check it never ran.
+*/}}
+{{- $staging := .Files.Get "files/contracts/staging.json" }}
+{{- $prod := .Files.Get "files/contracts/prod.json" }}
+{{- if not $staging }}
+{{- fail "no staging entry contract was injected into this chart (files/contracts/staging.json is absent or empty). The contract is a PUBLISH INPUT taken from the stations ledger: package with `python3 publisher/vexa_channel.py station-chart --contract staging=<ledger>/channels/<channel>/contracts/<record>.json`. A station that follows no channel sets subscription.enabled=false." }}
+{{- end }}
+{{- if not $prod }}
+{{- fail "no prod entry contract was injected into this chart (files/contracts/prod.json is absent or empty). The contract is a PUBLISH INPUT taken from the stations ledger: package with `python3 publisher/vexa_channel.py station-chart --contract prod=<ledger>/channels/<channel>/contracts/<record>.json`. A station that follows no channel sets subscription.enabled=false." }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -30,7 +52,7 @@ metadata:
   namespace: {{ .Values.argocdNamespace }}
 data:
   policy.json: |-
-{{ .Files.Get "files/contracts/internal-staging.json" | indent 4 }}
+{{ $staging | indent 4 }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -39,5 +61,5 @@ metadata:
   namespace: {{ .Values.argocdNamespace }}
 data:
   policy.json: |-
-{{ .Files.Get "files/contracts/internal-prod.json" | indent 4 }}
+{{ $prod | indent 4 }}
 {{- end }}

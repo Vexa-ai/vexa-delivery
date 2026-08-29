@@ -4,9 +4,17 @@
 > the stations ledger (a private repository) at
 > `channels/vexa-internal/contracts/internal-prod.json`. **This repository
 > carries schemas and examples; contract instances are records and live with
-> the records.** The copy under `station/chart/files/contracts/` is the
-> *enforcement* copy, derived from the record — when they disagree, the record
-> wins.
+> the records.**
+>
+> **Enforced (2026-08-29).** There is no longer a copy under
+> `station/chart/files/contracts/` to disagree with. The enforcement copy is
+> **injected at packaging time** by
+> `vexa_channel.py station-chart --contract <slot>=<record>`, which takes the
+> record's bytes verbatim and pins each by `sha256` in its receipt; the chart
+> `fail`s to render when a contract it needs was never injected, and `make test`
+> refuses any `*.json` in that directory that is not a byte-copy of a named
+> record. "When they disagree, the record wins" is now a check rather than a
+> sentence — the two could not disagree without something refusing.
 
 The machine-readable half of OUR OWN subscriptions to the `vexa-internal`
 channel — the same file format a customer pins (see

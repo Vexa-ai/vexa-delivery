@@ -43,6 +43,15 @@ vexa-channel chart: >-
   Push it to the channel's chart repository; the chart's semver IS the channel
   position a station follows.
 
+vexa-channel station-chart: >-
+  Package the station bundle for a channel, with that channel's entry contracts
+  injected from the stations ledger. Reach for it whenever the station's own
+  machinery changes or a contract is amended — the contract is an INPUT here,
+  never a file in this repository, because an embedded copy that drifts from the
+  record renders and admits and produces verdicts naming a contract id whose
+  bytes are in no ledger. The bytes ride verbatim, each pinned by sha256 in the
+  packaging receipt, and a chart missing a contract it needs refuses to render.
+
 vexa-channel platform-chart: >-
   The same packaging act as `chart`, for the chart nobody outside can see: the
   proprietary `vexa-platform` chart, pinned from digests captured off a running

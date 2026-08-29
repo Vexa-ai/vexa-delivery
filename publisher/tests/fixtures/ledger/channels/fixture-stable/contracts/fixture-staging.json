@@ -1,5 +1,5 @@
 {
-  "contract_id": "vexa-internal-staging-2026",
+  "contract_id": "vexa-fixture-staging-2026",
   "require_publication_mode": "candidate",
   "require_evidence_kinds": ["candidate_map", "source_provenance", "trusted_root"]
 }

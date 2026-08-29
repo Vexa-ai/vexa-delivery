@@ -32,7 +32,11 @@ Two different documents wear the word *contract*:
 - **the entry contract** — `policy.json`, carrying publication mode, required
   evidence kinds and required attestations. The chart **does** render these
   (`vexa-contract-staging` / `vexa-contract-prod`, in the **argocd** namespace)
-  for the PreSync verify gate that the subscription's Applications carry.
+  for the PreSync verify gate that the subscription's Applications carry — but
+  since 1.0.8 it does not *author* them either. The bytes are a **publish
+  input**, copied out of the stations ledger by `vexa_channel.py station-chart`
+  and pinned by `sha256` in its receipt; a chart with a contract missing refuses
+  to render rather than falling back to an empty policy.
 
 Through chart 1.0.5 `receiptSender.contractConfigMap` defaulted to
 `vexa-contract-prod` — an entry contract, in another namespace, under another

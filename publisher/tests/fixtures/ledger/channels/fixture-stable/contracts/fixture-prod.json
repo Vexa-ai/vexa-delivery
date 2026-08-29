@@ -1,0 +1,21 @@
+{
+  "contract_id": "vexa-fixture-prod-2026-09",
+  "required_values": [
+    {
+      "id": "V-fix-1",
+      "claim": "Every deployment in the estate reaches ready.",
+      "rank": "autonomous",
+      "validation": {"kind": "station-check"},
+      "enforcement": "required"
+    }
+  ],
+  "carriage": {
+    "require_evidence_kinds": ["candidate_map"],
+    "forbid_absent_evidence": ["candidate_map"],
+    "require_publication_mode": "candidate",
+    "require_vendor_approval": false,
+    "allow_break_glass": false,
+    "min_entry_seq": 1,
+    "max_entry_age_days": 30
+  }
+}
