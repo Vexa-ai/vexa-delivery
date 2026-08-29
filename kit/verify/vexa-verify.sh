@@ -301,6 +301,32 @@ if [ -n "$POLICY" ] && [ -f "$POLICY" ]; then
   CONTRACT_SHA=$(sha256sum "$POLICY" | cut -d' ' -f1)
   echo "--- contract: $CONTRACT_ID @ sha256:$(printf %.12s "$CONTRACT_SHA")…"
 
+  # CARRIAGE. The 2026-09 contract shape splits one document in two:
+  # `required_values[]` — what the release must be PROVEN to do — and
+  # `carriage{}` — what the entry that carries it must look like. Every check
+  # below is a carriage check and was written against the flat spelling, so a
+  # contract that nests them would have every one of them read a missing key
+  # and quietly take its default. `require_publication_mode` defaulting to
+  # "published" against a candidate channel is the loud version of that; the
+  # silent version is `allow_break_glass` defaulting to false and looking like
+  # enforcement. Flatten into a WORKING COPY so the checks read one shape.
+  #
+  # THE ID AND HASH ABOVE ARE THE RECORD'S, computed before this and never
+  # recomputed: a verdict names the contract a human can open in the ledger,
+  # not a derived file that exists for four seconds inside a pod.
+  #
+  # `required_values[]` is NOT evaluated here, by decision — that is a separate
+  # step with its own evidence model. This block makes the carriage half
+  # readable and changes nothing else.
+  if jq -e 'has("carriage")' "$POLICY" >/dev/null 2>&1; then
+    # Written into the working directory, which is already the cwd — a
+    # "$WORKDIR/…" path would be wrong for a relative --workdir.
+    jq '.carriage as $c | del(.carriage) | . + $c' "$POLICY" > ".policy-flat.json"
+    POLICY="$PWD/.policy-flat.json"
+    echo "note  contract carries a carriage{} block; its keys are read as the entry checks below"
+    echo "note  required_values[] is NOT evaluated by this verifier — the contract's proof half is adjudicated elsewhere"
+  fi
+
   for kind in $(jq -r '.require_evidence_kinds[]? // empty' "$POLICY"); do
     if jq -e --arg k "$kind" '.evidence[] | select(.kind == $k)' entry.json >/dev/null; then
       ok "policy: evidence '$kind' present"

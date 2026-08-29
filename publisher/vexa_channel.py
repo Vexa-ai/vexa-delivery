@@ -1498,6 +1498,189 @@ def inject_channel_verify(chart_dir, values):
     return values
 
 
+# ------------------------------------------- station chart + contract inputs
+#
+# THE CONTRACT IS A RECORD, AND A RECORD LIVES WITH THE RECORDS. Through
+# station chart 1.0.7 the two entry-verification contracts were FILES IN THIS
+# REPOSITORY, at `station/chart/files/contracts/*.json`, and the chart's
+# ConfigMaps rendered them with `.Files.Get`. Both ledger records say that copy
+# must not bind an estate: the live contract for `vexa-internal` is
+# `channels/vexa-internal/contracts/…` in the vexa-stations ledger, and
+# `contracts/README.md` in this repo already says "when they disagree, the
+# record wins".
+#
+# Nothing enforced that. An embedded copy that drifts from the record does not
+# error — it renders, admits, and produces verdicts naming a contract id whose
+# bytes nobody can find. Same failure class as the whole file: plausible output,
+# lost intent.
+#
+# So the contract becomes a PUBLISH INPUT, exactly like the verify template
+# above is an injected input: `station-chart` takes the record's PATH, copies
+# its BYTES into the chart it is packaging, pins each by sha256 into a receipt,
+# and the template `fail`s loudly when a slot it needs was never injected. The
+# repository carries schemas and examples; it carries no instances.
+
+STATION_CONTRACT_SLOTS = ("staging", "prod")
+STATION_CONTRACT_DIR = "files/contracts"
+
+
+def parse_station_contracts(specs):
+    """`--contract slot=path`, repeatable. Slots are the ConfigMaps they feed."""
+    out = {}
+    for spec in specs or []:
+        if "=" not in spec:
+            raise SystemExit(f"--contract wants slot=path, got {spec!r} "
+                             f"(slots: {', '.join(STATION_CONTRACT_SLOTS)})")
+        slot, path = spec.split("=", 1)
+        if slot not in STATION_CONTRACT_SLOTS:
+            raise SystemExit(f"--contract slot {slot!r} is not one of "
+                             f"{', '.join(STATION_CONTRACT_SLOTS)}")
+        if slot in out:
+            raise SystemExit(f"--contract {slot} given twice")
+        out[slot] = pathlib.Path(path)
+    if not out:
+        raise SystemExit(
+            "station-chart needs at least one --contract slot=path. The entry "
+            "contract is a RECORD in the stations ledger, not a file in this "
+            "repository — point at the checkout, e.g. "
+            "--contract prod=$VEXA_STATIONS_DIR/channels/vexa-internal/contracts/internal-prod.json")
+    return out
+
+
+def inject_station_contracts(chart_dir, contracts):
+    """Copy each contract record's BYTES into the chart; pin each by sha256.
+
+    Byte-for-byte, never re-serialised. The verifier hashes the file it reads
+    and every verdict names that hash, so a re-encode — a reordered key, a
+    dropped trailing newline — would silently produce a contract id whose
+    sha256 matches no record in the ledger. `shutil.copy`, not `json.dump`.
+    """
+    dest = chart_dir / STATION_CONTRACT_DIR
+    dest.mkdir(parents=True, exist_ok=True)
+    # A chart that already carries an instance is the defect this command
+    # exists to remove: two candidate bindings, and the render picks silently.
+    stale = sorted(p.name for p in dest.glob("*.json"))
+    if stale:
+        raise CheckFailure(
+            "SC1", f"the chart already carries contract instances at "
+                   f"{STATION_CONTRACT_DIR}/: {', '.join(stale)}. Contracts are publish "
+                   f"inputs taken from the stations ledger; an embedded copy can "
+                   f"drift from the record and nothing would say so. Remove them.")
+    rows = []
+    for slot in STATION_CONTRACT_SLOTS:
+        src = contracts.get(slot)
+        if src is None:
+            continue
+        if not src.is_file():
+            raise CheckFailure("SC2", f"--contract {slot}: no such file: {src}")
+        raw = src.read_bytes()
+        try:
+            doc = json.loads(raw)
+        except ValueError as e:
+            raise CheckFailure("SC3", f"--contract {slot}: {src} is not JSON ({e})")
+        cid = doc.get("contract_id")
+        if not cid:
+            raise CheckFailure(
+                "SC4", f"--contract {slot}: {src} declares no contract_id. A contract "
+                       f"with no id cannot be named by the verdict rendered against it.")
+        (dest / f"{slot}.json").write_bytes(raw)
+        rows.append({
+            "slot": slot,
+            "configmap": f"vexa-contract-{slot}",
+            "contract_id": cid,
+            "sha256": sha256_bytes(raw),
+            # Absolute, always: a receipt that records `../contracts/x.json`
+            # names a file only the shell that ran the command could find.
+            "source": str(src.resolve()),
+            "bytes": len(raw),
+        })
+    return rows
+
+
+def check_chart_contracts(chart_dir, ledger_root):
+    """Every contract file in a chart must be a BYTE-COPY of a ledger record.
+
+    The check `make test` runs, and the reason it is a byte comparison rather
+    than an id comparison: an id is what a file calls itself, and the drift this
+    guards against keeps the id and changes a threshold. Returns the matched
+    rows; raises CheckFailure naming the file that matches no record.
+    """
+    chart_dir, ledger_root = pathlib.Path(chart_dir), pathlib.Path(ledger_root)
+    records = {}
+    for rec in sorted(ledger_root.glob("channels/*/contracts/*.json")):
+        records.setdefault(sha256_file(rec), []).append(rec)
+    matched = []
+    for f in sorted((chart_dir / STATION_CONTRACT_DIR).glob("*.json")):
+        digest = sha256_file(f)
+        if digest not in records:
+            raise CheckFailure(
+                "SC5", f"{STATION_CONTRACT_DIR}/{f.name} (sha256 {digest[:12]}…) matches no "
+                       f"contract record under {ledger_root}/channels/*/contracts/. The chart "
+                       f"would bind a contract that exists nowhere in the ledger.")
+        matched.append({"file": f.name, "sha256": digest,
+                        "record": str(records[digest][0].relative_to(ledger_root))})
+    return matched
+
+
+def cmd_station_chart(args):
+    import tempfile
+
+    import yaml
+
+    src_chart = pathlib.Path(args.chart_dir).resolve()
+    if not (src_chart / "Chart.yaml").is_file():
+        raise SystemExit(f"--chart-dir {src_chart} has no Chart.yaml")
+    contracts = parse_station_contracts(args.contract)
+
+    workdir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-station-chart-"))
+    chart_dir = workdir / src_chart.name
+    # Copy before edit: the source tree is the repository, and a command that
+    # packages must never leave an instance behind in it.
+    shutil.copytree(src_chart, chart_dir)
+    rows = inject_station_contracts(chart_dir, contracts)
+
+    cy = chart_dir / "Chart.yaml"
+    cyd = yaml.safe_load(cy.read_text())
+    if args.chart_version:
+        cyd["version"] = args.chart_version.lstrip("v")
+        cy.write_text(yaml.safe_dump(cyd, sort_keys=False))
+
+    out = pathlib.Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    run(["helm", "package", str(chart_dir), "-d", str(out)])
+    tgz = out / f"{cyd['name']}-{cyd['version']}.tgz"
+    print(f"packaged {tgz}")
+
+    receipt = {
+        "packaged_at": utcnow(),
+        "chart": {"name": cyd["name"], "version": cyd["version"],
+                  "sha256": sha256_file(tgz), "source": str(src_chart)},
+        "contracts": rows,
+    }
+    for r in rows:
+        print(f"  contract {r['slot']}: {r['contract_id']} sha256 {r['sha256'][:12]}… "
+              f"<- {r['source']}")
+    for slot in STATION_CONTRACT_SLOTS:
+        if slot not in contracts:
+            print(f"  contract {slot}: NOT INJECTED — a station that renders "
+                  f"vexa-contract-{slot} will refuse to template")
+
+    if args.push:
+        cmd = ["helm", "push", str(tgz), args.push]
+        if args.insecure:
+            cmd.insert(2, "--insecure-skip-tls-verify")
+        r = run(cmd)
+        line = next((ln for ln in (r.stdout + r.stderr).splitlines() if "Digest:" in ln), "")
+        digest = line.split("Digest:")[-1].strip() if line else None
+        receipt["push"] = {"ref": args.push, "digest": digest}
+        print(f"pushed station chart to {args.push} digest {digest}")
+
+    receipt_path = pathlib.Path(args.receipt) if args.receipt else out / "station-chart-receipt.json"
+    receipt_path.write_text(json.dumps(receipt, indent=1) + "\n")
+    print(f"station-chart receipt -> {receipt_path}")
+    return 0
+
+
 def cmd_chart(args):
     import tempfile
     import yaml
@@ -2555,6 +2738,18 @@ def main(argv=None):
     ch.add_argument("--push", help="oci://host/path/charts destination")
     ch.add_argument("--insecure", action="store_true")
 
+    sc = sub.add_parser("station-chart", help="package the station bundle with the entry contracts injected from the stations ledger")
+    sc.add_argument("--chart-dir", default="station/chart", help="the station bundle chart (read-only; copied before edit)")
+    sc.add_argument("--contract", action="append", metavar="SLOT=PATH",
+                    help="slot=path to the contract RECORD in the stations ledger, repeatable; "
+                         "slot is 'staging' or 'prod' and names the ConfigMap it becomes. The "
+                         "bytes ride verbatim and are pinned by sha256 in the receipt.")
+    sc.add_argument("--chart-version", help="chart revision (Chart.yaml version); default: what the chart already declares")
+    sc.add_argument("--out-dir", required=True)
+    sc.add_argument("--receipt", help="where the packaging receipt is written (default <out-dir>/station-chart-receipt.json)")
+    sc.add_argument("--push", help="oci://host/path/station destination")
+    sc.add_argument("--insecure", action="store_true")
+
     rf = sub.add_parser("refresh", help="re-stamp an entry's expiry: same release, next seq, new horizon")
     rf.add_argument("--entry", required=True, help="a built entry directory")
     rf.add_argument("--out", required=True)
@@ -2634,7 +2829,8 @@ def main(argv=None):
     args = p.parse_args(argv)
     try:
         return {"fetch": cmd_fetch, "build": cmd_build, "verify": cmd_verify, "push": cmd_push,
-                "chart": cmd_chart, "platform-chart": cmd_platform_chart, "platform-entry": cmd_platform_entry,
+                "chart": cmd_chart, "station-chart": cmd_station_chart,
+                "platform-chart": cmd_platform_chart, "platform-entry": cmd_platform_entry,
                 "sign-images": cmd_sign_images, "attest": cmd_attest,
                 "refresh": cmd_refresh, "revoke": cmd_revoke}[args.cmd](args)
     except CheckFailure as e:

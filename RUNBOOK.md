@@ -67,6 +67,52 @@ without a hand-written line fails `make test`.
 
 One release, one operator. Everything after `fetch` is offline.
 
+### 1.0 The crank is one command
+
+```bash
+make publish RELEASE=vX.Y.Z ENTRY_SEQ=N
+make publish RELEASE=vX.Y.Z ENTRY_SEQ=N DRY_RUN=1     # prints the chain, runs nothing
+```
+
+`fetch → build → sign-images → push`, in that order, with the flags § 1.1, § 1.2,
+§ 1.5 and § 1.6 spell out one at a time.
+
+**Packaging, not weakening.** Every check inside those verbs still runs and still
+refuses — C1..C9 in `build`, T1/T2 in `sign-images` and `push`, and the ledger
+write that makes `push` the sole writer of `channel.yaml`. There is no flag here
+that skips one, and no `--force`.
+
+**No credential moves** (ADR-0001 § 6). The signing key stays wherever you keep
+it: the target reads the same environment the manual steps read, passes the
+key's **path** to cosign, and never reads, copies or prints the material. An
+unset variable is a refusal that names the variable — never a default.
+
+| Variable | Is |
+|---|---|
+| `RELEASE` | the release tag, e.g. `v0.12.24` |
+| `ENTRY_SEQ` | the next entry sequence. **Not derived** — `vexa_stations.py … show` prints the current one; a rollback floor a script guessed is a floor nobody chose |
+| `VEXA_REPO` | the `Vexa-ai/vexa` checkout the tag is read from (C1) |
+| `VEXA_CHANNEL_REF` | the channel's registry repository |
+| `VEXA_SIGNATURE_REPOSITORY` | where `sha256-<digest>.sig` must land — the exact repository Kyverno asks for (T2) |
+| `VEXA_CHANNEL_KEY` | **path** to the channel signing key |
+| `VEXA_SIGNING_IDENTITY` | the identity the entry declares |
+| `VEXA_STATIONS_DIR` | the stations-ledger checkout `push` records into |
+
+Optional, all defaulted: `CHANNEL` (`vexa-internal`), `PUBLICATION_MODE`
+(`candidate`; `published` additionally requires `APPROVED_BY`,
+`APPROVAL_RECEIPT` and `DELIVERY_RECEIPT`), `SUPERSEDES`, `CHANNEL_TAG`,
+`EXTRA_EVIDENCE` (space-separated `kind=name=path`), `SIGNING_RECEIPT`, `WORK`
+(default `work/<release>`).
+
+**What it does NOT do:** the chart (§ 1.3), the station gate (§ 1.4) and
+customer-#0 verification (§ 1.7) are separate acts with their own inputs and
+their own refusals, and collapsing them into the same line would hide a gate
+report behind a release number.
+
+> **The rest of § 1 is the appendix: what `publish` does.** It is the same
+> commands, in the same order, and it is where the flags are explained. Run them
+> by hand when a crank stops and you need one step in isolation.
+
 ### 1.1 Gather the inputs
 
 ```bash
@@ -836,11 +882,37 @@ releases, not kubectl sessions.
 kubectl apply -f station/root-app.yaml     # carries the site values inline
 
 # change the station: edit, bump, publish, move the pin
-helm package station/chart && helm push vexa-station-X.Y.Z.tgz oci://<REG>/vexa/channel/<chan>/station
+python3 publisher/vexa_channel.py station-chart \
+  --contract staging=$VEXA_STATIONS_DIR/channels/<chan>/contracts/<staging-record>.json \
+  --contract prod=$VEXA_STATIONS_DIR/channels/<chan>/contracts/<prod-record>.json \
+  --out-dir work/station-chart \
+  --push oci://<REG>/vexa/channel/<chan>/station
 cosign sign --key <channel.key> <REG>/.../vexa-station@<digest>
 #   then edit targetRevision in station/root-app.yaml and kubectl apply —
 #   the pin move IS the approval act; the station reconciles itself
 ```
+
+**The entry contract is a PUBLISH INPUT, not a file in this repository.**
+`station-chart` copies the bytes of the named ledger record into the chart's
+`files/contracts/` and pins each by `sha256` in `station-chart-receipt.json`; the
+`vexa-contract-staging` / `vexa-contract-prod` ConfigMaps the PreSync gate reads
+are that record verbatim. **A chart with a contract missing refuses to render** —
+there is no fallback, because an empty `policy.json` makes a verifier print OK
+for every check it never ran.
+
+Through chart 1.0.7 an `internal-prod.json` was committed here and the chart
+bound *it*. Both ledger records say that copy must not bind an estate and
+`contracts/README.md` said the record wins; nothing enforced it, and a drifted
+copy produces verdicts naming a contract id whose bytes are in no ledger.
+`make test` now refuses any `files/contracts/*.json` that is not a byte-copy of
+a named record.
+
+**Contract shapes.** The 2026-09 records split `required_values[]` (what the
+release must be proven to do) from `carriage{}` (what the entry must look like).
+The verifier reads the carriage keys — it flattens the block into a working copy
+and still hashes the *record* for the verdict — and it **does not evaluate
+`required_values[]`**, saying so in its output rather than passing over it in
+silence. Adjudicating that half is a separate step.
 
 `station/root-app.yaml` is the **one object ever applied by hand**. Its
 `targetRevision` is the station pin; its inline values carry the only

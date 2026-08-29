@@ -1,0 +1,12 @@
+{
+  "contract_id": "fixture-estate-2026-09-strict",
+  "required_values": [],
+  "carriage": {
+    "require_evidence_kinds": ["validation_contract"],
+    "forbid_absent_evidence": ["validation_contract"],
+    "require_publication_mode": "published",
+    "require_vendor_approval": false,
+    "allow_break_glass": false,
+    "min_entry_seq": 1
+  }
+}

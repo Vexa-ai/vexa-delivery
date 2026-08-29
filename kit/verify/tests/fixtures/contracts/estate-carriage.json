@@ -1,0 +1,27 @@
+{
+  "contract_id": "fixture-estate-2026-09",
+  "required_values": [
+    {
+      "id": "V-fix-1",
+      "claim": "Every platform deployment reaches ready.",
+      "rank": "autonomous",
+      "validation": {"kind": "station-check"},
+      "enforcement": "required"
+    },
+    {
+      "id": "V-fix-2",
+      "claim": "Transcription quality is acceptable.",
+      "rank": "human",
+      "validation": {"kind": "witness", "signer": "human"},
+      "enforcement": "advisory"
+    }
+  ],
+  "carriage": {
+    "require_evidence_kinds": ["validation_contract"],
+    "forbid_absent_evidence": ["validation_contract"],
+    "require_publication_mode": "candidate",
+    "require_vendor_approval": false,
+    "allow_break_glass": false,
+    "min_entry_seq": 1
+  }
+}
