@@ -2312,6 +2312,22 @@ def _subchart_defaults(chart_dir):
 # dependencies it does not own — a database, a payment processor, a
 # transcription tier. "It came up green" is meaningless without saying what it
 # came up against. See spec/validation-contract.schema.json.
+#
+# THE NAME IS LEGACY AS OF 2026-08-29, AND THE WIRE STRING STAYS. Founder
+# rulings on Vexa-ai/vexa-delivery#12: there is no separate "validation
+# contract" document. The CHANNEL's contract is a form stating the demand, and
+# a station run returns that same form with a proof column filled in per row —
+# one document, one id, the filled instance sha-linked back to the unfilled
+# demand. A contract belongs to a CHANNEL; stations are enforcement points of
+# it, not owners of contracts of their own.
+#
+# What that renames is the DOCUMENT, not this evidence kind. Entries already
+# published carry the literal string `validation_contract`, and the contracts
+# in the ledger both require and forbid-absent that exact string, so changing
+# it here would invalidate every published entry against its own channel's
+# terms. The string stays; the prose calls it the filled contract. Its shape is
+# spec/filled-contract.schema.json, which the in-cluster verifier does not
+# evaluate yet — turn 2 teaches it to.
 
 
 def _estate_images(spec):
