@@ -24,6 +24,7 @@ each a live defect:
     by nobody. They now render from the chart, as PreSync hooks at wave -1 so
     they exist before the wave-0 Job that mounts them.
 """
+import hashlib
 import pathlib
 import shutil
 import subprocess
@@ -229,6 +230,45 @@ class VerifyGateRender(unittest.TestCase):
         # The Job mounts /contract/contract.json — one filename, one carrier.
         self.assertIn("contract.json", cm["data"])
         self.assertIn("channel.pub", sec["stringData"])
+
+    def test_the_contract_configmap_carries_the_records_exact_bytes(self):
+        """THE SEQ-6 DEFECT, AND IT COST A WHOLE STATION RUN (2026-08-29).
+
+        This ConfigMap rendered as `contract.json: |-`, and `|-` strips the
+        trailing newline from what it carries. The gate's wrapper hashes the
+        MOUNTED COPY, so the verdict recorded in-cluster named
+
+            contract_sha256: 355eddae4f036662b10d62834150c762ca5540b3df66da…
+
+        for a contract whose own bytes — in the stations ledger, in this
+        chart's baked verify.contractPolicy, and in every verdict rendered by
+        reading the file directly — hash to
+
+            a76cef3c62c21d0ee01984fcf5a511b4040f49b5a03dca248148705cdf479551
+
+        differing by the single `0a` the template dropped. A verdict that names
+        a contract hash matching no record cannot be audited, which is what the
+        stations ledger README means by "every historical gate report would
+        start pointing at a hash nothing matches".
+
+        Asserted as a HASH and not only as equality, because the hash is the
+        thing a verdict actually carries."""
+        for label, policy in (
+            ("one newline", '{"contract_id": "fixture-estate-2026-09"}\n'),
+            ("no newline", '{"contract_id": "fixture-estate-2026-09"}'),
+            ("two newlines", '{"contract_id": "fixture-estate-2026-09"}\n\n'),
+            ("blank line inside", '{\n\n  "contract_id": "x"\n}\n'),
+        ):
+            with self.subTest(label):
+                docs = render(deep(BASE_VALUES, enabled=True, contractPolicy=policy))
+                cm = next(d for d in docs if d["kind"] == "ConfigMap")
+                rendered = cm["data"]["contract.json"]
+                self.assertEqual(rendered, policy, label)
+                self.assertEqual(
+                    hashlib.sha256(rendered.encode()).hexdigest(),
+                    hashlib.sha256(policy.encode()).hexdigest(),
+                    f"{label}: the mounted contract does not hash to the record, "
+                    f"so every verdict rendered against it names a hash nothing matches")
 
     def test_contract_and_key_land_before_the_job(self):
         """A plain resource is applied in the Sync phase, i.e. AFTER PreSync —

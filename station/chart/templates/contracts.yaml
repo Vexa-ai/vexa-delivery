@@ -51,8 +51,15 @@ metadata:
   name: vexa-contract-staging
   namespace: {{ .Values.argocdNamespace }}
 data:
-  policy.json: |-
-{{ $staging | indent 4 }}
+  # QUOTED, NOT A BLOCK SCALAR. `|-` strips the trailing newline from the bytes
+  # it carries, and the verifier hashes the file it reads: at the seq-6 station
+  # that produced a verdict naming `contract_sha256: 355eddae…` for a record
+  # whose own bytes hash to `a76cef3c…`, differing by the single `0a` this
+  # template dropped. `station-chart` goes to the trouble of `shutil.copy`
+  # rather than `json.dump` so the record arrives byte-for-byte; rendering it
+  # through `|-` threw that away at the last step. See the same fix and the
+  # full reasoning in kit/verify/chart-template/channel-verify.yaml.
+  policy.json: {{ $staging | toJson }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -60,6 +67,5 @@ metadata:
   name: vexa-contract-prod
   namespace: {{ .Values.argocdNamespace }}
 data:
-  policy.json: |-
-{{ $prod | indent 4 }}
+  policy.json: {{ $prod | toJson }}
 {{- end }}
