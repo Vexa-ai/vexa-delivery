@@ -1,4 +1,7 @@
-# The evidence model — values, rank, three subjects, contracts as channel gates
+---
+title: "The evidence model"
+description: "Values, rank, the three subjects, and contracts as the gates to a channel — with what is built and what is not."
+---
 
 This is the model the factory is being built to. It is not a description of what runs today.
 **Every table carries a `State` column, and [State of implementation](#state-of-implementation)
@@ -58,6 +61,23 @@ nature — a browser joining a live meeting, a transcription pass over real audi
 run is evidence that it passed once, which is not the claim anyone cares about. The evidence is a
 **rate over a declared window**: numerator, denominator, window bounds, and the environment. A
 threshold is then a contract predicate over that rate, not a boolean the producer decides.
+
+### What a soak is
+
+**A soak is letting a release carry real production traffic for a declared stretch, and counting
+what happened.** Not a test suite, not a longer test suite — the same work the software does for
+users anyway, watched. Its output is a rate over a window: this many meetings joined out of this
+many attempted, over these hours, on these image digests, in this environment.
+
+It exists because some claims cannot be made any other way. A join path that works ten times in
+a test rig and fails one time in twenty against real calendars, real networks and real meeting
+platforms has a defect a suite will never see; only volume finds it. So the soak is the producer
+for `statistical`-rank values, and the reason production traffic is an evidence source rather than
+merely the thing we are protecting.
+
+Two properties matter downstream. **It is per-digest**, so the claim survives into any assembly
+that reuses those images. And **it keeps running**, so it is the standing watch that catches
+interactions nobody predicted, described in [evidence reuse](evidence-reuse).
 
 | Element | State |
 |---|---|
@@ -122,7 +142,7 @@ surface works as documented"* is not provable on a PR: no single change owns it,
 true only of a running assembly.
 
 **Set evidence binds to the set and decomposes onto members.** The vocabulary already exists in
-[`validation-contract.schema.json`](validation-contract.schema.json), and it is the point of that
+[`validation-contract.schema.json`](https://github.com/Vexa-ai/vexa-delivery/blob/main/spec/validation-contract.schema.json), and it is the point of that
 document:
 
 | Field | What it carries |
@@ -137,10 +157,19 @@ justify — not the set's verdict, and not nothing. A consumer running outside t
 configuration does not get a weaker claim; they get the claim plus the explicit statement of what it
 does not prove for them, and their contract decides whether that is enough.
 
-**Through `value_id`s on the candidate map, one set run validates many PRs.** The map is already the
-carrier that binds each image to its source and its runs; carrying the value ids there is what lets a
-single set-level observation discharge the claims of every change inside it, without re-running
-anything per PR.
+**Through `value_id`s on the candidate map, one set run validates many PRs.** Some claims are only
+ever true of an assembly — *"the documented API surface responds as documented"* is nobody's pull
+request — so they are proven once against the set, then **propagate down the two edges the map
+already holds**:
+
+| Direction | How it propagates |
+|---|---|
+| set → **image** | the observation records the digests it exercised and the configuration it ran under, so each digest carries the part of the claim its configuration rows justify |
+| set → **pull request** | each image resolves through the map to its source commits and their PRs, so a PR's value id is discharged by the set run that exercised the image it produced |
+
+Carrying the value ids on the map is the whole mechanism. One set-level observation settles the
+claims of every change inside it with nothing re-run per PR — and a PR whose value id no set run
+covered shows as `unproven` rather than quietly passing.
 
 | Element | State |
 |---|---|
@@ -153,7 +182,7 @@ anything per PR.
 
 ## Contracts are the gates to channels
 
-A **channel** is an ordered stream of entries ([`channel.md`](channel.md)). A **contract** is what
+A **channel** is an ordered stream of entries ([`channel.md`](https://github.com/Vexa-ai/vexa-delivery/blob/main/spec/channel.md)). A **contract** is what
 decides whether an entry may enter it, and whether an entry may run once pulled.
 
 A contract is a machine-readable list of:
@@ -170,7 +199,7 @@ over, **these are two gates, not one gate run twice**:
 | Gate | Where | What it evaluates | State |
 |---|---|---|---|
 | Publish | publisher, gate `C8` and its siblings | the publisher's own invariants: evidence completeness unless `--break-glass`, digest-pinning well-formedness, `delivery_scope` on the rendered chart | **BUILT** — has gated the five entries published to date |
-| Admission | the subscriber's cluster | the subscriber's contract predicates — `require_evidence_kinds`, `require_attestations`, `forbid_absent_evidence`, `max_entry_age_days` — plus stock signature and digest-pinning checks | **BUILT**, runs; `admission.enabled` is false in the estate today, pending the signature-repository ruling ([ADR-0002](../docs/adr/0002-channel-format.md)) |
+| Admission | the subscriber's cluster | the subscriber's contract predicates — `require_evidence_kinds`, `require_attestations`, `forbid_absent_evidence`, `max_entry_age_days` — plus stock signature and digest-pinning checks | **BUILT**, runs; `admission.enabled` is false in the estate today, pending the signature-repository ruling ([ADR-0002](/adr/0002-channel-format)) |
 
 The publisher does not hold the subscriber's contract and cannot evaluate it. That is a correct
 consequence of the two-party design, and it means "both sides run the same contract" is not a claim
@@ -180,7 +209,7 @@ this repository can make.
 that forbids an absence today is the vendor's own internal one. No subscriber contract forbids
 anything yet, which means the sharpest property of the design is currently unproven by use.
 
-## Where everything lives
+## Where everything lives, and how it is traced
 
 Three stores, three jobs, and no store does two of them.
 
@@ -190,7 +219,20 @@ Three stores, three jobs, and no store does two of them.
 | **Git ledger** | the history | records naming digests, positions, receipts | never holds envelopes |
 | **Projection** | the legibility layer | read-models rebuilt from artifacts at ingest: which values are proven, at what rank, in which environment, expiring when | never authoritative; disposable and rebuildable; one writer per surface |
 
-Two consequences worth stating:
+**The reason there are three and not one: a bucket of signed blobs is durable and unreadable.**
+Files in a store nobody indexes will answer *"is this signature valid"* and will never answer
+*"what is the state of our software"* — which is the question actually being asked. Content
+addressing is what makes evidence trustworthy and is exactly what makes it unbrowsable: to find a
+claim you must already know its digest.
+
+So the three stores split that: the registry proves, the ledger records what happened in order, and
+**the projection is the surface a human or a dashboard reads.** It is rebuilt from the artifacts at
+ingest and holds no fact of its own, so it can be wrong only by being stale, never by disagreeing —
+delete it and it comes back. Traceability is then a property of the chain rather than of any store:
+value id → evidence envelope → subject digest → entry → station, each hop a pin rather than a
+lookup by name.
+
+Two further consequences:
 
 - **Entries move pointers, not bytes.** The channel pointer moves by descriptor copy; an immutable
   tag carries identity and a floating tag carries position. Nothing is re-wrapped and nothing is
@@ -214,16 +256,16 @@ widely-adopted standard covers a layer, adopt it; keep bespoke machinery only wh
 verified.** Borrowed vocabulary lets a reviewer who recognises the standard stop evaluating and
 start checking.
 
-| Layer | Standard | State |
-|---|---|---|
-| Evidence envelope | [in-toto Statement](https://github.com/in-toto/attestation) + [DSSE](https://github.com/secure-systems-lab/dsse) | **RULED, NOT BUILT** |
-| Build claim, per image | [SLSA provenance v1](https://slsa.dev/spec/v1.1/provenance) | **NOT STARTED** — declared absent on every entry |
-| Verdict | [SLSA VSA v1](https://slsa.dev/spec/v1.1/verification_summary), `policy.digest` = the contract's sha256 | **RULED, NOT BUILT** — the bespoke verdict producer is **IN REVIEW** ([#10](https://github.com/Vexa-ai/vexa-delivery/pull/10)) |
-| Signing | [cosign](https://docs.sigstore.dev/cosign/system_config/registry_support/) key-mode, one identity per station, `threshold` in the contract | **RULED, NOT BUILT** — one key signs everything today; station identity is string-compared |
-| Admission | [Kyverno](https://kyverno.io/docs/policy-types/cluster-policy/verify-images/sigstore/), Audit-first on a first install | policy **BUILT**; Audit-first **RULED, NOT BUILT** |
-| Addressing | subject digest, with [OCI referrers](https://github.com/opencontainers/distribution-spec/blob/main/spec.md) where the consumer's registry supports it | **RULED, NOT BUILT** |
-| Statistical production evidence | [AnalysisRun](https://argo-rollouts.readthedocs.io/en/stable/features/analysis/)-pattern metric windows, wrapped as an in-toto predicate and signed onto image digests | **IN REVIEW** ([#10](https://github.com/Vexa-ai/vexa-delivery/pull/10)); no producer |
-| Ledger | git, with the head hash periodically anchored into a log we cannot rewrite ([Rekor](https://github.com/sigstore/rekor) or equivalent) | **RULED, NOT BUILT** |
+| Layer | Standard | Why this one | State |
+|---|---|---|---|
+| Evidence envelope | [in-toto Statement](https://github.com/in-toto/attestation) + [DSSE](https://github.com/secure-systems-lab/dsse) | CNCF **graduated**; it is the envelope under SLSA, GitHub attestations, Kyverno and every attestation store — adopting anything else means converting to it later | **RULED, NOT BUILT** |
+| Build claim, per image | [SLSA provenance v1](https://slsa.dev/spec/v1.1/provenance) | the one supply-chain claim a reviewer already has a checkbox for; default for public repos on GitHub, and shipped by npm and PyPI | **NOT STARTED** — declared absent on every entry |
+| Verdict | [SLSA VSA v1](https://slsa.dev/spec/v1.1/verification_summary), `policy.digest` = the contract's sha256 | our verdict already carries verifier, policy, inputs and result — this is that object, named, so `slsa-verifier` and graph tools can read it | **RULED, NOT BUILT** — the bespoke verdict producer is **IN REVIEW** ([#10](https://github.com/Vexa-ai/vexa-delivery/pull/10)) |
+| Signing | [cosign](https://docs.sigstore.dev/cosign/system_config/registry_support/) key-mode, one identity per station, `threshold` in the contract | the de-facto signing tool for container artifacts; key mode because offline verification must not call home | **RULED, NOT BUILT** — one key signs everything today; station identity is string-compared |
+| Admission | [Kyverno](https://kyverno.io/docs/policy-types/cluster-policy/verify-images/sigstore/), Audit-first on a first install | CNCF **graduated** and already installed in most enterprise clusters — the subscriber runs it whether or not we arrive | policy **BUILT**; Audit-first **RULED, NOT BUILT** |
+| Addressing | subject digest, with [OCI referrers](https://github.com/opencontainers/distribution-spec/blob/main/spec.md) where the consumer's registry supports it | the registry-native answer to *what is attested about this digest*; support is real but uneven, so the contract probes rather than assumes | **RULED, NOT BUILT** |
+| Statistical production evidence | [AnalysisRun](https://argo-rollouts.readthedocs.io/en/stable/features/analysis/)-pattern metric windows, wrapped as an in-toto predicate and signed onto image digests | the shape a platform team already recognises from progressive delivery; nobody signs it, which is the half we add | **IN REVIEW** ([#10](https://github.com/Vexa-ai/vexa-delivery/pull/10)); no producer |
+| Ledger | git, with the head hash periodically anchored into a log we cannot rewrite ([Rekor](https://github.com/sigstore/rekor) or equivalent) | git is already the record; anchoring buys tamper-evidence without adopting a transparency log wholesale | **RULED, NOT BUILT** |
 
 ## What is deliberately not standard, and why
 
@@ -257,13 +299,18 @@ makes explicit which moments genuinely require a person, so the rest can stop re
 
 As of **2026-08-29**. Nothing below is aspiration stated as fact.
 
+Two parts of the model have their own rendered pages, each carrying its own state:
+[Evidence reuse and blast radius](evidence-reuse) — how a claim is inherited when the
+diff cannot have touched it — and [How station contracts compose](contract-composition)
+— the tighten-only chain and the values registry that lets a claim be written exactly once.
+
 | Piece of the model | State |
 |---|---|
 | Publish gate (`C8` and siblings) | **BUILT** — has gated the five entries published to date |
 | Channel entry: signed digest set + evidence bundle, offline-verifiable | **BUILT** |
 | Candidate map binding image → source → runs | **BUILT** |
 | `evidence_absent[]` + `forbid_absent_evidence` | **BUILT** — exercised only by the vendor's own internal contract; no subscriber contract forbids anything yet |
-| Admission gate (Kyverno policy, signature + digest-pinning) | **BUILT**, runs — `admission.enabled` false in the estate today, pending the signature-repository ruling ([ADR-0002](../docs/adr/0002-channel-format.md)) |
+| Admission gate (Kyverno policy, signature + digest-pinning) | **BUILT**, runs — `admission.enabled` false in the estate today, pending the signature-repository ruling ([ADR-0002](/adr/0002-channel-format)) |
 | Set-level decomposition vocabulary (`proves` / `does_not_prove` / `unproven_claims`) | **BUILT** as schema — **no producer** |
 | Station-verdict producer + chart wiring | **IN REVIEW** — [#10](https://github.com/Vexa-ai/vexa-delivery/pull/10) |
 | ADR-0010, three subjects | **IN REVIEW** — [#10](https://github.com/Vexa-ai/vexa-delivery/pull/10) |
