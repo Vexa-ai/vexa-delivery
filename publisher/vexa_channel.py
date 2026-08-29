@@ -1453,6 +1453,22 @@ VERIFY_DEFAULTS = {
     # template would put a subscriber's registry inside OUR chart, exactly like
     # a hard-coded toleration would. An estate narrows this in its own values.
     "egressCIDR": "0.0.0.0/0",
+    # THE PORTS ARE A LIST, AND 6443 IS IN IT BY DEFAULT — the FIFTH "the gate
+    # failed for a reason that is not the evidence" defect (bbb station, entry
+    # seq 7, 2026-08-29). recordVerdict below makes the wrapper's last act a
+    # `kubectl create configmap`, i.e. a call to the API server. The
+    # `kubernetes` Service is on 443, so a 443-only policy looks sufficient —
+    # but NetworkPolicy is evaluated POST-DNAT and that Service DNATs to the
+    # node endpoint on 6443, the k3s/RKE/kubeadm default. Measured: `dial tcp
+    # 10.43.0.1:443: connect: connection refused`, and an ELIGIBLE verdict that
+    # went unrecorded. One extra port, and the published Job spec re-run
+    # verbatim recorded it.
+    #
+    # DEFAULTED HERE RATHER THAN LEFT TO THE ESTATE, because the wiring that
+    # needs it is on by default: shipping recordVerdict:True with a policy that
+    # blocks the write is a feature that fails on MOST clusters. Managed control
+    # planes answering on 443 are already covered by the first entry.
+    "egressPorts": [443, 6443],
     # THE VERDICT IS RECORDED, NOT PRINTED (prod, 2026-08-29). The PreSync Job
     # ran and succeeded on every sync of `vexa-production`, and four
     # consecutive nightly station reports read `verifier.verdict: ABSENT` —
@@ -1495,6 +1511,71 @@ def inject_channel_verify(chart_dir, values):
     verify = dict(VERIFY_DEFAULTS)
     deep_merge(verify, values.get("verify") or {})   # the operator still wins
     values["verify"] = verify
+    return values
+
+
+def entry_tag_for(release, entry_seq):
+    """The tag the entry for this package WILL carry: `<release>-seq<N>`.
+
+    One derivation, used by the stamper below and readable by anything else
+    that needs to know the name before the entry exists.
+    """
+    return f"{str(release).lstrip('v')}-seq{int(entry_seq)}"
+
+
+def stamp_entry_tag(values, release, entry_seq, announce=True):
+    """THE PACKAGE STAMPS ITS OWN ENTRY TAG — the operator does not.
+
+    `verify.entryTag` names the entry the PreSync gate pulls and verifies. It
+    must be the entry that CARRIES THIS CHART, and it moves on every publish,
+    so it is the one value in the estate's values file that is stale by
+    default: correct only for as long as nobody publishes again.
+
+    It went stale, and the consequence is the one failure a verifier must not
+    have (bbb station, entry seq 7, 2026-08-29). The chart published inside
+    entry seq 7 baked
+
+        entryTag: 0.12.23-estate-20260829-seq6
+
+    from `values-channel-verify.yaml`, whose own header states the rule it was
+    breaking. Installed unmodified on a subscriber, the seq-7 sync would have
+    pulled, verified and recorded a GREEN VERDICT FOR SEQ 6 — a gate passing
+    on the previous entry's evidence while naming this one. The station had to
+    override it by hand to measure the entry actually under test.
+
+    A values file cannot know its own future. The PUBLISHER can: it is handed
+    `--release` and `--entry-seq`, and the entry it is packaging for is named
+    by exactly those two facts. So the publisher stamps the value and OVERRIDES
+    whatever the values file carries — this is deliberately the one `verify.*`
+    key where the operator does not win, because the operator cannot be right
+    about it except by accident. That kills the whole footgun class rather than
+    the seq-6 instance of it.
+
+    Without `--entry-seq` the previous behaviour is kept — whatever the values
+    carry is what ships — and it says so LOUDLY, because a silent fallback here
+    reproduces exactly the defect this function exists to remove.
+    """
+    verify = values.setdefault("verify", {})
+    if entry_seq is None:
+        if announce:
+            carried = verify.get("entryTag") or ""
+            print(
+                "WARN  no --entry-seq given: verify.entryTag is NOT stamped by this package.\n"
+                f"WARN  the gate will verify {carried or '<derived from Chart.appVersion>'!r}, "
+                "which is only correct if that is the entry carrying this chart.\n"
+                "WARN  a stale entryTag makes the PreSync gate pass on the PREVIOUS entry's "
+                "evidence (bbb station, seq 7, 2026-08-29). Pass --entry-seq.",
+                file=sys.stderr,
+            )
+        return values
+    stamped = entry_tag_for(release, entry_seq)
+    was = verify.get("entryTag") or ""
+    verify["entryTag"] = stamped
+    if announce:
+        if was and was != stamped:
+            print(f"  stamped verify.entryTag {stamped} (values carried {was}; overridden)")
+        else:
+            print(f"  stamped verify.entryTag {stamped}")
     return values
 
 
@@ -2056,6 +2137,15 @@ def _platform_chart_from_overlay(args, src_chart, unpinnable):
     for f in args.pins_values:
         deep_merge(overlay, yaml.safe_load(pathlib.Path(f).read_text()) or {})
 
+    # THE OVERLAY IS STAMPED BEFORE IT IS WRITTEN OUT, not only the merged
+    # values. values-pins.yaml exists to be applied LAST by an operator; if the
+    # stale entryTag survived in it, `-f values-pins.yaml` would put the defect
+    # straight back after the stamp had removed it from values.yaml. Quiet
+    # here — the announcement is made once, at the injection site below.
+    if not args.no_verify_gate and overlay.get("verify"):
+        stamp_entry_tag(overlay, args.release, getattr(args, "entry_seq", None),
+                        announce=False)
+
     values_path = chart_dir / "values.yaml"
     values = yaml.safe_load(values_path.read_text()) or {}
     deep_merge(values, overlay)
@@ -2070,6 +2160,9 @@ def _platform_chart_from_overlay(args, src_chart, unpinnable):
 
     if not args.no_verify_gate:
         inject_channel_verify(chart_dir, values)
+        # AFTER the injection, so the stamp overrides both the chart default
+        # and the operator's values file. See stamp_entry_tag().
+        stamp_entry_tag(values, args.release, getattr(args, "entry_seq", None))
         values_path.write_text(yaml.safe_dump(values, sort_keys=False))
 
     cy = chart_dir / "Chart.yaml"
@@ -2211,6 +2304,9 @@ def cmd_platform_chart(args):
 
     if not args.no_verify_gate:
         inject_channel_verify(chart_dir, values)
+        # AFTER the injection, so the stamp overrides both the chart default
+        # and the operator's values file. See stamp_entry_tag().
+        stamp_entry_tag(values, args.release, getattr(args, "entry_seq", None))
         values_path.write_text(yaml.safe_dump(values, sort_keys=False))
 
     cy = chart_dir / "Chart.yaml"
@@ -2797,6 +2893,13 @@ def main(argv=None):
     pc.add_argument("--pins-values", action="append", help="OVERLAY MODE: bake these values files in as the pins and rely on P3, instead of mapping a --pin-set through PLATFORM_IMAGE_PATHS (repeatable, in order)")
     pc.add_argument("--unpinnable", action="append", metavar="REPO=REASON", help="declare an image that cannot be pinned through values, with the reason; recorded in the report")
     pc.add_argument("--chart-version", help="chart revision (Chart.yaml version); appVersion stays the release")
+    pc.add_argument("--entry-seq", type=int,
+                    help="the entry seq this chart will be carried by. The package STAMPS "
+                         "verify.entryTag as <release>-seq<N>, overriding whatever the values "
+                         "files carry — a values file cannot know its own future, and a stale "
+                         "entryTag makes the PreSync gate verify the PREVIOUS entry's evidence "
+                         "(bbb station, seq 7, 2026-08-29). Omitting it keeps the old behaviour "
+                         "and warns loudly.")
     pc.add_argument("--out-dir", required=True)
     pc.add_argument("--push", help="oci://host/path/charts destination")
     pc.add_argument("--insecure", action="store_true")

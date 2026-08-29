@@ -163,8 +163,35 @@ class VerifyGateRender(unittest.TestCase):
         self.assertEqual(sorted((p["protocol"], p["port"]) for p in dns["ports"]),
                          [("TCP", 53), ("UDP", 53)])
         self.assertNotIn("to", dns)
-        self.assertEqual(https["ports"], [{"protocol": "TCP", "port": 443}])
+        self.assertEqual(https["ports"], [{"protocol": "TCP", "port": 443},
+                                          {"protocol": "TCP", "port": 6443}])
         self.assertEqual(https["to"], [{"ipBlock": {"cidr": "0.0.0.0/0"}}])
+
+    def test_the_default_ports_cover_the_apiserver_endpoint(self):
+        """bbb station, entry seq 7, 2026-08-29 — the FIFTH time this gate
+        failed for a reason that is not the evidence.
+
+        recordVerdict makes the wrapper's last act a `kubectl create
+        configmap`, i.e. a call to the API server. The `kubernetes` Service
+        answers on 443, so a 443-only policy looked sufficient; NetworkPolicy
+        is evaluated POST-DNAT and that Service DNATs to the node endpoint on
+        6443 (the k3s/RKE/kubeadm default), so the write was refused with
+        `dial tcp 10.43.0.1:443: connect: connection refused` and an ELIGIBLE
+        verdict went unrecorded. A 443-only default makes on-by-default verdict
+        recording fail on MOST clusters, not on that one."""
+        np = next(d for d in render(deep(BASE_VALUES, enabled=True))
+                  if d["kind"] == "NetworkPolicy")
+        self.assertIn(6443, [p["port"] for p in np["spec"]["egress"][1]["ports"]])
+
+    def test_the_egress_ports_are_a_value(self):
+        """An estate whose API server answers elsewhere declares it in its own
+        values, exactly as it narrows the CIDR."""
+        np = next(d for d in render(deep(BASE_VALUES, enabled=True,
+                                         egressPorts=[443, 8443]))
+                  if d["kind"] == "NetworkPolicy")
+        self.assertEqual(np["spec"]["egress"][1]["ports"],
+                         [{"protocol": "TCP", "port": 443},
+                          {"protocol": "TCP", "port": 8443}])
 
     def test_the_egress_cidr_is_a_value(self):
         """The registry host is one address today. Hard-coding it here would

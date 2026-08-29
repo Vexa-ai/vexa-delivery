@@ -272,8 +272,8 @@ The same packaging act as `chart`, for the chart nobody outside can see: the pro
 usage: vexa-channel platform-chart [-h] --release RELEASE --chart-dir CHART_DIR
                                    [--pin-set PIN_SET] [--values VALUES]
                                    [--pins-values PINS_VALUES] [--unpinnable REPO=REASON]
-                                   [--chart-version CHART_VERSION] --out-dir OUT_DIR [--push PUSH]
-                                   [--insecure] [--no-verify-gate]
+                                   [--chart-version CHART_VERSION] [--entry-seq ENTRY_SEQ]
+                                   --out-dir OUT_DIR [--push PUSH] [--insecure] [--no-verify-gate]
 
 options:
   -h, --help            show this help message and exit
@@ -291,6 +291,12 @@ options:
                         recorded in the report
   --chart-version CHART_VERSION
                         chart revision (Chart.yaml version); appVersion stays the release
+  --entry-seq ENTRY_SEQ
+                        the entry seq this chart will be carried by. The package STAMPS
+                        verify.entryTag as <release>-seq<N>, overriding whatever the values files
+                        carry — a values file cannot know its own future, and a stale entryTag
+                        makes the PreSync gate verify the PREVIOUS entry's evidence (bbb station,
+                        seq 7, 2026-08-29). Omitting it keeps the old behaviour and warns loudly.
   --out-dir OUT_DIR
   --push PUSH           oci://host/path/charts destination
   --insecure
