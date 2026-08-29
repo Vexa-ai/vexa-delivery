@@ -33,6 +33,8 @@ test-kit:
 # oras/cosign. Offline: no registry, no cluster, no signature.
 test-verify:
 	bash kit/verify/tests/test_estate_verify.sh
+	bash kit/verify/tests/test_verdict_out.sh
+	bash kit/verify/tests/test_verdict_wiring.sh
 
 # Channel-entry goldens live one level down, per release: spec/goldens/<release>/entry.json.
 # Find them; refuse to pass on an empty set (a bare glob silently matched nothing).

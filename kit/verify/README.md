@@ -50,10 +50,33 @@ failed verdict fails the sync and nothing is applied. [`Dockerfile`](Dockerfile)
 image it runs: Alpine plus cosign, oras and jq — the logic is the shell script beside it, and
 every line of it is Apache-2.0 and readable.
 
+## The verdict is written down
+
+A verdict that lives only on a pod's stdout does not survive the pod. On 2026-08-29 the gate had
+been running and passing in production for four nights while every station report read
+`verifier.verdict: ABSENT` — the report schema's phrase for *the gate did not run* — because
+nothing recorded that it had.
+
+So the PreSync Job records its own outcome, pass or fail, as a ConfigMap in the release namespace
+(`verify.verdictConfigMap`, default `vexa-verify-verdict`): the verdict, the contract's id and
+sha256, when it was checked, how many checks failed, and — when the run was ELIGIBLE — the signed
+station-verdict statement verbatim. That is the object [`kit/validate`](../validate) reads when it
+builds a station report.
+
+Three things it does not do. It does not turn a failed verification into a passed sync: the Job
+still exits with the verifier's own status. It does not fail a sync when the record itself cannot
+be written — that warns in the pod log and the report reads ABSENT, which is a finding. And the
+record is not an attestation; it is unsigned bookkeeping. The signed artifact is the statement
+`--verdict-out` writes, and a failed run produces none, by design.
+
+`verify.recordVerdict: false` turns all of it off, for a subscriber whose Argo may not create a
+Role in the workload namespace.
+
 ## The honest note
 
 This is the one component of ours that runs inside your cluster. It exists because "validated"
 should mean a machine checked it, not that someone remembered to. It is open source, it reads
-only the channel and its own policy, and it writes nothing. The alternative — Kyverno enforcing
+only the channel and its own policy, and it writes exactly one object — the verdict ConfigMap
+above, in your namespace, under a Role you can read in the chart. The alternative — Kyverno enforcing
 evidence directly at admission, with no component of ours at all — is the direction recorded in
 ADR-0004 and needs per-image attestations upstream first.

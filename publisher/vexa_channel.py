@@ -1453,6 +1453,27 @@ VERIFY_DEFAULTS = {
     # template would put a subscriber's registry inside OUR chart, exactly like
     # a hard-coded toleration would. An estate narrows this in its own values.
     "egressCIDR": "0.0.0.0/0",
+    # THE VERDICT IS RECORDED, NOT PRINTED (prod, 2026-08-29). The PreSync Job
+    # ran and succeeded on every sync of `vexa-production`, and four
+    # consecutive nightly station reports read `verifier.verdict: ABSENT` —
+    # the schema's word for "the gate did not run". Both were true: the gate
+    # ran, and its verdict lived only in a pod's stdout until the pod was
+    # collected. `kit/validate/collectors.py` had read a ConfigMap for this
+    # since it was written; nothing wrote one.
+    #
+    # ON BY DEFAULT, like networkPolicy and for the same reason: the failure it
+    # prevents is silent, and the chart ships the Role the write needs, so
+    # nothing outside the chart has to be arranged for it to work.
+    "recordVerdict": True,
+    # The name collectors.py already looks for, and the name the receipt
+    # sender's Role already scopes its read to. A subscriber may rename it —
+    # in which case rename it in BOTH, or the report reads ABSENT again.
+    "verdictConfigMap": "vexa-verify-verdict",
+    # WHO IS MAKING THE CLAIM. `--verdict-out` refuses to write a verdict that
+    # cannot name its station, because an unattributable verdict looks signed
+    # and is not. An estate with more than one cluster on the channel sets this
+    # per cluster; there is no derivation that could guess it.
+    "station": "vexa-prod",
 }
 
 

@@ -126,7 +126,8 @@
               "adr/0006-internal-channel",
               "adr/0007-station-bundle",
               "adr/0008-repository-apache-2",
-              "adr/0009-public-visibility"
+              "adr/0009-public-visibility",
+              "adr/0010-evidence-levels"
             ]
           },
           {

@@ -107,9 +107,31 @@ class VerifyGateRender(unittest.TestCase):
     def test_enabled_renders_the_presync_job(self):
         docs = render(deep(BASE_VALUES, enabled=True))
         kinds = sorted(d["kind"] for d in docs)
-        self.assertEqual(kinds, ["Job", "NetworkPolicy", "ServiceAccount"])
+        # The Role/RoleBinding pair is the verdict RECORD's, in the release
+        # namespace, and it renders whenever the gate does (2026-08-29): the
+        # gate ran in prod for four consecutive nights and every station report
+        # read `verifier.verdict: ABSENT`, because nothing wrote the verdict
+        # down. The approvals Role is a different pair and still renders only
+        # under verify.requireApproval.
+        self.assertEqual(kinds, ["Job", "NetworkPolicy", "Role", "RoleBinding",
+                                 "ServiceAccount"])
         job = next(d for d in docs if d["kind"] == "Job")
         self.assertEqual(job["metadata"]["annotations"]["argocd.argoproj.io/hook"], "PreSync")
+        role = next(d for d in docs if d["kind"] == "Role")
+        self.assertEqual(role["metadata"]["namespace"], "vexa-production")
+        self.assertTrue(role["metadata"]["name"].startswith("vexa-verify-verdict-"))
+
+    def test_the_verdict_record_can_be_turned_off(self):
+        """The escape hatch, for a subscriber whose Argo may not create a Role
+        in the workload namespace. Off, the render is the pre-2026-08-29 one.
+        Full behavioural coverage: kit/verify/tests/test_verdict_wiring.sh."""
+        docs = render(deep(BASE_VALUES, enabled=True, recordVerdict=False))
+        self.assertEqual(sorted(d["kind"] for d in docs),
+                         ["Job", "NetworkPolicy", "ServiceAccount"])
+        c = next(d for d in docs
+                 if d["kind"] == "Job")["spec"]["template"]["spec"]["containers"][0]
+        self.assertNotIn("command", c)
+        self.assertNotIn("--verdict-out", c["args"])
 
     # ------------------------------------------------------------------ egress
     # PROD, seq 4, 2026-08-25. The pod scheduled and the verifier started; its
