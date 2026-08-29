@@ -28,6 +28,16 @@ it is actually built — is [`docs/evidence-model.mdx`](../docs/evidence-model.m
   channel pointer is a signed, visible act, not a silent downgrade).
 - **The entry artifact** (artifactType `application/vnd.vexa.channel-entry.v1+json`) contains
   `entry.json` plus the evidence files it digest-lists. Config media type carries the schema id.
+- **THE ENTRY IS JUST JSON — the channel does not have to host the bytes.** (Founder architecture
+  ruling, 2026-08-29, [#12](https://github.com/Vexa-ai/vexa-delivery/issues/12).) What the channel
+  delivers is a signed JSON entry: pinned digests, evidence, and the filled contract. **Integrity
+  comes from digest pinning, not from hosting** — a digest resolves to the same bytes at any
+  registry, and the signature is over the entry, not over the transport.
+  `images/` is therefore the **air-gap option**, taken by subscriber channels that need one-host
+  egress (oenb-class). It is not required of a channel, not asserted by `mirrored_to`, and — for
+  the `vexa-internal` estate, which reaches Docker Hub — not pulled from: that estate's images stay
+  at their public repositories, pinned by digest. A contract for such a channel **must not demand
+  mirroring**, and "image not in the channel" is not a finding there.
 
 ## The evidence chain, and exactly what it claims
 

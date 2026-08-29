@@ -225,7 +225,7 @@
           },
           "mirrored_to": {
             "type": "string",
-            "description": "Where this channel serves the image from. A subscriber pulls this reference, not the upstream one \u2014 that is what makes one-host egress possible."
+            "description": "OPTIONAL, AND AIR-GAP ONLY. Where this channel additionally serves the image from, for a subscriber channel that needs one-host egress; such a subscriber pulls this reference instead of the upstream one. It is not required and never has been (it is absent from this object's `required` list), and per the 2026-08-29 ruling it is not asserted for the vexa-internal estate: the entry is just JSON, the bytes stay at their public registry, and integrity comes from digest pinning rather than from hosting. Its absence means the image is pulled at its canonical repository by digest \u2014 not that anything is missing."
           },
           "values_path": {
             "type": "string",

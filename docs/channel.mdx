@@ -5,6 +5,8 @@ description: "Where your releases live, who may pull them, and how your credenti
 
 **A private OCI repository on `channel.vexa.ai` carrying signed entries, the digest-pinned Helm chart, image signatures, the kit, and a `current` pointer.** Your staging follows `current`; your production follows a pin only you move. Mirroring the whole channel into your own registry is first-class — the guarantees are in the signatures and digests, not the transport.
 
+**What a channel delivers is the signed entry, not the bytes.** The entry is JSON: pinned digests, evidence, and the filled contract. A digest resolves to the same bytes wherever they are served from, so image *hosting* is a separate question from integrity — a channel may mirror the images it names, and one that does not is no weaker. Mirroring is the **air-gap option**, and it is the right one when your network allows exactly one host outbound; without that constraint images are pulled by digest from their public registry.
+
 | | **The open channel** | **A private channel** |
 |---|---|---|
 | What it answers | keep me current with what upstream publishes | I need something upstream does not have yet |
