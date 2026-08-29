@@ -156,4 +156,30 @@ Three things are visible in that paragraph and in no JSON diff: what is enforced
 **State: RULED, NOT BUILT.** The values registry, `extends`, the tighten-only compiler check and `contract compile` are decided and unimplemented. What runs today is the flat shape above. See [the evidence model](evidence-model) for the full per-element state.
 </Note>
 
+## Setting and amending a contract
+
+A contract states the standing properties of one environment. It is amended rarely and
+deliberately — cargo never edits it, because one durable carriage clause
+(`require_entry_values_proven`) already gates whatever an entry claims.
+
+1. **The consumer owns it.** A contract belongs to the party who runs the station, never
+   the publisher. The vendor may draft; the owner decides.
+2. **Immutable — succession, not mutation.** A change mints a successor
+   (`…-2026-09` → `…-2026-10`) committed to the ledger. The predecessor stays in the
+   record forever: old verdicts name it by id and sha and must remain auditable.
+3. **The change vehicle is a reviewed commit** carrying the reason. Tightening (add a
+   value, flip advisory → refuses, shorten freshness) is routine. Loosening requires the
+   justification in the commit and the owner's explicit word — and a downstream contract
+   can never loosen an upstream one; the compiler refuses it.
+4. **Taking effect is mechanical, never silent.** A contract binds when the station's
+   enforcement copy is rendered from the record, sha-pinned; every verdict names the
+   contract id and sha it judged under, so *which rules were in force for entry N* is
+   always answerable.
+5. **There is no emergency edit path.** `allow_break_glass: false` means none exists. A
+   real emergency mints a successor through the same protocol — fast is fine, silent is
+   impossible.
+6. **Target:** the contract itself becomes a DSSE-signed document under the owner's key.
+   A subscriber's contract signed with *their* key makes their refusal of the vendor
+   cryptographic rather than procedural. *(RULED, NOT BUILT.)*
+
 Next: [Evidence reuse and blast radius](evidence-reuse) · [The station gate](station-gate)
