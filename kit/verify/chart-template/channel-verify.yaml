@@ -166,7 +166,13 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get"]           # reads approval records only; writes nothing
+    # READS APPROVAL RECORDS, AND WRITES NOTHING IN THIS NAMESPACE. The gate
+    # does write exactly one object — the verdict record — but never here: it
+    # lands in the RELEASE namespace under the separate `vexa-verify-verdict-*`
+    # Role below. Two Roles rather than one broadened Role, because the
+    # approval namespace is usually `argocd` and nothing this gate does earns
+    # a write permission there.
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -177,6 +183,83 @@ metadata:
     "argocd.argoproj.io/hook": PreSync
     "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: vexa-verify-approvals-{{ .Release.Namespace }}}
+subjects:
+  - kind: ServiceAccount
+    name: vexa-verify
+    namespace: {{ .Release.Namespace }}
+---
+{{- end }}
+{{- $recordVerdict := ne .Values.verify.recordVerdict false }}
+{{- $verdictCM := .Values.verify.verdictConfigMap | default "vexa-verify-verdict" }}
+{{- $station := .Values.verify.station | default "vexa-prod" }}
+{{- /* OUTSIDE the verifier's workdir, which it rm -rf's on entry. */ -}}
+{{- $verdictFile := "/tmp/vexa-verdict.json" }}
+{{- if $recordVerdict }}
+{{- /*
+THE VERDICT MUST BE WRITTEN DOWN, OR IT DID NOT HAPPEN (prod, 2026-08-29).
+
+The PreSync Job ran, and succeeded, on every sync of `vexa-production` — and
+every station report for four consecutive nights read `verifier.verdict:
+ABSENT`, which the report schema defines as "the gate did not run, which is a
+finding rather than a pass". Both statements were true at once: the gate ran,
+and nothing recorded that it had. The verdict existed for as long as the pod's
+stdout existed, and then the pod was garbage-collected.
+
+`kit/validate/collectors.py` has read a ConfigMap for this since it was
+written — `vexa-verify-verdict`, in the workload namespace, flat keys. There
+was no producer. This Role, and the wrapper in the Job below, are that
+producer.
+
+WHAT THIS RECORD IS, AND WHAT IT IS NOT. It is the COLLECTOR's record of a
+run: channel-agnostic, unsigned, keyed exactly as the report schema's
+`release.verifier` block reads it. It is NOT the signed station-verdict
+attestation — that is `--verdict-out`'s in-toto statement, whose schema admits
+only OSS release-train versions (`^v\d+\.\d+\.\d+$`) and which a failed run
+deliberately never writes. The statement is carried here VERBATIM under
+`verdict.json` when the run produced one, so the two never have to be
+reconciled by hand; the flat keys are written either way.
+
+THREE VERBS, AND ONLY ONE OF THEM IS UNSCOPED. `update`/`patch` name the one
+ConfigMap this gate may ever touch. `create` cannot be resourceName-scoped —
+the Kubernetes authorizer has no name to match against on a create — so it is
+namespace-wide by construction, which is the smallest true statement RBAC can
+make here. `get` is needed because `kubectl apply` reads before it writes.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vexa-verify-verdict-{{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/sync-wave": "-1"
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    # `apply` reads first; `create` cannot carry a resourceName.
+    verbs: ["get", "create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $verdictCM | quote }}]
+    verbs: ["update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vexa-verify-verdict-{{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/sync-wave": "-1"
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: vexa-verify-verdict-{{ .Release.Namespace }}}
 subjects:
   - kind: ServiceAccount
     name: vexa-verify
@@ -281,6 +364,86 @@ spec:
       containers:
         - name: verify
           image: {{ .Values.verify.image | quote }}
+          {{- if $recordVerdict }}
+          {{- /*
+          THE WRAPPER THAT WRITES THE VERDICT DOWN (prod, 2026-08-29).
+
+          The image's ENTRYPOINT is the verifier itself, so `args` below are —
+          unchanged — the verifier's own flags. This `command` inserts eight
+          lines of shell between the entrypoint and the exit: run the verifier
+          with the args as given, tee its transcript so the pod log is exactly
+          what it was before, then record the outcome as a ConfigMap the
+          station report can read after the pod is gone.
+
+          `sh -uc`, NOT `-ec`: the whole point is to keep running after a
+          non-zero verify, because A FAILED RUN IS A VERDICT AND MUST BE
+          RECORDED. `-e` would exit at the failure and record nothing, which is
+          the state this change exists to end.
+
+          THE EXIT CODE IS THE VERIFIER'S, ALWAYS. `exit "$rc"` is the last
+          line: recording a NOT_ELIGIBLE verdict does not turn a failed
+          verification into a passed sync. The gate still fails closed.
+
+          A FAILURE TO RECORD DOES NOT FAIL THE SYNC, and that is a deliberate
+          asymmetry. This template's entire defect history is "the gate failed
+          for a reason that has nothing to do with the evidence" — four times —
+          and an RBAC gap on a bookkeeping ConfigMap is exactly that shape. It
+          warns in the pod log and the report reads ABSENT, which the schema
+          already defines as a finding rather than a pass.
+          */}}
+          command:
+            - /bin/sh
+            - -uc
+            - |
+              work=$(mktemp -d)
+              log="$work/run.log"
+              ( vexa-verify "$@"; echo $? > "$work/rc" ) 2>&1 | tee "$log"
+              rc=$(cat "$work/rc" 2>/dev/null || echo 1)
+
+              cm="$work/cm"; mkdir -p "$cm"
+              if [ "$rc" -eq 0 ]; then
+                printf ELIGIBLE > "$cm/verdict"
+                printf 0 > "$cm/failed_checks"
+              else
+                printf NOT_ELIGIBLE > "$cm/verdict"
+                # The verifier's own count, off its own verdict line; the FAIL
+                # lines are the fallback, and 1 is the floor — a non-zero exit
+                # with no parseable count is still at least one failed check.
+                n=$(sed -n 's/^VERDICT: NOT ELIGIBLE[^0-9]*\([0-9][0-9]*\) check.*/\1/p' "$log" | tail -1)
+                [ -n "$n" ] || n=$(grep -c '^FAIL' "$log" || true)
+                [ "${n:-0}" -gt 0 ] 2>/dev/null || n=1
+                printf %s "$n" > "$cm/failed_checks"
+              fi
+              printf %s "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$cm/checked_at"
+              printf %s "$VEXA_STATION" > "$cm/station"
+              printf %s "$VEXA_ENTRY_REF" > "$cm/entry_ref"
+              # Computed HERE and not scraped from the log: the same two
+              # expressions the verifier uses (vexa-verify.sh §"contract"), so
+              # the record names the contract even on a run that failed before
+              # it got that far.
+              if [ -f "$VEXA_CONTRACT_FILE" ]; then
+                cid=$(jq -r '.contract_id // ""' "$VEXA_CONTRACT_FILE" 2>/dev/null) || cid=""
+                [ -n "$cid" ] && printf %s "$cid" > "$cm/contract_id"
+                printf %s "$(sha256sum "$VEXA_CONTRACT_FILE" | cut -d' ' -f1)" > "$cm/contract_sha256"
+              fi
+              # The signed statement, verbatim, when the run produced one. Only
+              # an ELIGIBLE run does — the attestation schema says a failed
+              # verification produces no attestation — so this key is present
+              # or absent, never forged.
+              if [ -f "$VEXA_VERDICT_FILE" ]; then
+                cp "$VEXA_VERDICT_FILE" "$cm/verdict.json"
+                rel=$(jq -r '.predicate.release // ""' "$VEXA_VERDICT_FILE" 2>/dev/null) || rel=""
+                [ -n "$rel" ] && printf %s "$rel" > "$cm/release"
+              fi
+
+              kubectl create configmap "$VEXA_VERDICT_CM" -n "$VEXA_VERDICT_NS" \
+                  --from-file="$cm" --dry-run=client -o yaml \
+                | kubectl apply -n "$VEXA_VERDICT_NS" -f - > /dev/null \
+                && echo "OK    verdict recorded in configmap/$VEXA_VERDICT_CM ($(cat "$cm/verdict"))" \
+                || echo "WARN  could not record the verdict in configmap/$VEXA_VERDICT_CM — the station report will read ABSENT, which is a finding, not a pass. The verification's own result stands and is below."
+              exit "$rc"
+            - vexa-verify-gate
+          {{- end }}
           args:
             - --entry-ref
             # appVersion, NOT version. Chart.version is the CHART revision;
@@ -310,9 +473,34 @@ spec:
             {{- if .Values.verify.insecure }}
             - --insecure
             {{- end }}
-          {{- if .Values.verify.registrySecret }}
+            {{- if $recordVerdict }}
+            # THE SIGNED STATEMENT, as a file. --verdict-out refuses without
+            # --station (an unattributable verdict looks signed and is not) and
+            # without --policy (a verdict is rendered AGAINST a contract) —
+            # both are already above. No --verdict-log: the transcript of this
+            # run is still being written when the hash would be taken, so a
+            # hash of it would bind the claim to a file that no longer matches.
+            - --station
+            - {{ $station | quote }}
+            - --verdict-out
+            - {{ $verdictFile | quote }}
+            {{- end }}
+          {{- if or .Values.verify.registrySecret $recordVerdict }}
           env:
+            {{- if .Values.verify.registrySecret }}
             - {name: DOCKER_CONFIG, value: /registry-cred}
+            {{- end }}
+            {{- if $recordVerdict }}
+            # The wrapper's inputs, as environment rather than as text baked
+            # into the script: the script is then identical in every render and
+            # can be run, verbatim, against stubs in a test.
+            - {name: VEXA_VERDICT_CM,    value: {{ $verdictCM | quote }}}
+            - {name: VEXA_VERDICT_NS,    value: {{ .Release.Namespace | quote }}}
+            - {name: VEXA_VERDICT_FILE,  value: {{ $verdictFile | quote }}}
+            - {name: VEXA_CONTRACT_FILE, value: "/contract/contract.json"}
+            - {name: VEXA_STATION,       value: {{ $station | quote }}}
+            - {name: VEXA_ENTRY_REF,     value: "{{ .Values.verify.registry }}/vexa/channel/{{ .Values.verify.channel }}:{{ if .Values.verify.entryTag }}{{ .Values.verify.entryTag }}{{ else }}v{{ .Chart.AppVersion }}{{ end }}"}
+            {{- end }}
           {{- end }}
           volumeMounts:
             - {name: channel-key, mountPath: /keys, readOnly: true}
