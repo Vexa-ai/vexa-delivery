@@ -266,7 +266,7 @@ isolated.
   states `baseline`. A bank asking for `restricted` is a chart change, and it is
   a real one; this is the first time it has been measured.
 - **Nothing about admission.** Image-signature admission is
-  [#36](https://github.com/Vexa-ai/vexa-delivery/pull/36)'s business and was not
+  [vexa-delivery-internal#36](https://github.com/Vexa-ai/vexa-delivery-internal/pull/36)'s business and was not
   re-exercised here.
 - **The submit path was proven with `--submit` against a real cluster and the
   real edge, once.** No concurrency, no large bundle, no failure injection, no

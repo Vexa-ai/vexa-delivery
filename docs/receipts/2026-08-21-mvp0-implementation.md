@@ -3,7 +3,7 @@ title: "MVP0 implementation state"
 description: "What is built, what was proven live on the Akamai cluster, and what is not done."
 ---
 
-The milestone is [#7](https://github.com/Vexa-ai/vexa-delivery/issues/7). This file records what
+The milestone is [vexa-delivery-internal#7](https://github.com/Vexa-ai/vexa-delivery-internal/issues/7). This file records what
 is built, what was proven live, and what is not done — stated at the rung the evidence supports.
 
 **Proof cluster:** a throwaway LKE cluster, us-sea, k8s 1.36.3, 2× g6-standard-4 (8 GB),
@@ -99,7 +99,7 @@ testing caught before a customer did — the conveyor doing its job — and belo
 
 ---
 
-## 5 · Not done (against the #7 acceptance)
+## 5 · Not done (against the vexa-delivery-internal#7 acceptance)
 
 - **Bot spawn not yet driven.** The stack is up; no meeting bot has been launched and admitted.
   This is the remaining piece of acceptance item 1.

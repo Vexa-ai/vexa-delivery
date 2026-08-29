@@ -219,7 +219,7 @@ if ! $DRY_RUN; then
     # The flag form: BOTH '<ns>/<name>' and a bare '<name>' were measured
     # working on Kyverno 1.19.0 against channel.vexa.ai on 2026-08-25 (the
     # controller sent Authorization and got 200 in both). The earlier note in
-    # PR #31's receipt that the namespaced form is silently ignored is
+    # PR vexa-delivery-internal#31's receipt that the namespaced form is silently ignored is
     # withdrawn — it was not the cause of that session's 401s.
     echo "   giving kyverno a credential for the channel registry"
     kc -n "$KYVERNO_NS" create secret docker-registry channel-registry-creds \
