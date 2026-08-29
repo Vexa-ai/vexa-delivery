@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "contract_id": "vexa-internal-estate-2026-09",
+  "fills_contract": {
+    "id": "vexa-internal-estate-2026-09",
+    "sha256": "a76cef3c62c21d0ee01984fcf5a511b4040f49b5a03dca248148705cdf479551"
+  },
+  "channel": "vexa-internal",
+  "station": "vexa-staging-bbb",
+  "release": "0.12.23-estate-20260829",
+  "entry_ref": "channel.vexa.ai/vexa/channel/vexa-internal:0.12.23-estate-20260829-seq6",
+  "at": "2026-08-29T13:35:48Z",
+  "filled_by": "station run, vexa-staging-bbb (bbb k3s v1.32.4+k3s1, namespace vexa-station-seq6)",
+  "verdict": "NOT_ELIGIBLE",
+  "carriage": {
+    "require_evidence_kinds": [
+      "validation_contract"
+    ],
+    "forbid_absent_evidence": [
+      "validation_contract"
+    ],
+    "require_publication_mode": "candidate",
+    "require_vendor_approval": false,
+    "allow_break_glass": false,
+    "min_entry_seq": 1,
+    "max_entry_age_days": 30,
+    "require_entry_values_proven": true,
+    "require_premerge_validation": "advisory"
+  },
+  "required_values": [
+    {
+      "id": "V-est-1",
+      "claim": "Every platform deployment reaches ready.",
+      "rank": "autonomous",
+      "validation": {
+        "kind": "station-check"
+      },
+      "enforcement": "required",
+      "proof": {
+        "status": "unproven",
+        "notes": "9 of 13 Deployments ready. vexa-runtime ImagePullBackOff — the entry's own images[] row claims the cargo image is mirrored to the channel and a manifest GET at that path returned 404. billing-provider-worker and billing-auto-topup-worker refuse a placeholder Stripe key. capacity-reserve asks for 2 replicas under a hostname topology spread on a one-node cluster. Two of the four are station shape and two are findings; no deployment was excluded from the measurement.",
+        "evidence": [
+          {
+            "pointer": "v-est-1.json",
+            "sha256": "14b5db15f1e21f6a4225af37d7e2163c397b8754bb41a016c0a3dda523dea7e5",
+            "note": "the raw per-Deployment spec/ready assertion"
+          },
+          {
+            "pointer": "v-est-1.txt",
+            "sha256": "c552fb2c06ab7ca36272bcd9cadc2167a948941a15639564bf357f5ca98e9118"
+          },
+          {
+            "pointer": "pods-final.txt",
+            "sha256": "d9eb4cd9a0f04f27385ae3ed51bce15b54891d7889a91f4aef78f7fcb7cd44de",
+            "note": "the namespace as left; the four CronJob workloads with the no-pull-secret shape are still in ImagePullBackOff here"
+          }
+        ],
+        "environment": "bbb k3s v1.32.4+k3s1, single node, 128 cpu / 251 Gi, namespace vexa-station-seq6",
+        "fidelity": [
+          {
+            "dependency": "postgres",
+            "kind": "double",
+            "justification": "the published estate bakes the production managed-Postgres hostname into vexa.database.host and roleEnv.data.DB_HOST. Installed unmodified this station would have pointed at the production database, so the contract declares Postgres a double for exactly this reason."
+          },
+          {
+            "dependency": "stripe",
+            "kind": "double",
+            "justification": "no live sk_live_ key is held at a station. Two billing workers hardwire live mode and therefore cannot become ready here; this is station fidelity, not a defect in the set."
+          },
+          {
+            "dependency": "transcription",
+            "kind": "absent",
+            "justification": "tx-gateway-secrets and vexa-platform-vexa-secrets carry placeholders; nothing reaches a real ASR tier."
+          }
+        ],
+        "does_not_prove": "This row is not a verdict on the set's readiness in production. Two of the four failures follow from the station's own shape — a placeholder billing credential and a single node — and would not occur at a station with real billing credentials and two nodes. It also says nothing about whether the workloads that DID reach ready behave correctly; readiness is a probe, not a function test. The one failure that is a finding about the set is vexa-runtime, and its cause is the missing mirror rather than the software."
+      }
+    },
+    {
+      "id": "V-est-2",
+      "claim": "A bot joins a live meeting and transcript segments arrive over websocket.",
+      "rank": "autonomous",
+      "validation": {
+        "kind": "station-smoke"
+      },
+      "enforcement": "required",
+      "proof": {
+        "status": "not-run",
+        "notes": "Not attempted, and not faked. Three reasons, any one sufficient: the transcription tier is a placeholder, so no segment could arrive and the claim is that segments arrive; the runtime was in ImagePullBackOff for the published image, so there was nothing to dispatch to until a substitution that is not the published artifact; and the bot image pulled from Docker Hub rather than the channel, so a bot that did join would not have exercised the delivery path this smoke exists to prove. A real Google Meet from bbb was permitted and was not the blocker.",
+        "environment": "bbb k3s v1.32.4+k3s1, single node, namespace vexa-station-seq6",
+        "fidelity": [
+          {
+            "dependency": "transcription",
+            "kind": "absent",
+            "justification": "placeholder credentials only; a green result here would have measured a substituted runtime talking to a placeholder ASR tier, which is worse than no result."
+          }
+        ],
+        "does_not_prove": "Nothing. A not-run row establishes neither that the claim holds nor that it fails, and it must not be read as either."
+      }
+    },
+    {
+      "id": "V-est-3",
+      "claim": "Every runtime-spawned pod carries explicit cpu and memory resources.",
+      "rank": "autonomous",
+      "validation": {
+        "kind": "station-check"
+      },
+      "enforcement": "required",
+      "proof": {
+        "status": "proven",
+        "notes": "Run through the runtime's own code path, inside the deployed runtime pod, submitting to the real API server with the runtime's own ServiceAccount. Not a render — a Pod was created, and the API server stored requests equal to limits on both dimensions at cpu=1 / memory=2560Mi, which is Guaranteed QoS. The tolerations and nodeSelector survived the #1093 rewrite, so the seq-3 tainted-pool regression is not reintroduced. Negative control: kubectl get limitrange,resourcequota in the namespace returns no resources, so no namespace default could have supplied those numbers.",
+        "evidence": [
+          {
+            "pointer": "v-est-3-created-pod.json",
+            "sha256": "45c91577398e56ea4f1a09d02e8be328ecfe211787ce38203acfb5a63a369ece",
+            "note": "the Pod as the API server stored it"
+          },
+          {
+            "pointer": "v-est-3-assert.txt",
+            "sha256": "4676ff2b648161251a7b0202782a388f5ca0d4bd0b00ccfb48bfd2dd674ab3f9",
+            "note": "the assertion and its negative control"
+          }
+        ],
+        "environment": "bbb k3s v1.32.4+k3s1, single node, namespace vexa-station-seq6",
+        "fidelity": [
+          {
+            "dependency": "runtime image",
+            "kind": "double",
+            "justification": "the published digest sha256:3ea26b79… was not pullable from the channel at the time of the run, so the assert ran against the locally built vexaai/v012-runtime:0.12.23-estate-20260829-seq6 on bbb — same source commit 12769637, the build the publish draft names, imported into the node's containerd and patched onto the runtime Deployment."
+          }
+        ],
+        "does_not_prove": "It does not prove this of the PUBLISHED artifact. The image under test was the local build of the same source commit, not the digest the entry ships, because that digest did not exist in the channel when the station ran. The assert must be re-run against the channel digest once the image is mirrored before this row can be read as a claim about the delivered set."
+      }
+    },
+    {
+      "id": "V-est-4",
+      "claim": "The documented API surface responds as documented.",
+      "rank": "autonomous",
+      "validation": {
+        "kind": "set-test",
+        "subject": "digest-set"
+      },
+      "enforcement": "advisory",
+      "proof": {
+        "status": "not-run",
+        "notes": "No set-test was run at this station. The estate was installed with its PreSync gate disabled and its transcription tier absent, and the set-test harness was not part of this run.",
+        "does_not_prove": "Nothing."
+      }
+    },
+    {
+      "id": "V-est-5",
+      "claim": "Join success over the declared window stays above threshold.",
+      "rank": "statistical",
+      "validation": {
+        "kind": "soak",
+        "window": "10 meetings"
+      },
+      "enforcement": "advisory",
+      "proof": {
+        "status": "not-run",
+        "notes": "A soak needs a population and this station produced none — V-est-2 was not attempted at all. Prior production history for the previous runtime digest does not carry to this one; the soak restarts at sync.",
+        "does_not_prove": "Nothing. In particular, the absence of a soak is not evidence of a low join rate."
+      }
+    },
+    {
+      "id": "V-est-6",
+      "claim": "Transcription quality is acceptable.",
+      "rank": "human",
+      "validation": {
+        "kind": "witness",
+        "signer": "human"
+      },
+      "enforcement": "advisory",
+      "proof": {
+        "status": "not-run",
+        "notes": "A human row cannot be filled by a station run, and there was no transcript to witness in any case.",
+        "does_not_prove": "Nothing."
+      }
+    },
+    {
+      "id": "V-est-7",
+      "claim": "Every artifact production runs is byte-reproducible from source committed to main: the entry's source SHAs are on their repository's main, chart and overlay bytes match the committed files, and each rebuilt image carries build provenance from a main commit.",
+      "rank": "autonomous",
+      "validation": {
+        "kind": "station-check"
+      },
+      "enforcement": "required",
+      "proof": {
+        "status": "not-run",
+        "notes": "Not adjudicated by this run. The in-cluster verifier states in its own transcript that required_values[] is NOT evaluated by it, so this row was never going to be answered by the gate; and the station report adjudicated V-est-1, V-est-2 and V-est-3 only. Recorded as not-run rather than omitted so that the gap is visible on the form.",
+        "does_not_prove": "Nothing. This row being unanswered is exactly why a filled contract lists every row of the demand: an instance that omitted it would have read as complete while being narrower than the contract it claims to fill."
+      }
+    }
+  ]
+}

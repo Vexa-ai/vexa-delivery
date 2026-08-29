@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vexa.ai/spec/filled-contract.schema.json",
+  "title": "Filled channel contract v1",
+  "description": "THE CHANNEL CONTRACT IS A FORM, AND A STATION RUN FILLS IT IN. There is one document, not two: the channel's contract states the demand — every value the channel requires, and the carriage terms an entry must meet to be admitted — and a station run returns that same document with a proof column added to each row. Founder rulings on Vexa-ai/vexa-delivery#12, 2026-08-29. A filled instance therefore carries the SAME contract_id as the demand it answers, and binds itself to the exact bytes of that demand through fills_contract.sha256; the demand is constant across a channel, and what varies per set is the proof column. A CONTRACT BELONGS TO A CHANNEL, never to a release train and never to a station. Stations — staging, prod — are enforcement points of their channel's contract, not owners of contracts of their own, which is why `station` below is an attribution on the instance rather than a scope on the demand. Each train yields one filled instance per set. NOT YET EVALUATED BY THE VERIFIER. This schema is the definition the in-cluster verifier learns to read in turn 2; as of turn 1 (2026-08-29) it defines the document and validates instances offline, and the gate still admits entries on the carriage block alone. The evidence kind carried in a channel entry stays the string `validation_contract` this turn for schema compatibility with entries already published — the name is legacy, the document is the filled contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contract_id",
+    "fills_contract",
+    "station",
+    "at",
+    "verdict",
+    "required_values"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "contract_id": {
+      "type": "string",
+      "description": "The SAME id as the unfilled demand this instance answers. Not a derived or per-run id: a filled contract that renamed itself could not be matched back to the demand it claims to satisfy.",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "fills_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "description": "The binding to the unfilled demand, by BYTES and not by name. An id says what a document calls itself; the drift that matters keeps the id and moves a threshold, so the hash is the load-bearing half. It is the sha256 of the contract record's bytes exactly as they sit in the stations ledger — no re-serialisation, no dropped trailing newline.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "channel": {
+      "type": "string",
+      "description": "The channel whose contract this is. Optional because it is derivable from contract_id in every case shipped so far, and stated when a reader would otherwise have to derive it.",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "station": {
+      "type": "string",
+      "description": "WHICH ENFORCEMENT POINT FILLED THIS IN — the station name, e.g. `vexa-staging-bbb` or `vexa-prod`. A station does not own a contract; it answers its channel's. An unattributable filled contract looks like proof and is not, which is the same reason --verdict-out refuses to write a verdict with no --station."
+    },
+    "release": {
+      "type": "string",
+      "description": "The release the set under test carried, e.g. `0.12.23-estate-20260829`. Optional: a filled contract is about the SET, and the entry reference below names it precisely."
+    },
+    "entry_ref": {
+      "type": "string",
+      "description": "The channel entry whose set this instance proves, e.g. `channel.vexa.ai/vexa/channel/vexa-internal:0.12.23-estate-20260829-seq6`."
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the fill completed. Individual rows may carry their own filled_at when they were proven at different times."
+    },
+    "verdict": {
+      "type": "string",
+      "description": "THE BOTTOM LINE, and it is a judgement about the rows below rather than a separate finding. ELIGIBLE means every row whose enforcement is `required` is proven. NOT_ELIGIBLE means at least one required row is not. INCOMPLETE is the honest third answer: the run ended with required rows neither proven nor refuted — a station that could not reach a dependency, a smoke that was never attempted — and it exists so that such a run cannot be recorded as either a pass or a failure.",
+      "enum": ["ELIGIBLE", "NOT_ELIGIBLE", "INCOMPLETE"]
+    },
+    "filled_by": {
+      "type": "string",
+      "description": "The tool or operator that performed the fill, for provenance. Not an authorisation: nothing here is signed, and a filled contract is signed as an attestation subject if it is signed at all."
+    },
+    "carriage": {
+      "type": "object",
+      "description": "The carriage terms carried through from the demand, VERBATIM. Copied rather than referenced so the filled instance is readable standing alone, and checkable against fills_contract.sha256 by anyone who has the record. These are terms on the ENTRY that carries the set — publication mode, evidence kinds, sequence floor — not claims about the software, which is why they carry no proof column.",
+      "additionalProperties": true
+    },
+    "required_values": {
+      "type": "array",
+      "minItems": 1,
+      "description": "THE FORM, ROW BY ROW. Every row of the demand appears here, in the demand's own order, whether or not it was proven — a filled contract that omitted the rows it could not answer would read as complete while being silently narrower than the contract it claims to fill.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "claim", "enforcement"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The demand's own row id, e.g. `V-est-3`. Unchanged from the unfilled contract."
+          },
+          "claim": {
+            "type": "string",
+            "description": "The demand's own words for what must be true, carried through unchanged. Restating it in the filler's words is how a row quietly becomes a weaker row."
+          },
+          "rank": {
+            "type": "string",
+            "enum": ["autonomous", "statistical", "human"],
+            "description": "How the claim can be established at all: by a machine check, by a population over a window, or only by a person."
+          },
+          "validation": {
+            "type": "object",
+            "description": "How the demand says this row is to be proven, carried through unchanged.",
+            "additionalProperties": true,
+            "properties": {
+              "kind": {
+                "type": "string"
+              }
+            }
+          },
+          "enforcement": {
+            "type": "string",
+            "enum": ["required", "advisory"],
+            "description": "Whether an unproven row blocks. Carried through from the demand; a filler may not soften it."
+          },
+          "proof": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status"],
+            "description": "THE COLUMN THE STATION ADDS, and the only part of a row a fill may write. Absent means the row was not reached at all by this run, which is different from `not-run` — absent is silence, `not-run` is a stated decision with a reason.",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["proven", "unproven", "not-run"],
+                "description": "`proven` — the claim was established, and `evidence` points at what establishes it. `unproven` — the run attempted the claim and it did not hold; this is a finding, and `notes` says what was observed. `not-run` — the run did not attempt it, and `notes` says why. THE THREE ARE NOT INTERCHANGEABLE: recording a not-run row as unproven manufactures a failure, and recording it as proven is the failure this whole document exists to prevent."
+              },
+              "evidence": {
+                "type": "array",
+                "description": "What a reader opens to check the row for themselves. Required in practice for a `proven` row — a proof with no pointer is an assertion — and useful on the other two.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["pointer"],
+                  "properties": {
+                    "pointer": {
+                      "type": "string",
+                      "description": "Where the evidence is: a path inside the station report bundle, an OCI reference, or a URL. Resolvable by someone who is not the author."
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "description": "The evidence bytes' hash, where the evidence is a file. Without it a pointer names a location whose contents can change after the claim was made.",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "note": {
+                      "type": "string",
+                      "description": "What this particular artifact shows, when the pointer alone does not say."
+                    }
+                  }
+                }
+              },
+              "environment": {
+                "type": "string",
+                "description": "WHERE THIS WAS PROVEN, because the same claim proven in two places is worth two different amounts. The station's own cluster identity — `bbb k3s, single node, namespace vexa-station-seq6` — not merely `staging`."
+              },
+              "fidelity": {
+                "type": "array",
+                "description": "EVERY STAND-IN THE PROOF LEANED ON. Real by default; a double is permitted where real is impossible or harmful, and it carries its justification. An unjustified double is a contract violation, not a shortcut — and a row proven against doubles nobody listed is the most expensive kind of green there is.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["dependency", "kind"],
+                  "properties": {
+                    "dependency": {
+                      "type": "string",
+                      "description": "What was stood in for, e.g. `postgres`, `stripe`, `transcription`."
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": ["real", "double", "absent"],
+                      "description": "`real` — the production-shaped dependency itself. `double` — a stand-in. `absent` — not present at all, so anything downstream of it was not exercised."
+                    },
+                    "justification": {
+                      "type": "string",
+                      "description": "Why a double or an absence was the right call here. Required by the rule, not by the schema, so that a missing justification is visible as an empty string rather than an omitted key."
+                    }
+                  }
+                }
+              },
+              "does_not_prove": {
+                "type": "string",
+                "description": "THE SCOPE LIMIT, IN THE FILLER'S OWN WORDS, ON THE ROW ITSELF. What a reader might reasonably take from this row that it does not actually support — the assert ran against a locally built image rather than the published digest; the deployments came up against a placeholder billing key. This is the field that stops a green row being read as more than it is, and it is inline on the row because a caveat kept anywhere else is a caveat nobody reads at the moment they are reading the row."
+              },
+              "notes": {
+                "type": "string",
+                "description": "What was observed. On an `unproven` row this is the finding; on a `not-run` row it is the reason."
+              },
+              "filled_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When THIS row was established, where rows were proven at different times — a soak row filled over a window, a human row signed days later."
+              },
+              "filled_by": {
+                "type": "string",
+                "description": "The station that filled this row, where a single instance aggregates rows from more than one enforcement point."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

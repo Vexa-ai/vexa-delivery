@@ -25,6 +25,7 @@ WHAT NOW HOLDS
      back: an empty `policy.json` makes a verifier print OK for every check it
      never ran.
 """
+import hashlib
 import json
 import pathlib
 import shutil
@@ -147,17 +148,106 @@ class TheRender(unittest.TestCase):
     def test_the_configmap_carries_the_records_bytes(self):
         """What lands in the argocd namespace must be the record, not a
         re-encoding of it: the verifier's sha256 of this file IS the contract's
-        identity in every verdict and approval record."""
+        identity in every verdict and approval record.
+
+        THIS ASSERTION USED TO END IN `.rstrip("\\n")`, and that one call was
+        the bug (seq-6 station, 2026-08-29). The template rendered the record
+        through a `|-` block scalar, which strips the trailing newline, and the
+        test asserted the stripped form — so the test passed BECAUSE of the
+        defect, which is the worst shape a test can have. It is now an exact
+        byte comparison, and the sha256 assertion below is the one that
+        actually matters, because the hash is what a verdict names."""
         import yaml
         chart, _ = stage()
         r = helm_template(chart)
         self.assertEqual(r.returncode, 0, r.stderr[-2000:])
         cms = {d["metadata"]["name"]: d for d in yaml.safe_load_all(r.stdout)
                if d and d.get("kind") == "ConfigMap"}
-        self.assertEqual(cms["vexa-contract-prod"]["data"]["policy.json"],
-                         PROD_REC.read_text().rstrip("\n"))
-        self.assertEqual(cms["vexa-contract-staging"]["data"]["policy.json"],
-                         STAGING_REC.read_text().rstrip("\n"))
+        for slot, rec in (("prod", PROD_REC), ("staging", STAGING_REC)):
+            rendered = cms[f"vexa-contract-{slot}"]["data"]["policy.json"]
+            self.assertEqual(rendered, rec.read_text(), slot)
+            self.assertEqual(
+                hashlib.sha256(rendered.encode()).hexdigest(),
+                hashlib.sha256(rec.read_bytes()).hexdigest(),
+                f"{slot}: the ConfigMap's sha256 must be the record's sha256 — "
+                f"it is what every verdict rendered against this contract names")
+
+    def test_the_trailing_newline_survives_the_render(self):
+        """THE SEQ-6 DEFECT, PINNED (2026-08-29).
+
+        The record `internal-estate-2026-09.json` hashes to
+        `a76cef3c62c21d0e…`. The in-cluster gate, hashing the ConfigMap it had
+        mounted, recorded `355eddae4f036662…`. The two inputs differ by one
+        byte: the single `0a` that `|-` strips off the end. The stations
+        ledger's own README exists to prevent exactly that — "every historical
+        gate report would start pointing at a hash nothing matches."
+
+        A file ending in a newline is the ONLY shape the real records have, so
+        it is the shape that must not regress."""
+        import yaml
+        rec = self._record_ending_in(b"\n")
+        chart = self._chart_carrying(rec)
+        r = helm_template(chart)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        rendered = next(d for d in yaml.safe_load_all(r.stdout)
+                        if d and d.get("kind") == "ConfigMap"
+                        and d["metadata"]["name"] == "vexa-contract-prod"
+                        )["data"]["policy.json"]
+        self.assertTrue(rendered.endswith("\n"),
+                        "the trailing newline was stripped — this is the seq-6 defect")
+        self.assertEqual(rendered.encode(), rec.read_bytes())
+
+    def test_every_trailing_shape_round_trips_byte_for_byte(self):
+        """AND NOT ONLY THE COMMON ONE, which is why the fix is `toJson` and
+        not `|`.
+
+        Clip chomping (`|`) fixes the observed case and is what the station
+        report proposed. It is byte-exact only for a file ending in exactly one
+        newline: it APPENDS one to a file ending in none, and COLLAPSES two to
+        one. That trades a defect that always fires for a defect that fires on
+        an input nobody thinks to test — and the whole point of hashing the
+        record is that nobody has to think about its bytes. A quoted scalar has
+        no input shape left to get wrong."""
+        import yaml
+        for label, tail in (("one newline", b"\n"),
+                            ("no newline", b""),
+                            ("two newlines", b"\n\n")):
+            with self.subTest(label):
+                rec = self._record_ending_in(tail)
+                r = helm_template(self._chart_carrying(rec))
+                self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+                rendered = next(d for d in yaml.safe_load_all(r.stdout)
+                                if d and d.get("kind") == "ConfigMap"
+                                and d["metadata"]["name"] == "vexa-contract-prod"
+                                )["data"]["policy.json"]
+                self.assertEqual(
+                    hashlib.sha256(rendered.encode()).hexdigest(),
+                    hashlib.sha256(rec.read_bytes()).hexdigest(),
+                    f"{label}: the rendered ConfigMap does not hash to the record")
+
+    # -- helpers for the two tests above ------------------------------------
+    #
+    # They build their own record rather than reusing the fixture ledger,
+    # because the shape under test IS the file's trailing bytes and the ledger
+    # fixtures all end the one legal way.
+
+    def _record_ending_in(self, tail):
+        body = json.dumps({"contract_id": "fixture-estate-2026-09",
+                           "carriage": {"min_entry_seq": 1}}, indent=2)
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="contract-bytes-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        rec = tmp / "prod.json"
+        rec.write_bytes(body.rstrip("\n").encode() + tail)
+        return rec
+
+    def _chart_carrying(self, prod_record):
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="contract-bytes-chart-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        dest = tmp / "chart"
+        shutil.copytree(CHART, dest)
+        vexa_channel.inject_station_contracts(
+            dest, {"staging": STAGING_REC, "prod": prod_record})
+        return dest
 
     def test_a_station_that_follows_no_channel_needs_no_contract(self):
         """The gate is on the subscription, and it stays there. An estate that

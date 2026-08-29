@@ -1,16 +1,31 @@
 ---
-title: "How station contracts compose"
-description: "One chain, dev to subscriber estate, where the contract only ever grows — and a claim is written down exactly once."
+title: "How channel contracts compose"
+description: "One contract per channel, tightened only where one channel derives from another — and filled in once per train."
 ---
 
-**A release walks a chain of stations, and the contract tightens at every hop.** Dev accepts the most, a subscriber's estate accepts the least, and nothing in between is allowed to loosen. The same claim is never written twice anywhere along it.
+**A contract belongs to a channel.** Not to a release train, and not to a station. `vexa-internal`
+has one contract; a subscriber shape such as `oenb-stable` has one; and a station — staging, prod, a
+subscriber's estate — is a place where that channel's contract is **enforced**, never a thing that
+owns a contract of its own. Founder correction, 2026-08-29, recorded on
+[#12](https://github.com/Vexa-ai/vexa-delivery/issues/12).
+
+The reason is that two stations of one channel do not disagree about what a release must prove. They
+disagree about what has been proven **so far**, and about what it was proven against. Writing that
+difference as two contracts encodes it as a difference in *demand*, which is false, and leaves two
+documents to keep in step — the copy problem this whole page exists to delete. The difference is
+written instead as the proof column of one filled instance per train.
 
 ```
-  dev  ──────▶  staging  ──────▶  prod  ──────▶  subscriber estates
-   │              │                │                    │
-   └── extends ───┴──── extends ───┴──── extends ───────┘
-        each hop may ADD rows, RAISE enforcement, SHORTEN freshness
-        no hop may drop a row or loosen one
+  vexa-internal  ──────────▶  oenb-stable
+        │                          │
+        └────────  extends  ───────┘
+      a derived channel may ADD rows, RAISE enforcement, SHORTEN freshness
+      it may never drop a row, and never loosen one
+
+  one channel, one contract, enforced in more than one place:
+
+      the vexa-internal contract  ──┬──▶  staging station   enforcement point
+                                    └──▶  prod station      enforcement point
 ```
 
 ## Zero duplication, by construction
@@ -18,24 +33,65 @@ description: "One chain, dev to subscriber estate, where the contract only ever 
 Five mechanisms, and each one exists to delete a copy.
 
 1. **Values are declared once, in a per-channel registry.** One entry per value: `id`, `claim`, `rank`, `validation`, [`surface`](evidence-reuse). The sentence a human witnesses is written in exactly one file.
-2. **A station contract is rows of *references*** — `{value_id, enforcement, freshness}` — never restated claims. A contract that contains a claim sentence is a contract that will disagree with the registry eventually.
-3. **Each station `extends` the one before it.** A contract carries only its own delta.
-4. **Tighten-only, enforced by the compiler.** Monotone growth is a checked property, not a convention:
+2. **A channel's contract is rows of *references*** — `{value_id, enforcement, freshness}` — never restated claims. A contract that contains a claim sentence is a contract that will disagree with the registry eventually.
+3. **A derived channel `extends` the channel it derives from.** A contract carries only its own delta.
+4. **Tighten-only, enforced by the compiler.** Monotone growth is a checked property, not a convention, and it is checked **across channels** — the direction that matters commercially, because it is what makes a subscriber's channel provably no weaker than ours:
 
-   | Allowed in a child | Refused |
+   | Allowed in a derived channel | Refused |
    |---|---|
    | add a row | drop an inherited row |
    | raise enforcement (`advisory` → `required`) | lower enforcement |
    | shorten freshness | lengthen freshness |
 
-5. **`contract compile` flattens the chain** into one effective, content-addressed JSON per station — the sha256 a station verdict pins — plus a derived human rendering. **Charts and humans read compiled output, never fragments.** Same principle as the rendered chart contract: the record is the fragments, the thing anyone reads is generated from them.
+5. **`contract compile` flattens the chain** into one effective, content-addressed JSON **per channel** — the sha256 a station verdict pins — plus a derived human rendering. Every station of that channel mounts the same compiled bytes. **Charts and humans read compiled output, never fragments.** Same principle as the rendered chart contract: the record is the fragments, the thing anyone reads is generated from them.
+
+## The contract is a form; a train fills it in
+
+**There is no separate validation document.** Founder ruling, 2026-08-29, recorded on
+[#12](https://github.com/Vexa-ai/vexa-delivery/issues/12): the contract is the form, and a station
+run **fills it in**. A train yields exactly one filled instance of its channel's contract — same
+`contract_id`, sha-linked back to the unfilled demand it was filled from, so the two can never be
+read apart.
+
+The proof column is inline, on the row it answers:
+
+| On the row | What it says |
+|---|---|
+| **`proof.status`** | `proven` · `unproven` · `not-run` — three answers that are not interchangeable. `unproven` is a finding, `not-run` is a stated decision with a reason, and a row nothing reached at all carries no `proof` block, which is silence rather than either |
+| **`proof.evidence[]`** | what a reader opens to check the row themselves: a pointer and, where the evidence is a file, its sha256. A proof with no pointer is an assertion |
+| **`proof.environment`** | where it was proven, in the station's own cluster identity rather than the word *staging* |
+| **`proof.fidelity[]`** | every stand-in the proof leaned on — `real` · `double` · `absent`, each carrying the justification a non-`real` fidelity has always required |
+| **`proof.does_not_prove`** | the scope limit, in the filler's own words, on the row itself |
+
+The vocabulary is not new — it is the fidelity and decomposition vocabulary that used to live in a
+standalone document, moved onto the rows it qualifies. What changes is that a reader no longer holds
+two files side by side and works out which caveat attaches to which claim; the caveat is on the
+claim. **Every row of the demand appears, in the demand's own order and the demand's own words,
+whether or not it was answered** — an instance that dropped the rows it could not fill would read as
+complete while being quietly narrower than the contract it claims to fill. The verdict is that
+instance's bottom line — `ELIGIBLE` when every `required` row is proven, `NOT_ELIGIBLE` when one is
+refuted, and `INCOMPLETE` when the run ended with required rows neither proven nor refuted, so that
+a run which could not reach a dependency cannot be filed as either — and the PROOF card is the filled
+contract rendered. One record, two readings, neither written by hand.
+
+**The evidence kind stays `validation_contract`.** The name is now wrong for what it carries and is
+kept anyway this turn, because renaming it would break the entry schema, the carriage predicates
+that name it in `require_evidence_kinds` and `forbid_absent_evidence`, and the entries already
+published under it. The prose says *the filled contract*; the wire says `validation_contract`. That
+gap is a deliberate debt, named here rather than left for a reader to trip over.
+
+The definition of the filled shape is **`spec/filled-contract.schema.json`** — everything above is a
+reading of that file, not a second copy of it. It is committed with this page in the seq-7 respin and
+is not on `main` yet. As of that turn it **defines** the document and validates instances offline;
+the in-cluster verifier does not evaluate it, and the gate still admits an entry on its carriage
+block alone.
 
 ## What format a contract is
 
 **Bespoke JSON, sha-pinned, unsigned.** That is the honest answer today, and the sha is what carries
 the weight: a verdict names the contract id **and its hash**, so a claim is always attributable to
 exact contract bytes, and changing a contract changes what every verdict rendered under it means.
-Instances live in the stations ledger and move only by pull request.
+Contracts live in the stations ledger and move only by pull request.
 
 Nothing was rejected to get here. **Policy format is the layer the industry has not standardised** —
 each system ships its own (attestation-requirement documents with embedded expression languages,
@@ -55,7 +111,7 @@ The syntax stays ours. The signing does not.
 
 ## Worked example
 
-**The values registry** — three values, each written once:
+**The values registry** — three values, each written once, one registry per channel:
 
 ```json
 [
@@ -71,10 +127,12 @@ The syntax stays ours. The signing does not.
 ]
 ```
 
-**The dev contract** — two rows, no claims:
+**The `vexa-internal` contract** — two rows, no claims. Both of that channel's stations enforce this
+one file:
 
 ```json
-{ "contract_id": "vexa-dev-2026-09",
+{ "contract_id": "vexa-internal-2026-09",
+  "channel": "vexa-internal",
   "values_registry": "channels/vexa-internal/values.json",
   "required_values": [
     { "value_id": "V-ready", "enforcement": "required", "freshness_days": 7 },
@@ -83,42 +141,53 @@ The syntax stays ours. The signing does not.
   "carriage": { "require_publication_mode": "candidate", "max_entry_age_days": 30 } }
 ```
 
-**The prod contract** — extends it, raises one, adds one:
+**The `oenb-stable` contract** — a different channel, extending it: raises one, adds one:
 
 ```json
-{ "contract_id": "vexa-internal-prod-2026-09",
-  "extends": "vexa-dev-2026-09",
+{ "contract_id": "oenb-stable-2026-09",
+  "channel": "oenb-stable",
+  "extends": "vexa-internal-2026-09",
   "required_values": [
     { "value_id": "V-join", "enforcement": "required", "freshness_days": 3 },
     { "value_id": "V-api",  "enforcement": "advisory", "freshness_days": 14 }
   ] }
 ```
 
-**The compiled effective prod contract** — what the chart mounts and the verdict pins:
+**The compiled effective `oenb-stable` contract** — what that channel's charts mount and its verdicts
+pin, at every station on it:
 
 ```json
-{ "contract_id": "vexa-internal-prod-2026-09",
-  "compiled_from": ["vexa-dev-2026-09", "vexa-internal-prod-2026-09"],
+{ "contract_id": "oenb-stable-2026-09",
+  "compiled_from": ["vexa-internal-2026-09", "oenb-stable-2026-09"],
   "required_values": [
     { "value_id": "V-ready", "claim": "Every platform deployment reaches ready.",
       "rank": "autonomous", "validation": {"kind": "station-check"},
-      "enforcement": "required", "freshness_days": 7, "from": "vexa-dev-2026-09" },
+      "enforcement": "required", "freshness_days": 7, "from": "vexa-internal-2026-09" },
     { "value_id": "V-join",  "claim": "A bot joins a live meeting and segments arrive over websocket.",
       "rank": "autonomous", "validation": {"kind": "station-smoke"},
-      "enforcement": "required", "freshness_days": 3, "from": "vexa-internal-prod-2026-09" },
+      "enforcement": "required", "freshness_days": 3, "from": "oenb-stable-2026-09" },
     { "value_id": "V-api",   "claim": "The documented API surface responds as documented.",
       "rank": "autonomous", "validation": {"kind": "set-test", "subject": "digest-set"},
-      "enforcement": "advisory", "freshness_days": 14, "from": "vexa-internal-prod-2026-09" }
+      "enforcement": "advisory", "freshness_days": 14, "from": "oenb-stable-2026-09" }
   ],
   "carriage": { "require_publication_mode": "candidate", "max_entry_age_days": 30 },
   "sha256": "<of these bytes>" }
 ```
 
-`V-ready` was never restated — it arrived by inheritance, carrying where it came from. `V-join` shows the only two moves a child gets: enforcement up, freshness down.
+`V-ready` was never restated — it arrived by inheritance, carrying where it came from. `V-join` shows
+the only two moves a derived channel gets: enforcement up, freshness down. Nothing in the chain
+mentions a station, because no station owns any of it.
+
+Every train that runs on `oenb-stable` fills in that same compiled document — the demand does not
+move between trains, and the proof column is what varies per set. A filled instance against the
+contract that actually exists today is below.
 
 ## Today, and the target
 
-Contracts are **flat** today: one file per station, claims written out in it, no registry and no `extends`. The live internal-estate contract carries its values inline beside a `carriage` block — two of its six rows, to show the shape:
+Contracts are **flat** today: one file, claims written out in it, no registry and no `extends` — and
+the file is named after an estate rather than after the channel it belongs to. The live internal
+contract carries its values inline beside a `carriage` block — two of its six rows, to show the
+shape:
 
 ```json
 { "contract_id": "vexa-internal-estate-2026-09",
@@ -138,43 +207,86 @@ Contracts are **flat** today: one file per station, claims written out in it, no
     "min_entry_seq": 1, "max_entry_age_days": 30 } }
 ```
 
-— which is already the right *vocabulary* (values with a rank, a validation kind and an enforcement level, separated from the carriage predicates), and is still one file per station with the claims copied into each.
+— which is already the right *vocabulary* (values with a rank, a validation kind and an enforcement
+level, separated from the carriage predicates), and is still one flat file with the claims copied
+into it and, until now, nowhere on it to write what a run proved.
+
+**The same contract, filled** — what SET seq-7 returns, the first instance of the shape and authored
+by hand. Two rows again, per `spec/filled-contract.schema.json`; each carries the demand's own row id
+and the demand's own words, and adds nothing but the proof block:
+
+```json
+{ "schema_version": 1,
+  "contract_id": "vexa-internal-estate-2026-09",
+  "fills_contract": { "id": "vexa-internal-estate-2026-09", "sha256": "<the demand's bytes in the ledger>" },
+  "station": "vexa-staging-bbb",
+  "entry_ref": "channel.vexa.ai/vexa/channel/vexa-internal:0.12.23-estate-20260829-seq7",
+  "at": "2026-08-29T18:00:00Z",
+  "verdict": "ELIGIBLE",
+  "required_values": [
+    { "id": "V-est-1", "claim": "Every platform deployment reaches ready.",
+      "rank": "autonomous", "enforcement": "required",
+      "proof": {
+        "status": "proven",
+        "evidence": [ { "pointer": "verdict/station-verdict.json", "sha256": "<of those bytes>" } ],
+        "environment": "bbb k3s, single node, namespace vexa-station-seq7",
+        "fidelity": [ { "dependency": "postgres", "kind": "double",
+                        "justification": "real is HARMFUL — the production instance holds live customer transcripts; the double applies the release's own migration hook, so the schema is real even though the rows are not" } ],
+        "does_not_prove": "anything about production DATA — migration duration or lock behaviour against populated tables." } },
+    { "id": "V-est-6", "claim": "Transcription quality is acceptable.",
+      "rank": "human", "enforcement": "advisory",
+      "proof": { "status": "not-run",
+                 "notes": "the witness flow is unsigned, so no human-rank row can be satisfied yet." } }
+  ] }
+```
+
+Same id, sha-bound to the demand it answers, every demand row present whether or not it was answered
+— and the caveat that used to sit in a separate document now sits on the row it qualifies.
 
 ### What that contract says, in words
 
 The same file, read out. **This rendering is derived from the JSON, never written beside it** — one source of truth, or the two disagree and the readable one is the one people believe:
 
-> The prod estate requires, and refuses the release without them: **every platform deployment reaches ready**, **a bot joins a live meeting and transcript segments arrive over websocket**, and **runtime-spawned bot pods carry explicit cpu and memory resources** — each machine-checked.
+> The channel requires, and refuses the release without them: **every platform deployment reaches ready**, **a bot joins a live meeting and transcript segments arrive over websocket**, and **runtime-spawned bot pods carry explicit cpu and memory resources** — each machine-checked.
 >
 > It asks for, and reports but does not refuse on: **the documented API surface responds as documented** (proven against the whole digest set), **join success over the declared window stays above threshold** (a rate, not a run), and **transcription quality is acceptable** — which only a person can say.
 >
-> Whatever ships must carry its validation contract, may not declare that document absent, must be a candidate entry, may not be break-glass, and may not be more than 30 days old.
+> Whatever ships must carry its filled contract, may not declare that document absent, must be a candidate entry, may not be break-glass, and may not be more than 30 days old.
 
-Three things are visible in that paragraph and in no JSON diff: what is enforced versus merely watched, which claims rest on a human, and that the freshness ceiling exists at all. It is generated on compile and lives with the contract in the ledger, beside the record it renders.
+Three things are visible in that paragraph and in no JSON diff: what is enforced versus merely watched, which claims rest on a human, and that the freshness ceiling exists at all. It is generated on compile and lives with the contract in the ledger, beside the record it renders. The filled instance renders the same way, with the proof column showing — that rendering is the PROOF card.
 
 <Note>
-**State: RULED, NOT BUILT.** The values registry, `extends`, the tighten-only compiler check and `contract compile` are decided and unimplemented. What runs today is the flat shape above. See [the evidence model](evidence-model) for the full per-element state.
+**State: RULED, NOT BUILT.** The values registry, `extends`, the tighten-only compiler check,
+`contract compile`, and contracts keyed to a channel rather than to an estate are decided and
+unimplemented; what runs today is the flat shape above. The filled shape is **defined** —
+`spec/filled-contract.schema.json` is committed here and validates instances offline — but nothing
+produces one: the seq-7 instance is authored **by hand**, the in-cluster verifier does not evaluate
+it, and the gate still admits an entry on its carriage block alone, so required values are checked
+by script rather than by reading demand rows against proof rows in one pass. See
+[the evidence model](evidence-model) for the full per-element state.
 </Note>
 
 ## Setting and amending a contract
 
-A contract states the standing properties of one environment. It is amended rarely and
+A contract states the standing properties of one channel. It is amended rarely and
 deliberately — cargo never edits it, because one durable carriage clause
 (`require_entry_values_proven`) already gates whatever an entry claims.
 
-1. **The consumer owns it.** A contract belongs to the party who runs the station, never
-   the publisher. The vendor may draft; the owner decides.
+1. **The consumer owns it.** A contract belongs to the party who consumes the channel, never the
+   publisher — the subscriber for theirs, us for `vexa-internal`. The vendor may draft; the owner
+   decides. A station operator does not get a contract of their own by running a station; they get
+   the channel's.
 2. **Immutable — succession, not mutation.** A change mints a successor
    (`…-2026-09` → `…-2026-10`) committed to the ledger. The predecessor stays in the
    record forever: old verdicts name it by id and sha and must remain auditable.
 3. **The change vehicle is a reviewed commit** carrying the reason. Tightening (add a
    value, flip advisory → refuses, shorten freshness) is routine. Loosening requires the
-   justification in the commit and the owner's explicit word — and a downstream contract
-   can never loosen an upstream one; the compiler refuses it.
-4. **Taking effect is mechanical, never silent.** A contract binds when the station's
+   justification in the commit and the owner's explicit word — and a derived channel's contract
+   can never loosen the one it extends; the compiler refuses it.
+4. **Taking effect is mechanical, never silent.** A contract binds when a station's
    enforcement copy is rendered from the record, sha-pinned; every verdict names the
    contract id and sha it judged under, so *which rules were in force for entry N* is
-   always answerable.
+   always answerable — and the answer does not depend on which station asked.
 5. **There is no emergency edit path.** `allow_break_glass: false` means none exists. A
    real emergency mints a successor through the same protocol — fast is fine, silent is
    impossible.

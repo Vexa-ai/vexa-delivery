@@ -43,8 +43,38 @@ metadata:
     "argocd.argoproj.io/sync-wave": "-1"
 data:
   # The filename the Job mounts and passes as --policy. One name, one carrier.
-  contract.json: |-
-{{ .Values.verify.contractPolicy | indent 4 }}
+  #
+  # A QUOTED SCALAR, NOT A BLOCK SCALAR, AND THE REASON IS ONE BYTE (seq-6
+  # station, 2026-08-29). This rendered `contract.json: |-`, and `|-` strips
+  # the trailing newline from what it carries. The wrapper below hashes the
+  # MOUNTED COPY, so the verdict the gate recorded in-cluster named
+  #
+  #   contract_sha256: 355eddae4f036662b10d62834150c762ca5540b3df66da615108c1b879e70091
+  #
+  # while the contract record's own bytes — in the stations ledger, in this
+  # chart's baked `verify.contractPolicy`, and in every verdict rendered by
+  # reading the file directly — hash to
+  #
+  #   a76cef3c62c21d0ee01984fcf5a511b4040f49b5a03dca248148705cdf479551
+  #
+  # The two differ by the single `0a` this template dropped. That is the exact
+  # failure the stations ledger's README exists to prevent: "every historical
+  # gate report would start pointing at a hash nothing matches."
+  #
+  # `toJson` rather than `|` (clip). Clip WOULD fix the observed case, and it
+  # is what the station report proposed — but it is byte-exact only for a file
+  # ending in exactly one newline. It appends one to a file ending in none and
+  # collapses two to one, so it trades a defect that always fires for a defect
+  # that fires on inputs nobody thinks to test. A double-quoted YAML scalar
+  # reproduces arbitrary bytes, so there is no input shape left to get wrong.
+  # It also matches how the value ARRIVES: an estate's values file already
+  # carries `contractPolicy` as one quoted JSON string.
+  #
+  # This costs render readability and nothing else. In the cluster the API
+  # server stores a string, so `kubectl get cm -o yaml` prints a block scalar
+  # either way; and the contract is read by `jq`, never hand-edited — an
+  # operator who edits it has already broken the hash the verdict names.
+  contract.json: {{ .Values.verify.contractPolicy | toJson }}
 ---
 {{- end }}
 {{- if .Values.verify.channelPublicKey }}

@@ -185,6 +185,13 @@ covered shows as `unproven` rather than quietly passing.
 A **channel** is an ordered stream of entries ([`channel.md`](https://github.com/Vexa-ai/vexa-delivery/blob/main/spec/channel.md)). A **contract** is what
 decides whether an entry may enter it, and whether an entry may run once pulled.
 
+**The contract belongs to the channel.** Not to a release train, and not to a station: a staging
+station and a prod station are two **enforcement points** of the same channel contract, and neither
+owns one of its own. Composition is across channels — `oenb-stable` extends `vexa-internal` and may
+only tighten it. Founder correction, 2026-08-29, recorded on
+[#12](https://github.com/Vexa-ai/vexa-delivery/issues/12); the mechanics are on
+[How channel contracts compose](contract-composition).
+
 A contract is a machine-readable list of:
 
 - **required evidence** — kind, and (ruled, not built) the rank or signer identity that must have
@@ -192,6 +199,31 @@ A contract is a machine-readable list of:
 - **refusals** — including the refusal of a *declared absence*: `evidence_absent[]` states what an
   entry does not carry, and `forbid_absent_evidence` is how a subscriber refuses an entry for
   declaring away something they require. The gap becomes checkable data rather than silence.
+
+### The contract is a form; a station run fills it in
+
+The other founder ruling of 2026-08-29, on the same issue: **there is no separate validation document.**
+The contract is the form, and a run fills it in — per row, beside the demand it answers:
+`proof: proven | unproven | not-run`, a pointer to the evidence that proves it, the **fidelity** of
+whatever stood in for a real dependency, and a `does_not_prove` line. The decomposition vocabulary
+that used to live in a standalone document moves onto the rows it qualifies, so a reader stops
+holding two files side by side working out which caveat attaches to which claim.
+
+One train yields **one filled instance** of its channel's contract: the same `contract_id`, sha-linked
+back to the unfilled demand. The demand is constant across the trains that run on a channel; the
+**proof column is what varies per set**. The verdict is that instance's bottom line and the PROOF
+card is that instance rendered — one record, two readings, neither written by hand. Every demand row
+appears in the instance whether or not it was answered, and the verdict has a third value,
+`INCOMPLETE`, for a run that ended with required rows neither proven nor refuted — so a station that
+could not reach a dependency cannot be filed as a pass or as a failure. The definition is
+**`spec/filled-contract.schema.json`**, committed with the seq-7 respin and not on `main` yet: as of
+that turn it defines the document and validates instances offline, nothing produces one, and the
+in-cluster verifier does not read it.
+
+The evidence kind on the wire stays `validation_contract`. The name is now wrong for what it carries
+and is kept this turn anyway, because the entry schema, the carriage predicates that name it in
+`require_evidence_kinds` and `forbid_absent_evidence`, and the entries already published under it all
+depend on the string. The prose says *the filled contract*; the wire says `validation_contract`.
 
 Contracts are checked **at publish and at admission** — and, stated plainly rather than papered
 over, **these are two gates, not one gate run twice**:
@@ -208,6 +240,13 @@ this repository can make.
 **`evidence_absent[]` + `forbid_absent_evidence` is built and barely exercised.** The only contract
 that forbids an absence today is the vendor's own internal one. No subscriber contract forbids
 anything yet, which means the sharpest property of the design is currently unproven by use.
+
+| Element | State |
+|---|---|
+| Contract keyed to a channel, stations as enforcement points | **RULED, NOT BUILT** — the live contract is one flat file named for an estate |
+| Tighten-only composition across channels (`extends` + compiler check) | **RULED, NOT BUILT** |
+| Filled contract — proof column, per-row fidelity and `does_not_prove` | **RULED, NOT BUILT** — `spec/filled-contract.schema.json` (committed with the seq-7 respin) defines it and validates instances offline; the first instance is authored **by hand** for SET seq-7, and there is no producer |
+| Verifier evaluating demand rows against proof rows in one pass | **RULED, NOT BUILT** — required values are checked by a script today, which is the hole the filled shape retires |
 
 ## Where everything lives, and how it is traced
 
@@ -301,8 +340,9 @@ As of **2026-08-29**. Nothing below is aspiration stated as fact.
 
 Two parts of the model have their own rendered pages, each carrying its own state:
 [Evidence reuse and blast radius](evidence-reuse) — how a claim is inherited when the
-diff cannot have touched it — and [How station contracts compose](contract-composition)
-— the tighten-only chain and the values registry that lets a claim be written exactly once.
+diff cannot have touched it — and [How channel contracts compose](contract-composition)
+— the tighten-only chain across channels, the values registry that lets a claim be written exactly
+once, and the filled instance a train returns.
 
 | Piece of the model | State |
 |---|---|
@@ -316,6 +356,9 @@ diff cannot have touched it — and [How station contracts compose](contract-com
 | ADR-0010, three subjects | **IN REVIEW** — [#10](https://github.com/Vexa-ai/vexa-delivery/pull/10) |
 | Statistical soak evidence (rate over a declared window) | **IN REVIEW** — spec draft v2 in [#10](https://github.com/Vexa-ai/vexa-delivery/pull/10); **no producer** |
 | Verdict emitted as a SLSA VSA | **RULED, NOT BUILT** — [#12](https://github.com/Vexa-ai/vexa-delivery/issues/12) |
+| Contract keyed to a channel; stations as enforcement points of it | **RULED, NOT BUILT** — [#12](https://github.com/Vexa-ai/vexa-delivery/issues/12), 2026-08-29; the live contract is one flat file named for an estate |
+| Filled contract — one instance per train, proof column populated per row | **RULED, NOT BUILT** — [#12](https://github.com/Vexa-ai/vexa-delivery/issues/12), 2026-08-29; `spec/filled-contract.schema.json` is committed with the seq-7 respin and validates instances offline, the first instance is authored by hand, no producer |
+| Verifier evaluating demand rows against proof rows in one pass | **RULED, NOT BUILT** — required values are checked by a script today |
 | Value ids (`value_ids[]` on the candidate map) | **RULED, NOT BUILT** |
 | Rank (`autonomous` / `statistical` / `human`), enforced by signer class | **RULED, NOT BUILT** — the witness flow exists and is unsigned, so no `human`-rank row can be satisfied today |
 | Per-station signing identities + `threshold` in the contract | **RULED, NOT BUILT** — one key signs everything; station identity is string-compared |
