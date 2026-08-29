@@ -1,0 +1,185 @@
+---
+title: "How station contracts compose"
+description: "One chain, dev to subscriber estate, where the contract only ever grows — and a claim is written down exactly once."
+---
+
+**A release walks a chain of stations, and the contract tightens at every hop.** Dev accepts the most, a subscriber's estate accepts the least, and nothing in between is allowed to loosen. The same claim is never written twice anywhere along it.
+
+```
+  dev  ──────▶  staging  ──────▶  prod  ──────▶  subscriber estates
+   │              │                │                    │
+   └── extends ───┴──── extends ───┴──── extends ───────┘
+        each hop may ADD rows, RAISE enforcement, SHORTEN freshness
+        no hop may drop a row or loosen one
+```
+
+## Zero duplication, by construction
+
+Five mechanisms, and each one exists to delete a copy.
+
+1. **Values are declared once, in a per-channel registry.** One entry per value: `id`, `claim`, `rank`, `validation`, [`surface`](evidence-reuse). The sentence a human witnesses is written in exactly one file.
+2. **A station contract is rows of *references*** — `{value_id, enforcement, freshness}` — never restated claims. A contract that contains a claim sentence is a contract that will disagree with the registry eventually.
+3. **Each station `extends` the one before it.** A contract carries only its own delta.
+4. **Tighten-only, enforced by the compiler.** Monotone growth is a checked property, not a convention:
+
+   | Allowed in a child | Refused |
+   |---|---|
+   | add a row | drop an inherited row |
+   | raise enforcement (`advisory` → `required`) | lower enforcement |
+   | shorten freshness | lengthen freshness |
+
+5. **`contract compile` flattens the chain** into one effective, content-addressed JSON per station — the sha256 a station verdict pins — plus a derived human rendering. **Charts and humans read compiled output, never fragments.** Same principle as the rendered chart contract: the record is the fragments, the thing anyone reads is generated from them.
+
+## What format a contract is
+
+**Bespoke JSON, sha-pinned, unsigned.** That is the honest answer today, and the sha is what carries
+the weight: a verdict names the contract id **and its hash**, so a claim is always attributable to
+exact contract bytes, and changing a contract changes what every verdict rendered under it means.
+Instances live in the stations ledger and move only by pull request.
+
+Nothing was rejected to get here. **Policy format is the layer the industry has not standardised** —
+each system ships its own (attestation-requirement documents with embedded expression languages,
+per-cluster attestor rules, admission CRDs), and none of them is a format a second vendor reads.
+There was no widely-adopted thing to adopt, so this is one of the places
+[#12](https://github.com/Vexa-ai/vexa-delivery/issues/12) leaves bespoke rather than borrowing.
+
+The target closes the gap that matters, which is not the syntax:
+
+| | Today | Target |
+|---|---|---|
+| Carried as | JSON in the ledger, mounted as a ConfigMap | same JSON, wrapped in a **DSSE-signed in-toto Statement** |
+| Trusted because | it is the file the chart mounted | it is signed, so a subscriber can check who authored the policy they are being held to |
+| Names a signer | no — a required attestation names a station as a **string** | **functionaries**: a key id or certificate constraint, with a `threshold` |
+
+The syntax stays ours. The signing does not.
+
+## Worked example
+
+**The values registry** — three values, each written once:
+
+```json
+[
+  { "id": "V-ready", "claim": "Every platform deployment reaches ready.",
+    "rank": "autonomous", "validation": {"kind": "station-check"},
+    "surface": ["platform-images"] },
+  { "id": "V-join",  "claim": "A bot joins a live meeting and segments arrive over websocket.",
+    "rank": "autonomous", "validation": {"kind": "station-smoke"},
+    "surface": ["bot-images", "gateway"] },
+  { "id": "V-api",   "claim": "The documented API surface responds as documented.",
+    "rank": "autonomous", "validation": {"kind": "set-test", "subject": "digest-set"},
+    "surface": ["*"] }
+]
+```
+
+**The dev contract** — two rows, no claims:
+
+```json
+{ "contract_id": "vexa-dev-2026-09",
+  "values_registry": "channels/vexa-internal/values.json",
+  "required_values": [
+    { "value_id": "V-ready", "enforcement": "required", "freshness_days": 7 },
+    { "value_id": "V-join",  "enforcement": "advisory", "freshness_days": 7 }
+  ],
+  "carriage": { "require_publication_mode": "candidate", "max_entry_age_days": 30 } }
+```
+
+**The prod contract** — extends it, raises one, adds one:
+
+```json
+{ "contract_id": "vexa-internal-prod-2026-09",
+  "extends": "vexa-dev-2026-09",
+  "required_values": [
+    { "value_id": "V-join", "enforcement": "required", "freshness_days": 3 },
+    { "value_id": "V-api",  "enforcement": "advisory", "freshness_days": 14 }
+  ] }
+```
+
+**The compiled effective prod contract** — what the chart mounts and the verdict pins:
+
+```json
+{ "contract_id": "vexa-internal-prod-2026-09",
+  "compiled_from": ["vexa-dev-2026-09", "vexa-internal-prod-2026-09"],
+  "required_values": [
+    { "value_id": "V-ready", "claim": "Every platform deployment reaches ready.",
+      "rank": "autonomous", "validation": {"kind": "station-check"},
+      "enforcement": "required", "freshness_days": 7, "from": "vexa-dev-2026-09" },
+    { "value_id": "V-join",  "claim": "A bot joins a live meeting and segments arrive over websocket.",
+      "rank": "autonomous", "validation": {"kind": "station-smoke"},
+      "enforcement": "required", "freshness_days": 3, "from": "vexa-internal-prod-2026-09" },
+    { "value_id": "V-api",   "claim": "The documented API surface responds as documented.",
+      "rank": "autonomous", "validation": {"kind": "set-test", "subject": "digest-set"},
+      "enforcement": "advisory", "freshness_days": 14, "from": "vexa-internal-prod-2026-09" }
+  ],
+  "carriage": { "require_publication_mode": "candidate", "max_entry_age_days": 30 },
+  "sha256": "<of these bytes>" }
+```
+
+`V-ready` was never restated — it arrived by inheritance, carrying where it came from. `V-join` shows the only two moves a child gets: enforcement up, freshness down.
+
+## Today, and the target
+
+Contracts are **flat** today: one file per station, claims written out in it, no registry and no `extends`. The live internal-estate contract carries its values inline beside a `carriage` block — two of its six rows, to show the shape:
+
+```json
+{ "contract_id": "vexa-internal-estate-2026-09",
+  "required_values": [
+    { "id": "V-est-1", "claim": "Every platform deployment reaches ready.",
+      "rank": "autonomous", "validation": {"kind": "station-check"},
+      "enforcement": "required" },
+    { "id": "V-est-6", "claim": "Transcription quality is acceptable.",
+      "rank": "human", "validation": {"kind": "witness", "signer": "human"},
+      "enforcement": "advisory" }
+  ],
+  "carriage": {
+    "require_evidence_kinds": ["validation_contract"],
+    "forbid_absent_evidence": ["validation_contract"],
+    "require_publication_mode": "candidate",
+    "allow_break_glass": false,
+    "min_entry_seq": 1, "max_entry_age_days": 30 } }
+```
+
+— which is already the right *vocabulary* (values with a rank, a validation kind and an enforcement level, separated from the carriage predicates), and is still one file per station with the claims copied into each.
+
+### What that contract says, in words
+
+The same file, read out. **This rendering is derived from the JSON, never written beside it** — one source of truth, or the two disagree and the readable one is the one people believe:
+
+> The prod estate requires, and refuses the release without them: **every platform deployment reaches ready**, **a bot joins a live meeting and transcript segments arrive over websocket**, and **runtime-spawned bot pods carry explicit cpu and memory resources** — each machine-checked.
+>
+> It asks for, and reports but does not refuse on: **the documented API surface responds as documented** (proven against the whole digest set), **join success over the declared window stays above threshold** (a rate, not a run), and **transcription quality is acceptable** — which only a person can say.
+>
+> Whatever ships must carry its validation contract, may not declare that document absent, must be a candidate entry, may not be break-glass, and may not be more than 30 days old.
+
+Three things are visible in that paragraph and in no JSON diff: what is enforced versus merely watched, which claims rest on a human, and that the freshness ceiling exists at all. It is generated on compile and lives with the contract in the ledger, beside the record it renders.
+
+<Note>
+**State: RULED, NOT BUILT.** The values registry, `extends`, the tighten-only compiler check and `contract compile` are decided and unimplemented. What runs today is the flat shape above. See [the evidence model](evidence-model) for the full per-element state.
+</Note>
+
+## Setting and amending a contract
+
+A contract states the standing properties of one environment. It is amended rarely and
+deliberately — cargo never edits it, because one durable carriage clause
+(`require_entry_values_proven`) already gates whatever an entry claims.
+
+1. **The consumer owns it.** A contract belongs to the party who runs the station, never
+   the publisher. The vendor may draft; the owner decides.
+2. **Immutable — succession, not mutation.** A change mints a successor
+   (`…-2026-09` → `…-2026-10`) committed to the ledger. The predecessor stays in the
+   record forever: old verdicts name it by id and sha and must remain auditable.
+3. **The change vehicle is a reviewed commit** carrying the reason. Tightening (add a
+   value, flip advisory → refuses, shorten freshness) is routine. Loosening requires the
+   justification in the commit and the owner's explicit word — and a downstream contract
+   can never loosen an upstream one; the compiler refuses it.
+4. **Taking effect is mechanical, never silent.** A contract binds when the station's
+   enforcement copy is rendered from the record, sha-pinned; every verdict names the
+   contract id and sha it judged under, so *which rules were in force for entry N* is
+   always answerable.
+5. **There is no emergency edit path.** `allow_break_glass: false` means none exists. A
+   real emergency mints a successor through the same protocol — fast is fine, silent is
+   impossible.
+6. **Target:** the contract itself becomes a DSSE-signed document under the owner's key.
+   A subscriber's contract signed with *their* key makes their refusal of the vendor
+   cryptographic rather than procedural. *(RULED, NOT BUILT.)*
+
+Next: [Evidence reuse and blast radius](evidence-reuse) · [The station gate](station-gate)

@@ -6,6 +6,9 @@ cluster pulls entries; nothing on our side pushes. This file is the channel's co
 machine-checkable half is [`channel-entry.schema.json`](channel-entry.schema.json), and the golden
 under [`goldens/`](goldens/) is the spec in the P8 sense.
 
+The model behind the bundle — what a value is, what evidence is, who may prove what, and which of
+it is actually built — is [`docs/evidence-model.mdx`](../docs/evidence-model.mdx).
+
 ## Registry layout
 
 ```

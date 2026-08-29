@@ -1,0 +1,58 @@
+---
+title: "Evidence reuse and blast radius"
+description: "Evidence is reused by default. What re-proves a claim is the diff, never the calendar."
+---
+
+**A claim proven once stays proven until something it depends on changes.** Re-proving is triggered by the **diff**, not by a schedule and not by a release boundary. Anything else asks a human to re-witness transcription quality because a login page moved, which is how a validation loop stops being run.
+
+## The mechanism
+
+Three pieces, and the third is a set intersection.
+
+1. **Every value declares a `surface`** — the set of images, and config keys, whose bytes can affect the claim. It is part of the value, declared once, beside the claim itself.
+2. **Every piece of evidence records the exact digests of that surface as they were when it ran.** Not the release, not the date — the digests.
+3. **At the next entry, the gate computes `changed_digests ∩ surface`:**
+
+| Intersection | What happens to the row |
+|---|---|
+| **empty** | evidence attaches automatically, marked `inherited from seq N — surface digests unchanged` |
+| **non-empty** | the row drops to `unproven`, and the producer is summoned — for a `human`-rank value, that means a person is queued a witness session |
+
+**Digest equality is the right to reuse.** No prose justification, no reviewer judgment, nothing anyone can argue with: evidence binds to digests, and an unchanged digest is the same bytes, so the claim is still literally true of them. A reuse that needs an argument is not a reuse — it is a new claim.
+
+## What re-proves, per dimension
+
+| Evidence about | Re-proves when | Why |
+|---|---|---|
+| **an image** | that image's digest changes | blast radius is computed from the diff through the path → image map |
+| **an assembly** (set-tests) | the digest set changes | the claim is about the combination, so a different combination is a different subject |
+| **an environment** | per station | a claim proven in staging is not proven in prod; the environment is part of the observation |
+| **time-decaying evidence** (CVE scans, soak windows) | its freshness bound lapses | the world moved even though our bytes did not |
+| **the argument** (value sign-off, compliance note, rights) | never — **sealed at merge** | it is a judgment about a change that is now permanent |
+
+That last row is the one that makes the model affordable. The human judgments are attached to a pull request, and a pull request does not change.
+
+## Two guards
+
+**Surfaces are declared conservatively.** A value about a seam — an integration, a protocol boundary, anything whose failure mode is *interaction* — claims more images than a localized one. Over-claiming costs an occasional unnecessary re-prove. Under-claiming silently ships an unproven claim wearing a green tick, so the asymmetry decides the default.
+
+**Statistical rows keep watching regardless.** Soak evidence is a rate over a live window, so it goes on measuring in production no matter what the diff said. That is the net under the surface declarations: an interaction nobody declared shows up as the rate moving, not as silence.
+
+## Worked example
+
+An update ships a **gateway auth** change.
+
+- The diff touches the gateway image only. Transcription image digests are byte-identical to the previous entry.
+- The human witness on *"transcription quality is acceptable"* declares a surface of the transcription images. The intersection is empty.
+- **The row inherits**: `inherited from seq 6 — surface digests unchanged`. Nobody is asked to listen to audio because an auth header changed.
+
+The next update bumps **whisperlive**.
+
+- That digest is in the transcription value's surface. The intersection is non-empty.
+- **The row drops to `unproven`** and a witness session is queued. The diff summoned the human — not a calendar, not a release manager, and not the human's own memory of when they last checked.
+
+<Note>
+**State: RULED, NOT BUILT.** The `surface` field on a value and the intersection check at the gate are decided and unimplemented. Evidence today attaches to the entry that produced it and is not inherited; the digests it would intersect against are already recorded in the candidate map. See [the evidence model](evidence-model) for the full per-element state.
+</Note>
+
+Next: [How station contracts compose](contract-composition) · [The station gate](station-gate)

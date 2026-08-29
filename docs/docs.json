@@ -105,6 +105,14 @@
             ]
           },
           {
+            "group": "The model",
+            "pages": [
+              "evidence-model",
+              "evidence-reuse",
+              "contract-composition"
+            ]
+          },
+          {
             "group": "Publisher reference",
             "pages": [
               "reference/index",
