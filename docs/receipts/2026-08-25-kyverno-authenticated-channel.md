@@ -135,14 +135,14 @@ failed to verify image docker.io/vexaai/v012-gateway@sha256:514ba270…:
 
 ## The authentication hypothesis is DISPROVEN
 
-[#33](https://github.com/Vexa-ai/vexa-delivery/pull/33) recorded, unconfirmed,
+[vexa-delivery-internal#33](https://github.com/Vexa-ai/vexa-delivery-internal/pull/33) recorded, unconfirmed,
 that `verifyImages.repository` may not inherit Kyverno's configured registry
 client. It does. On the authenticated `…/scratch-sigs` path, **both flag forms
 worked**:
 
 | | flag | result |
 |---|---|---|
-| **E** | `--imagePullSecrets=kyverno/channel-registry-creds` (namespaced — the form the kit ships, and the form [#31's receipt](/receipts/2026-08-24-week-exit-rehearsal) calls silently ignored) | **ADMITTED** |
+| **E** | `--imagePullSecrets=kyverno/channel-registry-creds` (namespaced — the form the kit ships, and the form [vexa-delivery-internal#31's receipt](/receipts/2026-08-24-week-exit-rehearsal) calls silently ignored) | **ADMITTED** |
 | **F** | `--imagePullSecrets=channel-registry-creds` (bare name) | **ADMITTED** |
 
 and the edge log shows Kyverno actually sending the credential:
@@ -173,7 +173,7 @@ roughly 12:16 UTC**, before this session touched it:
 ERR please define the environment variable  error="environment variable must be defined" name=KYVERNO_NAMESPACE
 ```
 
-[#33](https://github.com/Vexa-ai/vexa-delivery/pull/33) states its Kyverno
+[vexa-delivery-internal#33](https://github.com/Vexa-ai/vexa-delivery-internal/pull/33) states its Kyverno
 arguments and volumes "were restored to their pre-session state". They were
 not: the restore dropped the controller's environment block, and left a
 `ca-bundle` volume pointing at a `channel-registry-ca` ConfigMap that stock

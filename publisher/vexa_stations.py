@@ -211,7 +211,7 @@ def entry_facts(entry: dict) -> dict:
         "publication_mode": pub.get("mode"),
         "published_at": pub.get("published_at"),
         "supersedes": ch.get("supersedes"),
-        # Channel hardening (#37) gives entries an expiry. Entries predating it
+        # Channel hardening (vexa-delivery-internal#37) gives entries an expiry. Entries predating it
         # carry none, and `null` here means "no expiry declared", never "fresh".
         "expires": entry.get("expires"),
     }

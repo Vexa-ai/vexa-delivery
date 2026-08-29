@@ -74,7 +74,7 @@ values files reference images by **tag**.
 tags to digests at deploy time. Publishing it into a signed entry is precisely the
 value this exercise buys: it turns cluster-only state into an artifact. Two
 corollaries surfaced while building the publisher change
-([`vexa-delivery#40`](https://github.com/Vexa-ai/vexa-delivery/pull/40)):
+([`vexa-delivery-internal#40`](https://github.com/Vexa-ai/vexa-delivery-internal/pull/40)):
 `postgres:17-alpine` has **two different digests live in staging** (the tag was
 re-pushed), and `vexaai/v012-mcp` **runs in staging but is not in the chart at
 all** — so a chart-derived entry cannot, today, describe what actually runs.

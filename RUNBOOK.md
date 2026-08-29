@@ -112,14 +112,14 @@ For the internal channel the chart is the proprietary `vexa-platform` umbrella
 instead:
 
 ```bash
-# RUNG: PR-OPEN — Vexa-ai/vexa-delivery#40. Never pushed, never signed.
+# RUNG: PR-OPEN — Vexa-ai/vexa-delivery-internal#40. Never pushed, never signed.
 python3 publisher/vexa_channel.py platform-chart --release X.Y.Z \
   --chart-dir ~/dev/vexa-platform/chart/vexa-platform \
   --pin-set <pins.txt> --out-dir work/platform-chart \
   [--unpinnable '<repo>=<reason>']
 ```
 
-**The pin set is an explicit input, never inferred.** `#40` established that the
+**The pin set is an explicit input, never inferred.** `vexa-delivery-internal#40` established that the
 platform's digest set exists *only in the live cluster*: the repo references
 every image by tag, and `release/registry.yaml` — the file originally named as
 the pin source — is a 126-entry evidence-**check** registry holding no digest
@@ -154,7 +154,7 @@ guarantees document, and it is stamped into the signed entry with
 a release *claimed* `no-hostpath` in its evidence, S9 accepted the claim — and
 the object-level check refused the publish anyway.
 
-*Rung: PR-open [#38](https://github.com/Vexa-ai/vexa-delivery/pull/38) adds
+*Rung: PR-open [vexa-delivery-internal#38](https://github.com/Vexa-ai/vexa-delivery-internal/pull/38) adds
 **S10..S14**, the outbound half of the two-directional contract —
 `delivery_scope`: namespaces, cluster-scoped yes/no, PSS level, image-source
 allowlist, sum-of-requests ceiling. Standard vocabularies throughout, so a
@@ -338,7 +338,7 @@ Before a sync has ever run there is also a free exit: `argocd app delete
 ### 2.5 Adopting an existing estate — three findings first
 
 From the prod migration plan (rung: PR-open
-[#39](https://github.com/Vexa-ai/vexa-delivery/pull/39), **not executed** —
+[vexa-delivery-internal#39](https://github.com/Vexa-ai/vexa-delivery-internal/pull/39), **not executed** —
 nothing migrated, adopted, patched, scaled or restarted):
 
 1. **13 of 13 prod Deployments carry `app.kubernetes.io/instance` inside their
@@ -436,7 +436,7 @@ python3 publisher/vexa_stations.py --ledger <stations-ledger> pin \
 ### 3.3 The return leg
 
 ```bash
-# RUNG: PR-OPEN — #38.
+# RUNG: PR-OPEN — vexa-delivery-internal#38.
 python3 publisher/vexa_station.py ingest --from-registry channel.vexa.ai --station <name>
 ```
 
@@ -488,7 +488,7 @@ waiver is still needed. An empty reason is itself a refusal.
 
 ### 4.2 Expiry and refresh
 
-*Rung: PR-open [#38](https://github.com/Vexa-ai/vexa-delivery/pull/38).*
+*Rung: PR-open [vexa-delivery-internal#38](https://github.com/Vexa-ai/vexa-delivery-internal/pull/38).*
 
 Entries carry a required `expires` (`build --expires-days`, default 30),
 refused by `verify` and by the PreSync gate. **The refusal is deliberately not
@@ -522,7 +522,7 @@ back, and a `push` of a fixed release supersedes. **Never delete an immutable
 tag.** A withdrawn release stops being promotable; a pinned customer keeps
 running, and withdrawal never touches their cluster.
 
-*Rung: PR-open [#38](https://github.com/Vexa-ai/vexa-delivery/pull/38)* adds a
+*Rung: PR-open [vexa-delivery-internal#38](https://github.com/Vexa-ai/vexa-delivery-internal/pull/38)* adds a
 signed list:
 
 ```bash
@@ -593,7 +593,7 @@ a database backup. That is the same statement as proof one in § 6.
 ### 5.1 The registry lives off the product cluster
 
 *Rung: moved 2026-08-25; receipt on PR-open
-[#41](https://github.com/Vexa-ai/vexa-delivery/pull/41), infrastructure in
+[vexa-delivery-internal#41](https://github.com/Vexa-ai/vexa-delivery-internal/pull/41), infrastructure in
 [`Vexa-ai/vexa-platform#352`](https://github.com/Vexa-ai/vexa-platform/pull/352) (private).*
 
 `channel.vexa.ai` runs on a **dedicated Linode**, host label
@@ -685,7 +685,7 @@ upstream on the anonymous paths, reading its Basic credential from the
 `vexa_subscriber.py add edge-signature-reader` now rotates **both halves in
 one step** — the bcrypt line in `$CHANNEL_ROOT/htpasswd` AND the base64
 `EDGE_READER_BASIC` in `$CHANNEL_ROOT/env` — then recreates the stack, so the
-manual step that [#35](https://github.com/Vexa-ai/vexa-delivery/issues/35)
+manual step that [vexa-delivery-internal#35](https://github.com/Vexa-ai/vexa-delivery-internal/issues/35)
 tracked no longer exists on the live path. (The old in-cluster procedure in
 `vexa-platform/cluster/channel-registry-ns/README.md` § Apply now applies only
 to the scaled-to-0 rollback deployment.)
@@ -806,7 +806,7 @@ adoption. It was left exactly as found, deliberately.
 
 The one-time, ceremony-gated prod transition is a **dated plan, not a crank**:
 [docs/plans/2026-08-25-prod-migration.mdx](docs/plans/2026-08-25-prod-migration.mdx)
-(merged as [#39](https://github.com/Vexa-ai/vexa-delivery/pull/39); not executed
+(merged as [vexa-delivery-internal#39](https://github.com/Vexa-ai/vexa-delivery-internal/pull/39); not executed
 as of 2026-08-25). It composes by reference — § 1 publishes the entry it pins,
 § 7 installs the station it subscribes.
 
