@@ -1,0 +1,39 @@
+# Toy platform estate, for the values_proven end-to-end. Nothing here was
+# captured from a cluster: every digest is a fixture constant, which is why
+# `captured_from` says so out loud.
+release_name: fixture-estate
+source:
+  commit: "0000000000000000000000000000000000000000"
+  repo_url: https://example.invalid/fixture
+  archive_name: fixture-estate.none
+  archive_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+captured_from:
+  method: fixture
+  note: "synthetic fixture; no cluster was read"
+charts:
+  - name: app
+    primary: true
+    oci_ref: registry.invalid/vexa/channel/fixture-estate/charts/app
+    digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    version: 0.0.1-estate.20260831
+images:
+  - name: example/app
+    digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    receipt: "synthetic fixture; no cluster was read"
+  - name: example/worker
+    digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    receipt: "synthetic fixture; no cluster was read"
+prod_soak:
+  carrier: live_cluster_read
+  receipt: fixture
+known_holes: []
+secrets_required: []
+evidence_absent:
+  - kind: candidate_map
+    reason: an artifact of the OSS release train; this estate was captured from a cluster
+  - kind: delivery_receipt
+    reason: produced by the OSS release train; no train produced this entry
+  - kind: source_provenance
+    reason: a platform estate has no GitHub release archive and no SLSA provenance
+  - kind: trusted_root
+    reason: only meaningful with a Sigstore keyless provenance bundle

@@ -142,6 +142,15 @@ vexa-subscriber revoke: >-
   suspected: revocation stops future pulls, it does not un-deliver what the
   subscriber already has.
 
+vexa-values-proven: >-
+  Build an entry's `values_proven` block from a station's committed row-fills
+  log, before `platform-entry --values-proven` seals it into the entry. Reach
+  for it whenever the channel's contract sets
+  `carriage.require_entry_values_proven` — which is what makes the block
+  mandatory — rather than typing the block by hand: it copies the station's own
+  PASS lines verbatim as evidence and refuses to claim a required value no line
+  proves.
+
 kit-release: >-
   Publish a new signed version of the customer kit itself to the channel. The
   kit is delivered the same way the product is — bootstrapped tree, cosign

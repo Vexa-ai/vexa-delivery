@@ -1,0 +1,4 @@
+id: fixture-validation-contract
+dependencies:
+  - id: meeting-platform
+    fidelity: real

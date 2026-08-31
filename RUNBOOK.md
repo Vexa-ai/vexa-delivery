@@ -910,9 +910,23 @@ a named record.
 **Contract shapes.** The 2026-09 records split `required_values[]` (what the
 release must be proven to do) from `carriage{}` (what the entry must look like).
 The verifier reads the carriage keys — it flattens the block into a working copy
-and still hashes the *record* for the verdict — and it **does not evaluate
-`required_values[]`**, saying so in its output rather than passing over it in
-silence. Adjudicating that half is a separate step.
+and still hashes the *record* for the verdict — and since **2026-08-31 it also
+adjudicates `required_values[]`** whenever the carriage sets
+`require_entry_values_proven`. For every value row with `enforcement: required`
+the entry must carry a `values_proven` row that is `proven` with evidence, or
+`waived` by a named human; a missing id, a missing block or a bad verdict is a
+counted FAIL and the verdict is NOT ELIGIBLE. Evidence naming a
+`subject_digest` must name one of this entry's own images.
+
+Before that date the clause was **void in both directions** — the publisher
+wrote no block and the verifier printed "required_values[] is NOT evaluated" —
+so the live record could demand proof of seven values and admit an entry that
+proved none of them, with a full roster of green carriage ticks in the log.
+**Every entry through seq-11 predates the block and is refused by the live
+contract.** That is the correct fail-closed reading: publish an entry that
+carries the proof, do not widen the contract. Build the block with
+`publisher/vexa_values_proven.py` from the station's committed `row-fills.log`,
+then seal it in with `platform-entry --values-proven`.
 
 `station/root-app.yaml` is the **one object ever applied by hand**. Its
 `targetRevision` is the station pin; its inline values carry the only

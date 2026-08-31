@@ -1,0 +1,5 @@
+# toy station record — the shape a real row-fills.log has
+2026-08-31T08:0xZ E0 PASS  vexa-verify.sh --station fixture -> "VERDICT: ELIGIBLE"; entry digest deadbeef
+2026-08-31T08:2xZ E3 PART  15-min crashloop watch still running
+2026-08-31T09:0xZ E5 PASS  post-sync row0 from RUNNING containers: every imageID matches the entry
+2026-08-31T09:3xZ F0 PASS  FULL sweep: 18/18 running containers' imageIDs are in entry images[]

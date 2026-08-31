@@ -319,7 +319,8 @@ usage: vexa-channel platform-entry [-h] --spec SPEC --validation-contract VALIDA
                                    [--publication-mode {dry_run,candidate,published}]
                                    [--publisher PUBLISHER] [--approved-by APPROVED_BY]
                                    [--approval-receipt APPROVAL_RECEIPT]
-                                   [--extra-evidence EXTRA_EVIDENCE] [--expires-days EXPIRES_DAYS]
+                                   [--extra-evidence EXTRA_EVIDENCE]
+                                   [--values-proven VALUES_PROVEN] [--expires-days EXPIRES_DAYS]
                                    --out OUT
 
 options:
@@ -340,6 +341,13 @@ options:
   --approved-by APPROVED_BY
   --approval-receipt APPROVAL_RECEIPT
   --extra-evidence EXTRA_EVIDENCE
+  --values-proven VALUES_PROVEN
+                        JSON array of value rows answering the contract's required_values[]: {id,
+                        verdict: proven|waived, evidence[{what, ref, tested_at, subject_digest?}],
+                        station, waived_by?}. Embedded verbatim as the entry's top-level
+                        values_proven. A contract whose carriage sets require_entry_values_proven
+                        refuses an entry that omits it. Build one from a station's committed fills
+                        with publisher/vexa_values_proven.py.
   --expires-days EXPIRES_DAYS
   --out OUT
 ```

@@ -1,0 +1,35 @@
+{
+  "contract_id": "fixture-estate-values-2026-09",
+  "required_values": [
+    {
+      "id": "V-fix-1",
+      "claim": "Every platform deployment reaches ready.",
+      "rank": "autonomous",
+      "validation": {"kind": "station-check"},
+      "enforcement": "required"
+    },
+    {
+      "id": "V-fix-2",
+      "claim": "Transcription quality is acceptable.",
+      "rank": "human",
+      "validation": {"kind": "witness", "signer": "human"},
+      "enforcement": "advisory"
+    },
+    {
+      "id": "V-fix-3",
+      "claim": "Every running container's image is one this entry ships.",
+      "rank": "autonomous",
+      "validation": {"kind": "station-check"},
+      "enforcement": "required"
+    }
+  ],
+  "carriage": {
+    "require_evidence_kinds": ["validation_contract"],
+    "forbid_absent_evidence": ["validation_contract"],
+    "require_publication_mode": "candidate",
+    "require_vendor_approval": false,
+    "allow_break_glass": false,
+    "min_entry_seq": 1,
+    "require_entry_values_proven": true
+  }
+}

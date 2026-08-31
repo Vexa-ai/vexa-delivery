@@ -574,6 +574,81 @@ def evidence_row(name, kind, path, media_type, description):
     }
 
 
+def check_values_proven(rows, path="values_proven"):
+    """E4 — the entry's answer to the contract's `required_values[]`.
+
+    A contract's `carriage.require_entry_values_proven` was a dead clause until
+    2026-08-31: the record demanded proof of seven values, the publisher wrote
+    no such block, and the verifier read none — so a contract that asked for
+    everything admitted an entry that proved nothing. This is the writing half.
+
+    The checks here are the ones the SCHEMA cannot make readable. Every one of
+    them refuses rather than repairing: a proof block that is silently corrected
+    is the same defect as no proof block, wearing a green tick.
+
+    ONE definition of a valid block, called from both the entry builder and
+    publisher/vexa_values_proven.py — a second copy would drift and the drift
+    would show up as an entry that one tool accepts and the other refuses.
+    """
+    if not isinstance(rows, list) or not rows:
+        raise CheckFailure("E4", f"{path}: expected a non-empty JSON array of value rows")
+    seen = set()
+    for i, row in enumerate(rows):
+        where = f"{path}[{i}]"
+        if not isinstance(row, dict):
+            raise CheckFailure("E4", f"{where}: not an object")
+        vid = row.get("id")
+        if not isinstance(vid, str) or not vid.strip():
+            raise CheckFailure("E4", f"{where}: 'id' must be a non-empty string naming a contract value")
+        if vid in seen:
+            raise CheckFailure(
+                "E4",
+                f"{where}: value {vid!r} appears twice. Two rows for one id means the entry "
+                "makes two claims about the same value and nothing says which one binds.",
+            )
+        seen.add(vid)
+        verdict = row.get("verdict")
+        if verdict not in ("proven", "waived"):
+            raise CheckFailure("E4", f"{where} ({vid}): verdict must be 'proven' or 'waived', got {verdict!r}")
+        if not isinstance(row.get("station"), str) or not row["station"].strip():
+            raise CheckFailure("E4", f"{where} ({vid}): 'station' must name the station that made the claim")
+        if verdict == "waived":
+            by = row.get("waived_by")
+            if not isinstance(by, str) or not by.strip():
+                raise CheckFailure(
+                    "E4",
+                    f"{where} ({vid}): a waiver must name the human who granted it ('waived_by'). "
+                    "An anonymous waiver is indistinguishable from an omission, which is what "
+                    "this block exists to make impossible.",
+                )
+            continue
+        evidence = row.get("evidence")
+        if not isinstance(evidence, list) or not evidence:
+            raise CheckFailure(
+                "E4",
+                f"{where} ({vid}): a 'proven' verdict carries at least one evidence row. "
+                "Proven-with-no-evidence is an assertion, not a proof.",
+            )
+        for j, ev in enumerate(evidence):
+            evw = f"{where}.evidence[{j}] ({vid})"
+            if not isinstance(ev, dict):
+                raise CheckFailure("E4", f"{evw}: not an object")
+            for field in ("what", "ref", "tested_at"):
+                if not isinstance(ev.get(field), str) or not ev[field].strip():
+                    raise CheckFailure("E4", f"{evw}: '{field}' must be a non-empty string")
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", ev["tested_at"]):
+                raise CheckFailure("E4", f"{evw}: tested_at is not an ISO-8601 Z stamp: {ev['tested_at']!r}")
+            sd = ev.get("subject_digest")
+            if sd is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", sd):
+                raise CheckFailure("E4", f"{evw}: subject_digest is not sha256:<64 hex>: {sd!r}")
+    return rows
+
+
+def load_values_proven(path):
+    """The same checks, against a file on disk."""
+    return check_values_proven(json.loads(pathlib.Path(path).read_text()), str(path))
+
+
 def schema_validate(entry):
     """C9 — the assembled entry validates against the sealed schema."""
     spec_dir = pathlib.Path(__file__).resolve().parent.parent / "spec"
@@ -2543,6 +2618,29 @@ def cmd_platform_entry(args):
     if args.approval_receipt:
         entry["publication"]["approval_receipt"] = args.approval_receipt
 
+    # E4 — the proof half, carried INSIDE the signed entry. A contract whose
+    # carriage sets `require_entry_values_proven` refuses an entry without it,
+    # so this flag is how an estate becomes admissible under the 2026-09 shape.
+    #
+    # The subject_digest cross-check is deliberately made HERE as well as in the
+    # verifier. The verifier's copy is the one that binds; this one exists so a
+    # publisher learns at build time that they assembled an entry no subscriber
+    # can admit, instead of learning it from a failed PreSync hook.
+    if args.values_proven:
+        rows = load_values_proven(args.values_proven)
+        shipped = {i["index_digest"] for i in entry["images"]}
+        for row in rows:
+            for ev in row.get("evidence") or []:
+                sd = ev.get("subject_digest")
+                if sd and sd not in shipped:
+                    raise CheckFailure(
+                        "E4",
+                        f"{row['id']}: evidence names subject_digest {sd}, which is not one of "
+                        f"this entry's {len(shipped)} image digests. Evidence collected against "
+                        "an image this entry does not ship proves nothing about this entry.",
+                    )
+        entry["values_proven"] = rows
+
     # An estate is MORE THAN ONE CHART, which the schema's singular `chart`
     # cannot express. The primary chart goes in `chart` so existing consumers
     # (kit, Argo bootstrap) keep working unchanged; the full set goes in
@@ -2581,6 +2679,12 @@ def cmd_platform_entry(args):
     print(f"  E2 {len(entry['images'])} images, all digest-pinned")
     print(f"  charts: {', '.join(c['name'] for c in charts)}")
     print(f"  absent (declared): {', '.join(a['kind'] for a in entry['evidence_absent'])}")
+    if entry.get("values_proven"):
+        roster = ", ".join(f"{r['id']}:{r['verdict']}" for r in entry["values_proven"])
+        print(f"  E4 values_proven: {roster}")
+    else:
+        print("  E4 no values_proven block — a contract that sets "
+              "carriage.require_entry_values_proven will refuse this entry")
     return 0
 
 
@@ -2924,6 +3028,13 @@ def main(argv=None):
     pe.add_argument("--approved-by")
     pe.add_argument("--approval-receipt")
     pe.add_argument("--extra-evidence", action="append")
+    pe.add_argument("--values-proven",
+                    help="JSON array of value rows answering the contract's required_values[]: "
+                         "{id, verdict: proven|waived, evidence[{what, ref, tested_at, "
+                         "subject_digest?}], station, waived_by?}. Embedded verbatim as the "
+                         "entry's top-level values_proven. A contract whose carriage sets "
+                         "require_entry_values_proven refuses an entry that omits it. Build one "
+                         "from a station's committed fills with publisher/vexa_values_proven.py.")
     pe.add_argument("--expires-days", type=int, default=DEFAULT_EXPIRES_DAYS)
     pe.add_argument("--out", required=True)
 

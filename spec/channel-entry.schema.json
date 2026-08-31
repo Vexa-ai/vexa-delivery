@@ -480,6 +480,116 @@
         }
       }
     },
+    "values_proven": {
+      "type": "array",
+      "description": "The entry's answer to the contract's `required_values[]`: one row per value id this entry claims to have proven, and the evidence for the claim. The contract clause `carriage.require_entry_values_proven` is what makes this block MANDATORY — when it is true, the in-cluster verifier refuses any entry that does not carry a `proven` (or human-`waived`) row for every required value id in the contract it is judged against. Until 2026-08-31 nothing wrote this block and nothing read it, so the clause was void: a contract could demand proof of seven values and admit an entry that proved none. Rows are STATION CLAIMS, not the verifier's own findings — the verifier checks that the claim exists, names a station, carries evidence, and that any subject_digest it cites is genuinely one of this entry's images. It cannot re-run a station.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "verdict",
+          "station"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The contract's `required_values[].id` this row answers (e.g. V-est-1). Matched by exact string, so a typo is a missing proof, not a silent pass."
+          },
+          "verdict": {
+            "enum": [
+              "proven",
+              "waived"
+            ],
+            "description": "`proven` — a station ran something and the evidence rows say what. `waived` — a NAMED HUMAN accepted the value unproven for this entry; `waived_by` is then mandatory, because an anonymous waiver is indistinguishable from an omission."
+          },
+          "evidence": {
+            "type": "array",
+            "description": "What was actually done. Mandatory and non-empty on a `proven` row: a proven verdict with no evidence is the exact shape of the void this block exists to close.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "what",
+                "ref",
+                "tested_at"
+              ],
+              "properties": {
+                "what": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The finding, in the words the station recorded it in — verbatim from the station's own fill line where the row came from a fills log."
+                },
+                "ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Where that finding is committed and can be re-read: a path in the stations ledger, a URL, a receipt id."
+                },
+                "tested_at": {
+                  "$ref": "#/$defs/timestamp"
+                },
+                "subject_digest": {
+                  "$ref": "#/$defs/digest",
+                  "description": "The image this evidence was produced against, when the evidence is image-specific. The verifier requires it to appear in this entry's `images[].index_digest` set — evidence collected against a digest this entry does not ship proves nothing about this entry."
+                }
+              }
+            }
+          },
+          "station": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Which station made the claim. An unattributable proof is worse than none, for the same reason an unattributable verdict is."
+          },
+          "waived_by": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The human who accepted the value unproven. Required on a `waived` row and meaningless on a `proven` one."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "verdict": {
+                  "const": "proven"
+                }
+              },
+              "required": [
+                "verdict"
+              ]
+            },
+            "then": {
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "evidence": {
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "verdict": {
+                  "const": "waived"
+                }
+              },
+              "required": [
+                "verdict"
+              ]
+            },
+            "then": {
+              "required": [
+                "waived_by"
+              ]
+            }
+          }
+        ]
+      }
+    },
     "expires": {
       "$ref": "#/$defs/timestamp",
       "description": "Freshness horizon. After this instant the entry is STALE and every verifier in the chain refuses it \u2014 a distinct refusal from an invalid signature, because it means the customer is looking at a channel nobody has published to, not at a forgery. Set by the publisher at build time (default now+30d, --expires-days). Republishing the same release with a fresh expiry is a normal act and needs no version bump: `vexa_channel.py refresh` re-stamps expires, increments channel.entry_seq, re-signs, and pushes; the release tag moves to the new entry while the superseded one stays addressable at <version>-seq<N> and by digest. Rollback protection is entry_seq monotonicity, not tag immutability."
