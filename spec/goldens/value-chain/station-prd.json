@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "station": "station-3-bbb-staging",
+  "contract_id": "vexa-internal-staging-2026-09",
+  "contract_sha256": "dfb751e516f048a43ca3786d38ac05bb45640c144a498997f59d45e4756fc04d",
+  "manifest_sha256": "77f998230fd44da35a8a719564c5f74e4dae0fe4447375f8d42a4adebea30797",
+  "candidate_sha": "d262446521a71e37554ee1ffc560df3099e659fb",
+  "derived_at": "2026-08-31T09:00:00Z",
+  "rows": [
+    {
+      "value_id": "V-stg-1",
+      "claim": "The station built and exercised exactly the candidate the consist manifest names.",
+      "spec": "station build source sha == manifest.candidate_sha d262446521a71e37554ee1ffc560df3099e659fb; recorded with the manifest sha256.",
+      "slot": "fills"
+    },
+    {
+      "value_id": "V-stg-2",
+      "claim": "Row 0 - every row0_required image in the manifest's image_closure is byte-verified on this station.",
+      "spec": "Three images, enumerated FROM the manifest, not from compose ps: vexaai/vexa-bot (spawn - invisible to compose ps, this is the row the stale-bot incident fell through), vexaai/v012-meeting-api, vexa-lite. Compare running container imageID against the built digest for each.",
+      "slot": "fills"
+    },
+    {
+      "value_id": "V-stg-3",
+      "claim": "Every fill parses against the fill-line grammar and keys on a contract value id.",
+      "spec": "python3 spec/fill_line.py --check channels/vexa-internal/stations/t26-01226/row-fills.log; zero malformed, zero value ids outside this contract and the estate contract it binds.",
+      "slot": "fills"
+    },
+    {
+      "value_id": "V-stg-4",
+      "claim": "Every PRD row is filled or waived by name, and this PRD predates the first fill.",
+      "spec": "derived_at 2026-08-31T09:00:00Z < min(fill.ts); every rows[].value_id has a PASS or WAIVED line.",
+      "slot": "fills"
+    },
+    {
+      "value_id": "V-stg-5",
+      "claim": "Exit - values_proven compiled and a station-verdict rendered over it.",
+      "spec": "Compile from row-fills.log; render the verdict body citing this contract_sha256, the manifest sha256 and the values_proven sha256.",
+      "slot": "fills"
+    },
+    {
+      "value_id": "V-stg-6",
+      "claim": "Every car dropped at this station dropped with a PR comment and a FAIL fill.",
+      "spec": "No car dropped at this station on this candidate; the row is satisfied vacuously and says so rather than being omitted.",
+      "slot": "fills"
+    },
+    {
+      "value_id": "V-est-1",
+      "claim": "Every platform deployment reaches ready.",
+      "spec": "compose and lite stacks up from the candidate build; all services healthy before the probe starts.",
+      "slot": "fills"
+    },
+    {
+      "value_id": "V-est-2",
+      "claim": "A bot joins a live meeting and transcript segments arrive over websocket.",
+      "spec": "Full probe journey S0-S8 on BOTH lanes (compose and lite) - the #1018 per-track Zoom slice and the #1075 typed join-evidence stack both land in the bot image, so a single-lane pass does not cover the cargo.",
+      "slot": "fills",
+      "car": "Vexa-ai/vexa#1018"
+    },
+    {
+      "value_id": "V-est-3",
+      "claim": "Every runtime-spawned pod carries explicit cpu and memory resources.",
+      "spec": "Not exercisable on this station: bbb staging runs compose and lite, which have no pod spec. Inherited from the estate station's own verdict, where it is a cluster claim.",
+      "slot": "inherited",
+      "inherited_from": "station-4-cluster-staging"
+    },
+    {
+      "value_id": "V-est-6",
+      "claim": "Transcription quality is acceptable.",
+      "spec": "Founder witness on a live meeting through the candidate. A3 attempt 1 hit a free-tier Zoom wall that blocks web-client bots on any version; a licensed room is needed for the Zoom surface specifically.",
+      "slot": "waiver"
+    },
+    {
+      "value_id": "V-est-7",
+      "claim": "Every artifact production runs is byte-reproducible from source committed to main.",
+      "spec": "Tree-diff the assembled candidate against main and set-compare; every image in the closure built from d262446521a71e37554ee1ffc560df3099e659fb.",
+      "slot": "fills"
+    }
+  ],
+  "proposed_values": [
+    {
+      "value_id": "V-stg-7",
+      "claim": "A cherry-picked commit that carries no PR of its own is named in the manifest as unattributed AND carries its own V-sign row.",
+      "rationale": "The t26 candidate carries jbschooley's Zoom popup fix, lifted out of #1252's stack as its own car. It has an author, a founder V-sign and no PR - so nothing in the current contract makes its sign mandatory, and the manifest can only report that it is unattributed. This is a standing shape (a lifted commit is how a good fix escapes a stalled stack), not a t26 accident, which is why it belongs in the contract rather than in this train's fills."
+    }
+  ],
+  "notes": [
+    "Carried forward from t25 and not silently dropped: vexa#1354 probe subscribe race (fixed this round, both lanes green - closed as fixed, not restated), the gateway edge_guard collection error (rate-limiter tests still run nowhere), and the twenty movable-tag finding on the monitoring namespace."
+  ]
+}

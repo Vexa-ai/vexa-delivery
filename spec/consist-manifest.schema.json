@@ -1,0 +1,167 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://vexa.ai/spec/consist-manifest.schema.json",
+  "title": "Consist manifest v1",
+  "description": "What is aboard a candidate, generated FROM the branch and never hand-written. This document's sha256 IS the candidate's identity: the human V-signs against it, the station's row 0 enumerates FROM it, and every downstream PRD, values_proven row and station-verdict cites that one hash. The failure it exists to refuse is a reader deriving a claim from an intermediate view instead of the artifact - on 2026-08-31 a founder V-signed against lane-framing prose believing join code was aboard while the station's row 0 read `compose ps`, which cannot see a spawn image, so a stale bot was exercised while the fills read cargo-green. One generated object, two readers, no gap.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "train_id",
+    "base_sha",
+    "candidate_sha",
+    "cars",
+    "not_aboard",
+    "image_closure",
+    "generated_at",
+    "generator"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "train_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The train this consist belongs to (e.g. `t26-01226`). Stable across re-cuts of the same train; a re-cut changes candidate_sha, not this."
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "The commit on the base ref (normally origin/main) the candidate was cut from. Every diff in this document is against exactly this commit, so a manifest generated from a stale base is detectable rather than plausible."
+    },
+    "candidate_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Head of the assembled candidate. The tree this manifest describes and the tree the station must build."
+    },
+    "cars": {
+      "type": "array",
+      "description": "One row per unit of cargo. A car is a PR where the commits carry one, and an `unattributed` group where they do not - never omitted, because a commit that reached the candidate without a PR carries no narrative, no value sign-off and no non-author review, and that is precisely what a reviewer must be able to see.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pr", "author", "commits", "surfaces"],
+        "properties": {
+          "pr": {
+            "type": "string",
+            "minLength": 1,
+            "description": "`<owner>/<repo>#<number>`, or the literal `unattributed` for commits carrying no PR reference. A bare number is refused: this workspace holds five repositories and an unqualified `#1011` makes the reader work out which."
+          },
+          "author": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The commit author whose work this car is. Authorship is load-bearing on the relationship ladder, not decoration - a contributor's car merges under their own name."
+          },
+          "commits": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "description": "Every commit in base_sha..candidate_sha attributed to this car, in topological order."
+          },
+          "surfaces": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Product surfaces this car lands in, as top-two-level path groups (e.g. `core/meetings`). This is what makes the blast radius readable without opening the diff, and it is what the PRD derives its per-cargo rows from."
+          }
+        }
+      }
+    },
+    "not_aboard": {
+      "type": "array",
+      "description": "The `you might believe X is in` list: every same-author or same-theme open PR, and every considered-then-excluded commit, that is NOT in this candidate, each with the reason. The section is mandatory and is the point of the document - an omission here is indistinguishable from an oversight, which is why the generator refuses to run without an explicit not-aboard input. An empty array is legal ONLY with the single sentinel row {pr: \"none-considered-excluded\", reason: ...}; see `not_aboard_sentinel` below.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pr", "reason"],
+        "properties": {
+          "pr": {
+            "type": "string",
+            "minLength": 1,
+            "description": "`<owner>/<repo>#<number>`, a commit sha, or the sentinel `none-considered-excluded`."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why it is not aboard, in the words of whoever decided. `held for #1075 by founder` and `superseded` are different facts and the reader needs which."
+          }
+        }
+      },
+      "minItems": 1
+    },
+    "image_closure": {
+      "type": "array",
+      "description": "Every buildable image the diff's code lands in. SPAWN IMAGES ARE MEMBERS - they never appear in `compose ps` and are the exact hole row 0 fell through. Each row carries its own row-0 obligation so the station enumerates from here rather than from what it can see running.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["image", "dockerfile", "built_by", "row0_required"],
+        "properties": {
+          "image": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Image name as the station knows it (e.g. `vexa-bot`)."
+          },
+          "dockerfile": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Repo-relative path to the Dockerfile, so the claim is checkable against the tree."
+          },
+          "built_by": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What builds it in this train (`station-build`, `compose`, `lite`, a CI workflow). Names who owes the build."
+          },
+          "row0_required": {
+            "type": "boolean",
+            "description": "Whether row 0 (running bytes == built bytes) must be proven for this image before departure. `false` needs a stated reason in `row0_waiver`; silence is not a waiver."
+          },
+          "row0_waiver": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why row 0 is not required for this image. Meaningless when row0_required is true."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Which changed paths put this image in the closure - the derivation, so a reader can refute it."
+          }
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "generator": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The tool and version that produced this file. A hand-written manifest has no generator string it can honestly carry, which is the intended friction."
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Generator findings that are not refusals: heuristics it applied, closures it could not resolve, paths it could not attribute. A best-effort derivation that says where it was guessing is usable; a silent one is not."
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "not_aboard_sentinel - an empty not-aboard section must SAY it is empty. A manifest may carry the sentinel row alone, or real rows, never both.",
+      "if": {
+        "properties": {
+          "not_aboard": {
+            "contains": {
+              "properties": { "pr": { "const": "none-considered-excluded" } },
+              "required": ["pr"]
+            }
+          }
+        },
+        "required": ["not_aboard"]
+      },
+      "then": {
+        "properties": { "not_aboard": { "maxItems": 1 } }
+      }
+    }
+  ]
+}

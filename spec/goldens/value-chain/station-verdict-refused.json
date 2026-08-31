@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "station": "station-3-bbb-staging",
+  "candidate_sha": "d262446521a71e37554ee1ffc560df3099e659fb",
+  "manifest_sha256": "77f998230fd44da35a8a719564c5f74e4dae0fe4447375f8d42a4adebea30797",
+  "contract_id": "vexa-internal-staging-2026-09",
+  "contract_sha256": "dfb751e516f048a43ca3786d38ac05bb45640c144a498997f59d45e4756fc04d",
+  "values_proven_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "verdict": "REFUSED",
+  "admitted": {
+    "upstream_station": "station-2-candidate-checks",
+    "upstream_verdict_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inherited_values": [
+      "V-est-3"
+    ]
+  },
+  "rendered_at": "2026-08-31T12:20:00Z",
+  "refusals": [
+    {
+      "clause": "V-stg-2",
+      "detail": "row 0 not proven for vexaai/vexa-bot: the image is in the manifest's image_closure with row0_required true, and the station enumerated from `compose ps`, which cannot see a spawn image. No fill exists for it."
+    },
+    {
+      "clause": "V-est-2",
+      "detail": "probe S5 red on the lite lane: WS /ws subscribe never acked. One lane green is not the claim."
+    }
+  ]
+}

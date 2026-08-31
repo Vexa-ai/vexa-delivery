@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://vexa.ai/spec/fill-line.schema.json",
+  "title": "Fill line v1 - the append-only station log grammar",
+  "description": "One exercised row, as one line of `row-fills.log`. The log is APPEND-ONLY and that is the whole mechanism: a fill is the record of something that was done at a moment, so an edited fill is a claim about the past that nothing can check. This schema describes the PARSED record; the wire format is the line, and `line_grammar` below is the normative regex. Parser: `spec/fill_line.py`. The three properties that make a fill worth anything: it names a CONTRACT value id (not a per-train row label), it carries `tested@<digest>` whenever the finding is about an artifact, and its evidence is verbatim - the words the station recorded, not a summary written later.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ts", "value_id", "verdict", "evidence"],
+  "properties": {
+    "line_grammar": {
+      "$comment": "Documentation slot, never present on a parsed record. Kept here so the regex and the schema cannot drift into two files.",
+      "const": "^(?P<ts>\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z)[ \\t]+(?P<value_id>V-[A-Za-z0-9][A-Za-z0-9._-]*)[ \\t]+(?P<verdict>PASS|FAIL|PART|WAIVED)(?:[ \\t]+tested@(?P<digest>sha256:[0-9a-f]{64}))?[ \\t]+(?P<evidence>\\S.*)$"
+    },
+    "ts": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "When the exercise happened, to the second, UTC. Truncated forms (`13:0xZ`) are refused: a fill that cannot be ordered against the PRD's derived_at cannot be shown to be ex-post, and ex-ante/ex-post ordering is the only thing separating a work order from a transcript."
+    },
+    "value_id": {
+      "type": "string",
+      "pattern": "^V-[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "The contract value this fill answers. THE ONLY KEY. A per-train label (A1, F3) names a row that exists for one train and is unverifiable downstream, which is the failure this pattern replaces."
+    },
+    "verdict": {
+      "enum": ["PASS", "FAIL", "PART", "WAIVED"],
+      "description": "PASS - exercised, claim holds. FAIL - exercised, claim does not hold; the car drops with a comment on the record. PART - exercised, claim holds partly; the evidence says which part and the row does not compile to `proven` without a further PASS or a named waiver. WAIVED - a named human accepted it unproven; the name is in the evidence text and becomes values_proven.waived_by. There is no verdict for `we did not get to it`: an unexercised row simply has no line, and the missing line is what refuses departure."
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "`tested@<digest>` - the artifact this finding was produced against. Mandatory in practice for any claim about a built thing: evidence collected against a digest the candidate does not ship proves nothing about the candidate, and the downstream verifier checks exactly that."
+    },
+    "evidence": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free text, verbatim, in the words the station recorded the finding in. It travels unchanged into values_proven[].evidence[].what, so a fill written as a summary produces an entry whose evidence is a summary."
+    },
+    "source_line": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1-based line number in the log the record was parsed from. Set by the parser; the reference a reader follows back."
+    },
+    "source_file": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path of the log, as committed in the stations ledger. Becomes values_proven[].evidence[].ref."
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "A WAIVED fill must name its human somewhere a reader can find, and the only field it has is the evidence text. The schema cannot check for a person, so this clause states the obligation the compiler enforces: compiling a WAIVED fill into values_proven requires waived_by, and the compiler reads it from here.",
+      "if": { "properties": { "verdict": { "const": "WAIVED" } }, "required": ["verdict"] },
+      "then": { "properties": { "evidence": { "minLength": 1 } } }
+    }
+  ]
+}
