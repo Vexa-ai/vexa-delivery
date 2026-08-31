@@ -1,0 +1,149 @@
+[
+  {
+    "id": "V-est-1",
+    "verdict": "proven",
+    "evidence": [
+      {
+        "what": "compose and lite stacks up from the candidate build; all services healthy before the probe started",
+        "ref": "spec/goldens/value-chain/fills.log#L15",
+        "tested_at": "2026-08-31T12:35:00Z",
+        "subject_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    ],
+    "station": "station-3-bbb-staging"
+  },
+  {
+    "id": "V-est-2",
+    "verdict": "proven",
+    "evidence": [
+      {
+        "what": "compose PROBE FULL PASS S0-S8 incl. S5 transcribe (aaa-prb1388)",
+        "ref": "spec/goldens/value-chain/fills.log#L16",
+        "tested_at": "2026-08-31T12:35:30Z",
+        "subject_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "what": "lite PROBE FULL PASS S0-S8 (aaa-prb1520) - first simultaneous both-lanes green",
+        "ref": "spec/goldens/value-chain/fills.log#L17",
+        "tested_at": "2026-08-31T12:36:00Z",
+        "subject_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    ],
+    "station": "station-3-bbb-staging"
+  },
+  {
+    "id": "V-est-3",
+    "verdict": "proven",
+    "station": "station-4-cluster-staging",
+    "evidence": [
+      {
+        "what": "spawned pods vexa-mtg-27239/27240: QoS=Guaranteed - caps proven on real founder meetings",
+        "ref": "channels/vexa-internal/stations/estate-seq11/row-fills.log",
+        "tested_at": "2026-08-30T09:00:00Z"
+      }
+    ]
+  },
+  {
+    "id": "V-est-6",
+    "verdict": "waived",
+    "station": "station-3-bbb-staging",
+    "waived_by": "Dmitriy Grankin"
+  },
+  {
+    "id": "V-est-7",
+    "verdict": "proven",
+    "evidence": [
+      {
+        "what": "tree-diff assembled candidate vs main, set-compared: delta is the 35 files this manifest names and nothing else; every closure image built from d2624465",
+        "ref": "spec/goldens/value-chain/fills.log#L18",
+        "tested_at": "2026-08-31T12:40:00Z"
+      }
+    ],
+    "station": "station-3-bbb-staging"
+  },
+  {
+    "id": "V-stg-1",
+    "verdict": "proven",
+    "evidence": [
+      {
+        "what": "station build source sha == manifest.candidate_sha d262446521a71e37554ee1ffc560df3099e659fb; manifest 77f99823 is the object the founder signed",
+        "ref": "spec/goldens/value-chain/fills.log#L10",
+        "tested_at": "2026-08-31T12:10:00Z"
+      }
+    ],
+    "station": "station-3-bbb-staging"
+  },
+  {
+    "id": "V-stg-2",
+    "verdict": "proven",
+    "evidence": [
+      {
+        "what": "row 0, vexaai/vexa-bot: running imageID == built digest. SPAWN IMAGE - enumerated from the manifest's image_closure, invisible to compose ps",
+        "ref": "spec/goldens/value-chain/fills.log#L11",
+        "tested_at": "2026-08-31T12:31:00Z",
+        "subject_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "what": "row 0, vexaai/v012-meeting-api: running imageID == built digest",
+        "ref": "spec/goldens/value-chain/fills.log#L12",
+        "tested_at": "2026-08-31T12:31:30Z",
+        "subject_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      {
+        "what": "row 0, vexa-lite: running imageID == built digest; 3/3 row0_required images match",
+        "ref": "spec/goldens/value-chain/fills.log#L13",
+        "tested_at": "2026-08-31T12:32:00Z",
+        "subject_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    ],
+    "station": "station-3-bbb-staging"
+  },
+  {
+    "id": "V-stg-3",
+    "verdict": "proven",
+    "evidence": [
+      {
+        "what": "fill_line.py --check on this log: 0 malformed, 0 value ids outside vexa-internal-staging-2026-09 and the estate contract it binds",
+        "ref": "spec/goldens/value-chain/fills.log#L14",
+        "tested_at": "2026-08-31T12:33:00Z"
+      }
+    ],
+    "station": "station-3-bbb-staging"
+  },
+  {
+    "id": "V-stg-4",
+    "verdict": "proven",
+    "evidence": [
+      {
+        "what": "every row of the PRD (derived_at 2026-08-31T09:00:00Z) is filled or waived by name; V-est-3 is inherited from station-4 and carries no fill here by design",
+        "ref": "spec/goldens/value-chain/fills.log#L21",
+        "tested_at": "2026-08-31T12:55:00Z"
+      }
+    ],
+    "station": "station-3-bbb-staging"
+  },
+  {
+    "id": "V-stg-5",
+    "verdict": "proven",
+    "evidence": [
+      {
+        "what": "values_proven compiled from this log and the station-verdict body rendered over it",
+        "ref": "spec/goldens/value-chain/fills.log#L22",
+        "tested_at": "2026-08-31T13:00:00Z"
+      }
+    ],
+    "station": "station-3-bbb-staging"
+  },
+  {
+    "id": "V-stg-6",
+    "verdict": "proven",
+    "evidence": [
+      {
+        "what": "no car dropped at this station on this candidate; the row is satisfied vacuously and says so rather than being omitted",
+        "ref": "spec/goldens/value-chain/fills.log#L20",
+        "tested_at": "2026-08-31T12:50:00Z"
+      }
+    ],
+    "station": "station-3-bbb-staging"
+  }
+]

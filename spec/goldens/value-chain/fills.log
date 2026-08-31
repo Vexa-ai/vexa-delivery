@@ -1,0 +1,22 @@
+# WORKED EXAMPLE, not a station record. The shape is real (it is the t26-01226
+# staging PRD's rows, in order); the digests are well-formed placeholders, because
+# a golden that carried a real digest would be a second, unreviewed copy of a
+# station's record. The station's own record is
+# channels/vexa-internal/stations/t26-01226/row-fills.log in DmitriyG228/vexa-stations.
+#
+# Grammar: <ts> <V-id> <PASS|FAIL|PART|WAIVED> [tested@<digest>] <evidence...>
+# Blank lines and # comments are skipped. Anything else is MALFORMED and reported.
+
+2026-08-31T12:10:00Z V-stg-1 PASS station build source sha == manifest.candidate_sha d262446521a71e37554ee1ffc560df3099e659fb; manifest 77f99823 is the object the founder signed
+2026-08-31T12:31:00Z V-stg-2 PASS tested@sha256:1111111111111111111111111111111111111111111111111111111111111111 row 0, vexaai/vexa-bot: running imageID == built digest. SPAWN IMAGE - enumerated from the manifest's image_closure, invisible to compose ps
+2026-08-31T12:31:30Z V-stg-2 PASS tested@sha256:2222222222222222222222222222222222222222222222222222222222222222 row 0, vexaai/v012-meeting-api: running imageID == built digest
+2026-08-31T12:32:00Z V-stg-2 PASS tested@sha256:3333333333333333333333333333333333333333333333333333333333333333 row 0, vexa-lite: running imageID == built digest; 3/3 row0_required images match
+2026-08-31T12:33:00Z V-stg-3 PASS fill_line.py --check on this log: 0 malformed, 0 value ids outside vexa-internal-staging-2026-09 and the estate contract it binds
+2026-08-31T12:35:00Z V-est-1 PASS tested@sha256:2222222222222222222222222222222222222222222222222222222222222222 compose and lite stacks up from the candidate build; all services healthy before the probe started
+2026-08-31T12:35:30Z V-est-2 PASS tested@sha256:1111111111111111111111111111111111111111111111111111111111111111 compose PROBE FULL PASS S0-S8 incl. S5 transcribe (aaa-prb1388)
+2026-08-31T12:36:00Z V-est-2 PASS tested@sha256:3333333333333333333333333333333333333333333333333333333333333333 lite PROBE FULL PASS S0-S8 (aaa-prb1520) - first simultaneous both-lanes green
+2026-08-31T12:40:00Z V-est-7 PASS tree-diff assembled candidate vs main, set-compared: delta is the 35 files this manifest names and nothing else; every closure image built from d2624465
+2026-08-31T12:45:00Z V-est-6 WAIVED waived_by: Dmitriy Grankin - free-tier Zoom blocks web-client bots on any version (not a train defect); the Zoom surface needs a licensed room and the witness is deferred to a retry
+2026-08-31T12:50:00Z V-stg-6 PASS no car dropped at this station on this candidate; the row is satisfied vacuously and says so rather than being omitted
+2026-08-31T12:55:00Z V-stg-4 PASS every row of the PRD (derived_at 2026-08-31T09:00:00Z) is filled or waived by name; V-est-3 is inherited from station-4 and carries no fill here by design
+2026-08-31T13:00:00Z V-stg-5 PASS values_proven compiled from this log and the station-verdict body rendered over it

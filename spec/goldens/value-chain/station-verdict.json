@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "station": "station-3-bbb-staging",
+  "candidate_sha": "d262446521a71e37554ee1ffc560df3099e659fb",
+  "manifest_sha256": "77f998230fd44da35a8a719564c5f74e4dae0fe4447375f8d42a4adebea30797",
+  "contract_id": "vexa-internal-staging-2026-09",
+  "contract_sha256": "dfb751e516f048a43ca3786d38ac05bb45640c144a498997f59d45e4756fc04d",
+  "values_proven_sha256": "a6e99044922f5a7430c38ab462170f62fc2a2f3ec24f82038664849e0f6fb92e",
+  "prd_sha256": "aae00231388200c49e4d9ec07487e93018a219a9f4d6afa122eceb0e73e03b08",
+  "fills_sha256": "00e8b3799f09e148f1a8b18354532ba6b543b712b61f9de1b91038bd57be9fb4",
+  "verdict": "ELIGIBLE",
+  "admitted": {
+    "upstream_station": "station-2-candidate-checks",
+    "upstream_verdict_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inherited_values": [
+      "V-est-3"
+    ]
+  },
+  "rendered_at": "2026-08-31T13:00:00Z"
+}

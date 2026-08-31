@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://vexa.ai/spec/station-prd.schema.json",
+  "title": "Station PRD v1",
+  "description": "The MINT step of the station cell, as a document: one station's ex-ante work order, derived from its CONTRACT crossed with the CANDIDATE SUBSTRATE named by a consist manifest. It says what must be proven HERE to earn departure, and it is written BEFORE anything is exercised - a PRD assembled after the fills is a transcript, and a transcript cannot refuse. Rows key on the contract's value ids and on nothing else: per-train row ids (A1, F3) were the measured failure mode, because the same claim carried a different name on every train and therefore could not be verified downstream. A row whose value_id is not in the contract is a `proposed_value` and belongs in that array, where its only path into `rows` is a pull request against the contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "station",
+    "contract_id",
+    "contract_sha256",
+    "manifest_sha256",
+    "candidate_sha",
+    "rows",
+    "proposed_values",
+    "derived_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "station": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Which cell in the line is minting this (e.g. `station-3-staging`). One PRD per station per candidate; a station that mints twice for one candidate has re-cut, and the second PRD cites the new manifest_sha256."
+    },
+    "contract_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The contract this station is bound by (e.g. `vexa-internal-staging-2026-09`). The law half of the derivation."
+    },
+    "contract_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the contract file's bytes. The contract's identity IS its hash and rides in every verdict rendered under it, which is why a contract moves only by pull request - an edit invalidates the lineage on purpose and visibly."
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the consist manifest this PRD was derived against. The substrate half. A PRD and a station verdict that cite different manifests are describing different candidates, and that is a refusal, not a discrepancy."
+    },
+    "candidate_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Carried redundantly with the manifest so a reader can check the two agree without fetching the manifest. They must."
+    },
+    "rows": {
+      "type": "array",
+      "description": "The work order. One row per contract value this station must exercise on THIS candidate. Empty is legal only for a station whose contract has no required_values, which no contract in this line has.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value_id", "claim", "spec", "slot"],
+        "properties": {
+          "value_id": {
+            "type": "string",
+            "pattern": "^V-[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "The contract's `required_values[].id`. The ONLY key. Matched by exact string downstream, so a typo is a missing proof rather than a silent pass."
+          },
+          "claim": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The contract's claim, quoted. Copied so the PRD is readable standalone; a copy that diverges from the contract is a finding the contract wins."
+          },
+          "spec": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The MINIMAL exercise that proves this claim against this candidate - the derivation, calibrated to the obligation and not to the rig. This is the part the substrate contributes: the same value id gets a different spec on a candidate that touches the join module than on one that does not."
+          },
+          "slot": {
+            "enum": ["fills", "inherited", "waiver"],
+            "description": "Where the proof will come from. `fills` - this station exercises it. `inherited` - an upstream station already proved it and this station verifies the signed claim rather than re-proving it (the whole reason the chain is cheaper than N full validations). `waiver` - a named human will accept it unproven; the name lands in values_proven.waived_by, never here."
+          },
+          "inherited_from": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The upstream station whose signed station-verdict carries this value. Required in spirit on every `inherited` row: an inheritance with no named source cannot be verified."
+          },
+          "car": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The manifest car this row exists because of, when the row is cargo-driven rather than a standing property of the environment. `<owner>/<repo>#<number>`."
+          }
+        }
+      }
+    },
+    "proposed_values": {
+      "type": "array",
+      "description": "Claims this candidate makes that NO contract value covers. Mandatory as an array (write `[]` when there are none) because the alternative is what this whole design refuses: a station inventing a row for one train, proving it, and having it evaporate at departure because no contract names it. A proposed value is a pull request against the contract, and until that PR merges the row is not a gate.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value_id", "claim", "rationale"],
+        "properties": {
+          "value_id": {
+            "type": "string",
+            "pattern": "^V-[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "The id the value would carry if the contract accepted it. Reserved here so the PR and the PRD talk about the same thing."
+          },
+          "claim": { "type": "string", "minLength": 1 },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why the contract should carry this standing, beyond this train. A rationale that only argues for this candidate is an argument for a fill, not for a contract row."
+          },
+          "pr": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The contract pull request, once opened. Its absence means the value is still a proposal."
+          }
+        }
+      }
+    },
+    "derived_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "When the derivation ran. Ex-ante means this instant precedes every `ts` in the fills log, and that ordering is checkable."
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Holes this PRD carries forward from the previous train rather than silently dropping."
+    }
+  }
+}

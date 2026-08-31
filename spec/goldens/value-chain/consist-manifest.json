@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "train_id": "t26-01226",
+  "base_sha": "76723d23bf6681115885ccbeab2efdd64d532c30",
+  "candidate_sha": "d262446521a71e37554ee1ffc560df3099e659fb",
+  "cars": [
+    {
+      "pr": "Vexa-ai/vexa#1011",
+      "author": "DmitriyG228",
+      "commits": [
+        "020b3c57e4db1227bfa8db219f90982e0d971ef6"
+      ],
+      "surfaces": [
+        "docs/changelog.d"
+      ]
+    },
+    {
+      "pr": "Vexa-ai/vexa#1018",
+      "author": "Jacob Schooley",
+      "commits": [
+        "e38da23cbea6e428d1f7043e48ab80aca0b108bd",
+        "c03df55f2f8a9cd8e06205087e19bae2e0a031ce",
+        "df7e7b58f530d94d7e25c361a7a52db68dab6ace",
+        "24318665de77c78c01b45671cfe1e2a3f5ad4e16",
+        "5beeb3dc96ffba6d649f9d541e1a016cf746a2f6",
+        "eb4d82114182d09a6935be5aacbfc900d80c488b",
+        "aa09c79ed3f38d194b0208c18ff7ad4977ceb0d5"
+      ],
+      "surfaces": [
+        "core/meetings",
+        "docs/changelog.d"
+      ]
+    },
+    {
+      "pr": "Vexa-ai/vexa#1018",
+      "author": "DmitriyG228",
+      "commits": [
+        "ac85cfc81f97b9e459055ba36b26181a4ca81ca5",
+        "b7eee5506629aeaa2645fe3ab85dcee7ee516b50",
+        "0a72987970626dc2292db2b179768a75bc9bd587",
+        "61fe3a5e53f88a457847443ddebe1d70068513a1"
+      ],
+      "surfaces": [
+        "core/meetings"
+      ]
+    },
+    {
+      "pr": "unattributed",
+      "author": "Jacob Schooley",
+      "commits": [
+        "b440e2c8309e6e60b0a8dda56644ec91b46b21fd"
+      ],
+      "surfaces": [
+        "core/meetings"
+      ]
+    },
+    {
+      "pr": "Vexa-ai/vexa#1075",
+      "author": "DmitriyG228",
+      "commits": [
+        "f3071412a380e163b08f2a2b90f368ae508d9f33",
+        "93cc8d5123f549f0536cf6243a5542d36360fa2c",
+        "9cfed7c5c45ad75ab4e45a3ce6ede9d13e574fb1",
+        "d262446521a71e37554ee1ffc560df3099e659fb"
+      ],
+      "surfaces": [
+        "core/meetings"
+      ]
+    }
+  ],
+  "not_aboard": [
+    {
+      "pr": "Vexa-ai/vexa#1251",
+      "reason": "held for Vexa-ai/vexa#1075 by founder (\"hold for #1075\"): the Gemini click waits until typed join-failure evidence ships and prod can attribute @joining causes. #1075 is a NAMED BLOCKER and rides this train; the click does not."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1252",
+      "reason": "stealth reframed, decision open: founder asked for BOT_STEALTH default-off (~3 lines) + split from the #1251 stack, ships as operator opt-in only. Not re-submitted, so not aboard. Its jbschooley in-meeting popup-dismissal commit WAS lifted out of the stack as its own V-signed car and IS aboard."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1012",
+      "reason": "superseded by the shipped bot-name work (#1259, already released); nothing left to carry."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1019",
+      "reason": "changes-needed on review; the gmeet attribution slice does not enter until the author responds."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1013",
+      "reason": "witness gate: needs a 15-min founder witness that has not happened. It blocks #1014-#1022 and #1130, so all of those are out of this train too."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1014",
+      "reason": "behind the #1013 witness gate."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1015",
+      "reason": "behind the #1013 witness gate."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1016",
+      "reason": "behind the #1013 witness gate."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1017",
+      "reason": "behind the #1013 witness gate."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1020",
+      "reason": "behind the #1013 witness gate."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1021",
+      "reason": "behind the #1013 witness gate."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1022",
+      "reason": "behind the #1013 witness gate."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1130",
+      "reason": "behind the #1013 witness gate."
+    },
+    {
+      "pr": "e1103ef4",
+      "reason": "the #1251 FSM joining->needs_help transition commit: NOT cherry-picked. The candidate HARDENS AGAINST it instead (93cc8d51 conditions reached_lobby on how needs_help was entered), so the edge can land later without silently mis-filing our own defects as host_action. A3 attempt 1 proved the gap live; the edge itself is still #1251's to ship."
+    },
+    {
+      "pr": "Vexa-ai/vexa#1011",
+      "reason": "MERGED to main on 2026-08-31 (main 76723d23, under Jacob Schooley's own authorship) and is therefore in the BASE, not in the candidate. Listed here because the fills log and the triage table both discuss it as cargo: it is aboard the train, not aboard this diff. Only its reworded changelog fragment (020b3c57) rides the candidate."
+    }
+  ],
+  "image_closure": [
+    {
+      "image": "vexaai/vexa-bot",
+      "dockerfile": "core/meetings/services/bot/Dockerfile",
+      "built_by": "runtime-spawn (make bot / station build) \u2014 NOT a compose service",
+      "row0_required": true,
+      "reason": "SPAWN IMAGE \u2014 forced into the closure and never waivable: it is not a compose service and `compose ps` cannot see it. 33 changed path(s) under core, core/meetings/services/bot; first: core/meetings/contracts/lifecycle.v1/README.md"
+    },
+    {
+      "image": "vexaai/v012-meeting-api",
+      "dockerfile": "core/meetings/services/meeting-api/Dockerfile",
+      "built_by": "compose:meeting-api",
+      "row0_required": true,
+      "reason": "6 changed path(s) under core/meetings/services/meeting-api, core/meetings/services/meeting-api/src; first: core/meetings/services/meeting-api/src/meeting_api/lifecycle/README.md"
+    },
+    {
+      "image": "vexa-lite",
+      "dockerfile": "deploy/lite/Dockerfile.lite",
+      "built_by": "make -C deploy/lite",
+      "row0_required": true,
+      "reason": "33 changed path(s) under core, core/meetings/services/meeting-api/src; first: core/meetings/contracts/lifecycle.v1/README.md"
+    }
+  ],
+  "generated_at": "2026-08-31T11:52:54Z",
+  "generator": "render-manifest.py/1.0 (biz:skills/lifecycle/deliver/bin)",
+  "notes": [
+    "1 of 17 commits carry no PR reference (no trailer, no `(#N)` subject) and were grouped as `unattributed` by author. Machine attribution needs a commit trailer; supply --attribution to override.",
+    "35 file(s) changed between origin/main and train-01226b."
+  ]
+}
