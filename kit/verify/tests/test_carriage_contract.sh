@@ -24,8 +24,8 @@
 #      an audit has to be able to open the file the hash refers to;
 #   3. the carriage keys are actually READ, not merely tolerated: a carriage
 #      block that demands a different publication mode still refuses;
-#   4. `required_values[]` is not evaluated here, and the run SAYS so rather
-#      than passing over it in silence.
+#   4. `required_values[]` goes unadjudicated only where the contract does not
+#      ask for it, and the run SAYS so rather than passing over it in silence.
 #
 # Offline. `oras` and `cosign` are stubbed, exactly as in test_estate_verify.sh.
 set -euo pipefail
@@ -115,9 +115,20 @@ echo "$WRONG" | grep -q "your policy requires 'published'" \
   || fail "the refusal does not name the carriage clause that caused it"
 echo "  3 OK  a carriage clause still refuses — the keys adjudicate"
 
-# 4 · required_values[] is out of scope HERE, and the run says so
-echo "$CARR" | grep -q "required_values\[\] is NOT evaluated by this verifier" \
-  || fail "the run does not state that required_values[] went unevaluated — a silent omission reads as a pass"
-echo "  4 OK  the unevaluated half is declared, not skipped in silence"
+# 4 · required_values[] goes unadjudicated ONLY where the contract does not ask
+#     for it, and the run says so. This fixture's carriage omits
+#     `require_entry_values_proven`, so its proof half is genuinely out of scope
+#     — but silence would be indistinguishable from a pass, which is the
+#     property this check has always been about.
+#
+#     Until 2026-08-31 the verifier printed the unevaluated note UNCONDITIONALLY,
+#     including against the live record, which sets the clause true and lists
+#     seven required values. kit/verify/tests/test_values_proven.sh owns the
+#     enforcing case; this one holds the line that the silence stays declared.
+echo "$CARR" | grep -q "contract does not set require_entry_values_proven" \
+  || fail "the run does not state that required_values[] went unadjudicated — a silent omission reads as a pass"
+echo "$CARR" | grep -q "required_values\[\] is NOT adjudicated by this run" \
+  || fail "the note does not name what went unadjudicated"
+echo "  4 OK  the unadjudicated half is declared, not skipped in silence"
 
 echo "test_carriage_contract.sh: all checks passed"

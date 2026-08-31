@@ -315,16 +315,110 @@ if [ -n "$POLICY" ] && [ -f "$POLICY" ]; then
   # recomputed: a verdict names the contract a human can open in the ledger,
   # not a derived file that exists for four seconds inside a pod.
   #
-  # `required_values[]` is NOT evaluated here, by decision — that is a separate
-  # step with its own evidence model. This block makes the carriage half
-  # readable and changes nothing else.
+  # `required_values[]` IS evaluated here as of 2026-08-31 — see §6b, which
+  # reverses the earlier decision to leave it alone. The flatten keeps
+  # `required_values[]` intact (only `carriage` is dissolved), so §6b reads it
+  # off the working copy exactly as it stands in the record.
   if jq -e 'has("carriage")' "$POLICY" >/dev/null 2>&1; then
     # Written into the working directory, which is already the cwd — a
     # "$WORKDIR/…" path would be wrong for a relative --workdir.
     jq '.carriage as $c | del(.carriage) | . + $c' "$POLICY" > ".policy-flat.json"
     POLICY="$PWD/.policy-flat.json"
     echo "note  contract carries a carriage{} block; its keys are read as the entry checks below"
-    echo "note  required_values[] is NOT evaluated by this verifier — the contract's proof half is adjudicated elsewhere"
+  fi
+
+  # ------------------------------------- 6b · required_values[], adjudicated
+  #
+  # THE CLAUSE NOTHING READ. `carriage.require_entry_values_proven` has been
+  # true on the live `vexa-internal` record since the 2026-09 shape landed, and
+  # until 2026-08-31 it was VOID in both directions: the publisher wrote no
+  # values_proven block and this verifier said, in its own transcript, that
+  # `required_values[]` was not evaluated. A contract demanding proof of seven
+  # values admitted an entry that proved none of them, and every run printed a
+  # roster of green ticks for the carriage half while the proof half was not a
+  # check at all. That is the worst failure shape this codebase names elsewhere:
+  # a clause that reads as enforcement while enforcing nothing.
+  #
+  # WHAT THIS CAN AND CANNOT DO, said out loud so the OK lines are not read as
+  # more than they are. This is a shell in a Job. It cannot deploy a platform,
+  # join a meeting, or witness a transcript, so it CANNOT re-prove a value. What
+  # it checks is that the signed entry CLAIMS each required value, that the
+  # claim names a station, that a `proven` claim carries evidence, that a
+  # `waived` claim names the human who granted it, and that evidence citing an
+  # image digest cites one this entry actually ships. A weaker claim than
+  # "these values hold" — and labelled as one — but it is the difference
+  # between an unevidenced entry being refused and being admitted in silence.
+  #
+  # FAIL-CLOSED BY DESIGN, INCLUDING AGAINST WHAT IS ALREADY PUBLISHED. Every
+  # entry through seq-11 predates the block and carries none, so this check
+  # refuses all of them against the live contract. That is the correct reading
+  # of a contract that has demanded this since 2026-09: the remedy is to
+  # publish an entry that carries the proof, not to widen the contract.
+  if [ "$(jq -r '.require_entry_values_proven // false' "$POLICY")" = "true" ]; then
+    n_vals=$(jq -r '[.required_values[]? | select(.enforcement == "required")] | length' "$POLICY")
+    if [ "$n_vals" -eq 0 ]; then
+      echo "note  contract requires entry values_proven but names no required_values[] row with enforcement 'required' — nothing to adjudicate"
+    fi
+    if ! jq -e 'has("values_proven")' entry.json >/dev/null 2>&1; then
+      echo "note  this entry carries NO values_proven block. Entries published before 2026-08-31"
+      echo "note  predate it; the refusal below is the contract being read, not a new demand."
+    fi
+    jq -r '.images[].index_digest' entry.json | sort -u > .vp-entry-digests
+    # The id list goes through a FILE, not a pipe. `jq | while read` runs the
+    # loop body in a subshell, where every fail() increments a copy of FAILED
+    # that dies with the subshell — the verdict would print NOT ELIGIBLE's
+    # reasons and then exit ELIGIBLE. Redirecting from a file keeps the loop in
+    # this shell, so the counter the verdict reads is the one the checks wrote.
+    jq -r '.required_values[]? | select(.enforcement == "required") | .id' "$POLICY" > .vp-required-ids
+    while IFS= read -r vid; do
+      [ -n "$vid" ] || continue
+      row=$(jq -c --arg id "$vid" '[.values_proven[]? | select(.id == $id)] | .[0] // empty' entry.json)
+      if [ -z "$row" ]; then
+        fail "values: $vid is REQUIRED by contract $CONTRACT_ID and this entry proves nothing about it"
+        continue
+      fi
+      vv=$(printf '%s' "$row" | jq -r '.verdict // ""')
+      vst=$(printf '%s' "$row" | jq -r '.station // ""')
+      if [ -z "$vst" ]; then
+        fail "values: $vid names no station — an unattributable proof is not a proof"
+        continue
+      fi
+      case "$vv" in
+        proven)
+          n_ev=$(printf '%s' "$row" | jq -r '.evidence // [] | length')
+          if [ "$n_ev" -eq 0 ]; then
+            fail "values: $vid claims 'proven' with no evidence row — an assertion, not a proof"
+            continue
+          fi
+          miss=""
+          for sd in $(printf '%s' "$row" | jq -r '.evidence[]? | .subject_digest // empty'); do
+            grep -qxF "$sd" .vp-entry-digests || miss="$miss $sd"
+          done
+          if [ -n "$miss" ]; then
+            fail "values: $vid cites evidence against image digest(s)$miss, which this entry does not ship — evidence about another release"
+            continue
+          fi
+          ok "values: $vid proven by station '$vst' ($n_ev evidence row(s))"
+          ;;
+        waived)
+          wby=$(printf '%s' "$row" | jq -r '.waived_by // ""')
+          if [ -z "$wby" ]; then
+            fail "values: $vid is waived by nobody — an anonymous waiver is an omission with a label"
+          else
+            ok "values: $vid WAIVED by $wby (station '$vst') — accepted unproven, on the record"
+          fi
+          ;;
+        *)
+          fail "values: $vid carries verdict '$vv'; only 'proven' or 'waived' answers a required value"
+          ;;
+      esac
+    done < .vp-required-ids
+    for adv in $(jq -r '.required_values[]? | select(.enforcement != "required") | .id' "$POLICY"); do
+      st=$(jq -r --arg id "$adv" '[.values_proven[]? | select(.id == $id)] | .[0].verdict // "unclaimed"' entry.json)
+      echo "note  values: $adv is advisory in this contract — entry says '$st'; not gating"
+    done
+  else
+    echo "note  contract does not set require_entry_values_proven; required_values[] is NOT adjudicated by this run"
   fi
 
   for kind in $(jq -r '.require_evidence_kinds[]? // empty' "$POLICY"); do

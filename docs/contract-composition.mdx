@@ -83,8 +83,12 @@ gap is a deliberate debt, named here rather than left for a reader to trip over.
 The definition of the filled shape is **`spec/filled-contract.schema.json`** — everything above is a
 reading of that file, not a second copy of it. It is committed with this page in the seq-7 respin and
 is not on `main` yet. As of that turn it **defines** the document and validates instances offline;
-the in-cluster verifier does not evaluate it, and the gate still admits an entry on its carriage
-block alone.
+the in-cluster verifier does not evaluate the filled contract. Since 2026-08-31 the gate no longer
+admits an entry on its carriage block alone: where the carriage sets `require_entry_values_proven`,
+the verifier adjudicates `required_values[]` against the entry's own `values_proven` block, one
+roster line per value id. That is a narrower thing than reading a filled contract — it checks that a
+named station claimed each required value and carried evidence for the claim, not that the claim is
+true — but the clause is no longer void.
 
 ## What format a contract is
 
@@ -260,9 +264,11 @@ Three things are visible in that paragraph and in no JSON diff: what is enforced
 `contract compile`, and contracts keyed to a channel rather than to an estate are decided and
 unimplemented; what runs today is the flat shape above. The filled shape is **defined** —
 `spec/filled-contract.schema.json` is committed here and validates instances offline — but nothing
-produces one: the seq-7 instance is authored **by hand**, the in-cluster verifier does not evaluate
-it, and the gate still admits an entry on its carriage block alone, so required values are checked
-by script rather than by reading demand rows against proof rows in one pass. See
+produces one: the seq-7 instance is authored **by hand** and the in-cluster verifier does not
+evaluate it. What the gate does read, since 2026-08-31, is the entry's own `values_proven` block
+against the contract's `required_values[]` — so required values are checked by roster rather than
+by reading demand rows against proof rows in one pass, and an entry that answers none of them is
+refused instead of admitted on its carriage block alone. See
 [the evidence model](evidence-model) for the full per-element state.
 </Note>
 
