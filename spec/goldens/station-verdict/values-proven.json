@@ -1,0 +1,31 @@
+[
+ {
+  "id": "V-fix-1",
+  "verdict": "proven",
+  "evidence": [
+   {
+    "what": "2026-08-31T08:0xZ E0 PASS  vexa-verify.sh --station fixture -> \"VERDICT: ELIGIBLE\"; entry digest deadbeef",
+    "ref": "kit/verify/tests/fixtures/values-proven/row-fills.log",
+    "tested_at": "2026-08-31T08:00:00Z"
+   },
+   {
+    "what": "2026-08-31T09:0xZ E5 PASS  post-sync row0 from RUNNING containers: every imageID matches the entry",
+    "ref": "kit/verify/tests/fixtures/values-proven/row-fills.log",
+    "tested_at": "2026-08-31T09:00:00Z"
+   }
+  ],
+  "station": "vexa-staging-fixture"
+ },
+ {
+  "id": "V-fix-3",
+  "verdict": "proven",
+  "evidence": [
+   {
+    "what": "2026-08-31T09:3xZ F0 PASS  FULL sweep: 18/18 running containers' imageIDs are in entry images[]",
+    "ref": "kit/verify/tests/fixtures/values-proven/row-fills.log",
+    "tested_at": "2026-08-31T09:30:00Z"
+   }
+  ],
+  "station": "vexa-staging-fixture"
+ }
+]

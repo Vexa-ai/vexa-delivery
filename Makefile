@@ -67,6 +67,7 @@ test-verify:
 	bash kit/verify/tests/test_carriage_contract.sh
 	bash kit/verify/tests/test_verdict_wiring.sh
 	bash kit/verify/tests/test_values_proven.sh
+	bash kit/verify/tests/test_station_verdict.sh
 
 # Channel-entry goldens live one level down, per release: spec/goldens/<release>/entry.json.
 # Find them; refuse to pass on an empty set (a bare glob silently matched nothing).

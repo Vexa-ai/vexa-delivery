@@ -265,6 +265,7 @@
               "witness",
               "soak",
               "station_gate",
+              "station_verdict",
               "security_hardening",
               "sbom",
               "other"

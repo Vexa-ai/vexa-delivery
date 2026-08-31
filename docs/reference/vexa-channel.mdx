@@ -320,8 +320,8 @@ usage: vexa-channel platform-entry [-h] --spec SPEC --validation-contract VALIDA
                                    [--publisher PUBLISHER] [--approved-by APPROVED_BY]
                                    [--approval-receipt APPROVAL_RECEIPT]
                                    [--extra-evidence EXTRA_EVIDENCE]
-                                   [--values-proven VALUES_PROVEN] [--expires-days EXPIRES_DAYS]
-                                   --out OUT
+                                   [--values-proven VALUES_PROVEN] [--station-verdict DIR]
+                                   [--expires-days EXPIRES_DAYS] --out OUT
 
 options:
   -h, --help            show this help message and exit
@@ -348,6 +348,15 @@ options:
                         values_proven. A contract whose carriage sets require_entry_values_proven
                         refuses an entry that omits it. Build one from a station's committed fills
                         with publisher/vexa_values_proven.py.
+  --station-verdict DIR
+                        a directory (or the file itself) holding station-verdict.json and its
+                        station-verdict.json.sigstore.json, as written by
+                        publisher/vexa_station_verdict.py. Both files ride the entry's evidence
+                        dir; the statement is evidence kind 'station_verdict'. A downstream
+                        contract's require_attestations: [{kind: station-verdict, station: S}]
+                        refuses an entry that does not carry S's. Repeatable, once per station;
+                        the verdict's candidate_sha must be this entry's release.source_sha and
+                        its values_proven_sha256 must be this entry's block.
   --expires-days EXPIRES_DAYS
   --out OUT
 ```

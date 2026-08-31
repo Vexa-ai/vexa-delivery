@@ -1,0 +1,11 @@
+{
+ "schema_version": 1,
+ "station": "vexa-staging-fixture",
+ "candidate_sha": "0000000000000000000000000000000000000000",
+ "manifest_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+ "contract_id": "fixture-estate-station-verdict-2026-09",
+ "contract_sha256": "d99473a24cf127401a1e1e0143d0939e59d329427d5a53d6ad121faeac5f87a6",
+ "values_proven_sha256": "5785b78447cd59ffef1dc81e8f7b249745191290e3e5d0adf50ffbd1da01f23a",
+ "verdict": "ELIGIBLE",
+ "rendered_at": "2026-08-31T11:59:38Z"
+}

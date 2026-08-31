@@ -649,6 +649,37 @@ def load_values_proven(path):
     return check_values_proven(json.loads(pathlib.Path(path).read_text()), str(path))
 
 
+def canonical_values_proven(rows):
+    """The one definition of what a station's signature is OVER.
+
+    A station verdict (spec/station-verdict.schema.json) carries
+    `values_proven_sha256`; the in-cluster verifier recomputes it from the
+    entry and refuses a mismatch. That check only means anything if both sides
+    serialise the block identically, so the canonical form is defined ONCE,
+    here, beside the block's own shape rules:
+
+      * `sort_keys=True`            == `jq -S` (sorts object keys recursively)
+      * `separators=(",", ":")`     == `jq -c` (no whitespace)
+      * `ensure_ascii=False`        == jq's raw UTF-8 output
+      * no trailing newline         == the verifier's `tr -d '\\n'`
+
+    NOT the bytes of the file the station wrote: `platform-entry` re-serialises
+    the block when it embeds it, so a file hash would mismatch on every honest
+    entry and the check would have to be turned off to ship anything. Array
+    order is preserved on both sides, so reordering the block is a different
+    block — which is right, because it is different bytes in the entry.
+
+    The agreement with jq is a TESTED property (publisher/tests, and end to end
+    in kit/verify/tests/test_station_verdict.sh), not an assumption about two
+    JSON encoders happening to match.
+    """
+    return json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def canonical_values_proven_sha256(rows):
+    return hashlib.sha256(canonical_values_proven(rows).encode("utf-8")).hexdigest()
+
+
 def schema_validate(entry):
     """C9 — the assembled entry validates against the sealed schema."""
     spec_dir = pathlib.Path(__file__).resolve().parent.parent / "spec"
@@ -2524,6 +2555,122 @@ def _estate_images(spec):
     return rows
 
 
+STATION_VERDICT_NAME = "station-verdict.json"
+
+
+def _verdict_slug(station):
+    """The evidence filename carries the station, so two stations' verdicts can
+    ride one entry. The entry schema's `name` pattern is [A-Za-z0-9._-], and a
+    station name that survives sanitising to nothing is refused rather than
+    silently renamed to something a reader cannot trace back."""
+    slug = re.sub(r"[^A-Za-z0-9._-]", "-", station).strip("-")
+    if not slug:
+        raise CheckFailure("E5", f"station name {station!r} has no filename-safe characters")
+    return slug
+
+
+def attach_station_verdicts(dirs, entry, evidence_dir):
+    """Copy each station's signed verdict into the entry's evidence and return
+    the rows for it. E5.
+
+    Bound to the entry on two axes, and both are re-checked by the in-cluster
+    verifier:
+
+      candidate_sha        == entry.release.source_sha. A verdict is earned by
+                              exercising ONE candidate; without this the same
+                              signature reads as covering any later one.
+      values_proven_sha256 == the canonical hash of this entry's own
+                              values_proven block. This is what makes the
+                              signature a signature OVER THE PROOF rather than
+                              a signature next to it — swap the block after the
+                              station signed and the hashes part company.
+
+    A REFUSED verdict is not carried. It is a real, signed object and it is
+    exactly how a station says no; an entry is the thing that says yes.
+    """
+    import jsonschema
+
+    schema = json.loads(
+        (pathlib.Path(__file__).resolve().parent.parent / "spec" / "station-verdict.schema.json").read_text()
+    )
+    rows, seen = [], {}
+    for d in dirs:
+        src = pathlib.Path(d)
+        if src.is_dir():
+            src = src / STATION_VERDICT_NAME
+        sig = src.with_name(src.name + ".sigstore.json")
+        if not src.is_file():
+            raise CheckFailure("E5", f"no station verdict at {src}")
+        if not sig.is_file():
+            raise CheckFailure(
+                "E5",
+                f"{src} carries no signature at {sig.name}. An unsigned verdict is a text file: "
+                "sign it with `vexa_station_verdict.py sign` before carrying it.",
+            )
+        verdict = json.loads(src.read_text())
+        errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(verdict),
+                        key=lambda e: list(e.absolute_path))
+        if errors:
+            raise CheckFailure("E5", f"{src}: {errors[0].message}")
+
+        station = verdict["station"]
+        if station in seen:
+            raise CheckFailure(
+                "E5",
+                f"two verdicts claim station {station!r} ({seen[station]} and {src}). "
+                "One station, one departure.",
+            )
+        seen[station] = src
+
+        if verdict["verdict"] != "ELIGIBLE":
+            unanswered = ", ".join(u["id"] for u in verdict.get("unanswered_values") or [])
+            raise CheckFailure(
+                "E5",
+                f"{station} rendered {verdict['verdict']} ({unanswered or 'no ids named'}). "
+                "An entry does not carry a station's no — fix what is unproven and re-render.",
+            )
+
+        want_sha = entry["release"]["source_sha"]
+        if verdict["candidate_sha"] != want_sha:
+            raise CheckFailure(
+                "E5",
+                f"{station}'s verdict is about candidate {verdict['candidate_sha']}, this entry "
+                f"ships {want_sha}. A verdict earned on another candidate proves nothing here.",
+            )
+
+        block = entry.get("values_proven")
+        if block is None:
+            raise CheckFailure(
+                "E5",
+                f"{station}'s verdict binds to a values_proven block "
+                f"(sha256:{verdict['values_proven_sha256'][:12]}…) and this entry carries none. "
+                "Pass --values-proven with the block the station signed.",
+            )
+        got = canonical_values_proven_sha256(block)
+        if got != verdict["values_proven_sha256"]:
+            raise CheckFailure(
+                "E5",
+                f"{station}'s verdict signs values_proven sha256:{verdict['values_proven_sha256']} "
+                f"and this entry's block hashes to sha256:{got}. The signature is over a "
+                "different proof than the one being shipped.",
+            )
+
+        name = f"station-verdict-{_verdict_slug(station)}.json"
+        shutil.copy(src, evidence_dir / name)
+        shutil.copy(sig, evidence_dir / f"{name}.sigstore.json")
+        rows.append(evidence_row(
+            name, "station_verdict", evidence_dir / name, "application/json",
+            f"station {station} departed candidate {verdict['candidate_sha'][:12]} ELIGIBLE "
+            f"against contract {verdict['contract_id']}, over the values_proven block this "
+            f"entry carries",
+        ))
+        rows.append(evidence_row(
+            f"{name}.sigstore.json", "other", evidence_dir / f"{name}.sigstore.json",
+            "application/json", f"cosign bundle for {name}",
+        ))
+    return rows
+
+
 def cmd_platform_entry(args):
     import yaml
 
@@ -2630,8 +2777,10 @@ def cmd_platform_entry(args):
         rows = load_values_proven(args.values_proven)
         shipped = {i["index_digest"] for i in entry["images"]}
         for row in rows:
-            for ev in row.get("evidence") or []:
-                sd = ev.get("subject_digest")
+            # NOT `ev`: that name holds the evidence DIRECTORY three lines of
+            # scope above, and §E5 below needs it back.
+            for ev_row in row.get("evidence") or []:
+                sd = ev_row.get("subject_digest")
                 if sd and sd not in shipped:
                     raise CheckFailure(
                         "E4",
@@ -2640,6 +2789,19 @@ def cmd_platform_entry(args):
                         "an image this entry does not ship proves nothing about this entry.",
                     )
         entry["values_proven"] = rows
+
+    # E5 — the signed hand-off, carried INSIDE the entry beside the proof it
+    # signs. A downstream contract's `require_attestations: [{kind:
+    # station-verdict, station: S}]` is what makes this mandatory: it refuses
+    # cargo that never departed S.
+    #
+    # Every check here is made again by the in-cluster verifier, which is the
+    # copy that binds. These exist so a publisher learns at build time that
+    # they assembled an entry no subscriber can admit.
+    if args.station_verdict:
+        entry["evidence"].extend(
+            attach_station_verdicts(args.station_verdict, entry, ev)
+        )
 
     # An estate is MORE THAN ONE CHART, which the schema's singular `chart`
     # cannot express. The primary chart goes in `chart` so existing consumers
@@ -2685,6 +2847,12 @@ def cmd_platform_entry(args):
     else:
         print("  E4 no values_proven block — a contract that sets "
               "carriage.require_entry_values_proven will refuse this entry")
+    sv = [e for e in entry["evidence"] if e["kind"] == "station_verdict"]
+    if sv:
+        print(f"  E5 station verdicts carried: {', '.join(e['name'] for e in sv)}")
+    else:
+        print("  E5 no station verdict — a contract that requires one "
+              "(require_attestations: [{kind: station-verdict, …}]) will refuse this entry")
     return 0
 
 
@@ -3035,6 +3203,15 @@ def main(argv=None):
                          "entry's top-level values_proven. A contract whose carriage sets "
                          "require_entry_values_proven refuses an entry that omits it. Build one "
                          "from a station's committed fills with publisher/vexa_values_proven.py.")
+    pe.add_argument("--station-verdict", action="append", metavar="DIR",
+                    help="a directory (or the file itself) holding station-verdict.json and its "
+                         "station-verdict.json.sigstore.json, as written by "
+                         "publisher/vexa_station_verdict.py. Both files ride the entry's evidence "
+                         "dir; the statement is evidence kind 'station_verdict'. A downstream "
+                         "contract's require_attestations: [{kind: station-verdict, station: S}] "
+                         "refuses an entry that does not carry S's. Repeatable, once per station; "
+                         "the verdict's candidate_sha must be this entry's release.source_sha and "
+                         "its values_proven_sha256 must be this entry's block.")
     pe.add_argument("--expires-days", type=int, default=DEFAULT_EXPIRES_DAYS)
     pe.add_argument("--out", required=True)
 
