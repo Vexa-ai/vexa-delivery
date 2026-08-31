@@ -38,6 +38,36 @@ entries are published **before** production runs, not after.
    ride in the bundle. What a customer receives is the record of what our own
    chain already consumed and signed.
 
+### Amendment, 2026-08-31 — a second carrier, for the shape this channel actually publishes
+
+Steps 2–3 above describe the **accumulated** carrier: an in-toto statement pushed to
+`<channel>/attestations:<kind>.<release>` after the entry is sealed. That carrier is
+**structurally unavailable to an estate entry**, and `vexa-internal` publishes estate
+entries. `spec/station-verdict-attestation.schema.json` pins `predicate.release` to
+`^v[0-9]+\.[0-9]+\.[0-9]+$`, so `0.12.23-estate-20260829-seq7` cannot be minted into one —
+a boundary that is deliberate and pinned by `kit/verify/tests/test_verdict_out.sh` check
+4b. The consequence went unnoticed: `internal-prod.json` requires
+`{kind: station-verdict, station: vexa-staging}`, so against an estate entry that clause
+could only ever **refuse**. Not dormant — unsatisfiable.
+
+It also predates the proof half. The `values_proven` block landed on 2026-08-31, and the
+accumulated statement has nothing to bind it to: it carries a release string and a subject
+digest set, so a station's ELIGIBLE and the block the entry ships are merely adjacent.
+
+So a second carrier, for the same clause. The verdict
+(`spec/station-verdict.schema.json`) is rendered at DEPART by
+`publisher/vexa_station_verdict.py`, signed, and carried **inside** the entry as evidence
+of kind `station_verdict`. It binds to the candidate **commit** and to the sha256 of the
+entry's **own** `values_proven` block. `vexa-verify.sh` §6c reads it where it exists, falls
+back to the accumulated carrier where it does not, and says on the transcript which one
+adjudicated. The embedded verdict never falls back after a failure — a strong check with a
+weaker escape route is an optional check.
+
+Both carriers stay, because they answer different chain shapes: accumulated where the entry
+is sealed before the station runs, embedded where the station runs before the entry is
+minted. The second is the estate's shape, and the reason the clause had never once been
+satisfied.
+
 ## What this eliminates — and what it does not
 
 Proven the hard way during adoption: renaming the ApplicationSet's element `env`

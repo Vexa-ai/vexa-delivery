@@ -64,10 +64,21 @@ min_entry_seq: 1
 #   min_agents: 8
 #   max_open: {critical: 0, high: 0}
 
-# ---- accumulated attestations (the internal chain) --------------------------
-# Attestations that arrive AFTER an entry, as stations run — pulled from the
-# channel's attestations path, signature-verified, subject digests matched
-# against the entry. This is how "prod requires staging's verdict" is said:
+# ---- required attestations (the internal chain) ------------------------------
+# How "prod requires staging's verdict" is said. One clause, two carriers, and
+# the verifier reads whichever the entry actually uses:
+#
+#   EMBEDDED     the station's verdict rides INSIDE the entry as evidence of
+#                kind `station_verdict`. Binds to the candidate COMMIT and to
+#                the sha256 of the entry's own values_proven block, so swapping
+#                the proof after the station signed is caught. This is the shape
+#                a station produces when it runs BEFORE the entry is minted.
+#   ACCUMULATED  an in-toto statement pushed to the channel's attestations path
+#                AFTER the entry was sealed — signature verified, subject
+#                digests matched against the entry. Binds by release version and
+#                image digest set only; there is no values_proven yet to bind to.
+#
+# The embedded one wins where it exists, and never falls back after a failure.
 # require_attestations:
 #   - kind: station-verdict
 #     station: vexa-staging

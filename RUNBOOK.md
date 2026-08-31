@@ -361,8 +361,13 @@ verdict and its `sha256`, the contract id and `sha256`, and the reason — so
 "we accepted 0.12.24 on the 19th" is a record, not a memory.
 
 For the internal channel there is a machine gate under the human one: the prod
-contract requires `vexa-staging`'s signed `station-verdict` attestation for
-that exact release.
+contract requires `vexa-staging`'s signed `station-verdict` for that exact
+candidate. Since 2026-08-31 there are two carriers for it and the verifier
+reads both (§6c) — the verdict carried INSIDE the entry, which binds to the
+candidate commit and to the sha256 of the entry's own `values_proven` block;
+or, where none rides inside, the attestation accumulated on the channel beside
+the entry, which binds by release version and image digest set. The run says
+which one adjudicated.
 
 ### 2.4 Pin-back
 
@@ -833,11 +838,32 @@ python3 publisher/vexa_channel.py attest --kind station-verdict --release vX.Y.Z
   --metrics verdict.json --key <channel.key> --out work/att \
   --push <REG>/vexa/channel/vexa-internal
 
-#   ⛔ station verdicts are an OSS-RELEASE-TRAIN artifact. The predicate's
+#   ⛔ this ACCUMULATED form is an OSS-RELEASE-TRAIN artifact. The predicate's
 #   `release` must match ^v[0-9]+\.[0-9]+\.[0-9]+$, so an ESTATE release
-#   (0.12.23-estate-20260825) cannot carry one — by design: an estate channel
-#   gates on `validation_contract` instead (internal-estate.json). Pinned by
+#   (0.12.23-estate-20260825) cannot carry one. Pinned by
 #   kit/verify/tests/test_verdict_out.sh check 4b.
+#
+#   THE ESTATE USES THE OTHER CARRIER (2026-08-31). Because vexa-internal
+#   publishes estate entries, `internal-prod.json`'s require_attestations
+#   clause could only ever REFUSE them — unsatisfiable, not dormant. An estate
+#   station renders its verdict instead, and it rides INSIDE the next entry:
+#
+#     python3 publisher/vexa_values_proven.py --contract <estate contract> \
+#       --fills <ledger>/stations/<station>/row-fills.log --map <rows>.json \
+#       --station <station> --out values-proven.json
+#     python3 publisher/vexa_station_verdict.py render --station <station> \
+#       --candidate-sha <commit> --manifest-sha256 <consist manifest> \
+#       --contract <estate contract> --values-proven values-proven.json \
+#       --out work/verdict
+#     python3 publisher/vexa_station_verdict.py sign \
+#       --verdict work/verdict --key <channel.key>
+#     python3 publisher/vexa_channel.py platform-entry ... \
+#       --values-proven values-proven.json --station-verdict work/verdict
+#
+#   The verdict is COMPUTED from the contract and the block, never typed; it
+#   binds to the candidate commit and to the sha256 of the block the entry
+#   ships. Enforced by vexa-verify.sh §6c, tested end to end in
+#   kit/verify/tests/test_station_verdict.sh.
 
 # 3 prod station: its contract REQUIRES staging's signature
 #   (require_attestations: [{kind: station-verdict, station: vexa-staging}])

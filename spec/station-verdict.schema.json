@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vexa.ai/schemas/station-verdict.v1.json",
+  "title": "Vexa station verdict (the signed hand-off between stations)",
+  "description": "One station's signed statement that a named candidate, with a named proof block, satisfies a named contract. The delivery line's station cell is ADMIT -> MINT -> PROVE -> DEPART, and this object IS the departure: the values_proven block compiled at DEPART is the currency, and this is the signature over it. The next station ADMITS by verifying this, and never re-proves what it says. Distinct from spec/station-verdict-attestation.schema.json, which is the in-toto statement a station pushes BESIDE an already-published entry: that one accumulates on the channel and binds by release version and image digest set; this one rides INSIDE the entry's evidence and binds by candidate commit and by the sha256 of the entry's own values_proven block. Where both are available the verifier reads this one, because it is the stronger binding, and says so on the transcript.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "station",
+    "candidate_sha",
+    "manifest_sha256",
+    "contract_id",
+    "contract_sha256",
+    "values_proven_sha256",
+    "verdict",
+    "rendered_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "station": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The station making the claim, e.g. `vexa-staging-bbb`. A downstream contract's `require_attestations[].station` is matched against this exact string. An unattributable verdict is worse than none, because it looks signed."
+    },
+    "candidate_sha": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$",
+      "description": "The source commit of the candidate this station exercised. The consuming verifier requires it to equal the entry's `release.source_sha`, which is what stops a verdict earned by one candidate from being read as covering another."
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The consist manifest this station ran against — the enumerated set of artifacts the candidate consists of. Recorded here so a later reader can bind the verdict to the exact consist; NOTHING downstream compares it yet, because the manifest generator is lane C. The verifier prints it and does not gate on it, which is said out loud on the transcript rather than left to be inferred from a missing line."
+    },
+    "contract_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The id of the contract THIS station adjudicated against — its own, not the downstream one. A verdict is always a claim about a contract."
+    },
+    "contract_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the contract file's exact bytes, computed by the renderer from the file it read. A contract referenced by name is a promise; a contract referenced by hash is a claim that can be checked."
+    },
+    "values_proven_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the CANONICAL form of the values_proven block this verdict is about: the JSON array serialised with recursively sorted object keys, no whitespace, no trailing newline, UTF-8. Canonical rather than raw-file bytes because the block is re-serialised when it is embedded in the entry, so a file hash would never match the thing a subscriber actually holds. The consuming verifier recomputes it from the entry with `jq -Sc '.values_proven'` and refuses a mismatch: that is what binds this signature to the proof it claims to be signing."
+    },
+    "verdict": {
+      "enum": ["ELIGIBLE", "REFUSED"],
+      "description": "COMPUTED by the renderer from the contract and the proof block, never supplied by the operator: ELIGIBLE iff every `required_values[]` row with `enforcement: required` is answered by a `proven` or human-`waived` row. REFUSED exists so that a station's no is a signable object rather than a silence — a silence is indistinguishable from a station that never ran."
+    },
+    "unanswered_values": {
+      "type": "array",
+      "description": "The required value ids that made this verdict REFUSED, and what was found instead. Mandatory and non-empty on REFUSED, forbidden on ELIGIBLE: a refusal that does not name what it refused sends the reader back to guessing.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "reason"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "rendered_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verdict": { "const": "REFUSED" } }, "required": ["verdict"] },
+      "then": {
+        "required": ["unanswered_values"],
+        "properties": { "unanswered_values": { "minItems": 1 } }
+      }
+    },
+    {
+      "if": { "properties": { "verdict": { "const": "ELIGIBLE" } }, "required": ["verdict"] },
+      "then": { "properties": { "unanswered_values": { "maxItems": 0 } } }
+    }
+  ]
+}

@@ -19,7 +19,9 @@
 The machine-readable half of OUR OWN subscriptions to the `vexa-internal`
 channel — the same file format a customer pins (see
 `kit/verify/policy.example.yaml`). Staging accepts candidates; prod additionally
-requires staging's signed `station-verdict` attestation. Installed on the
+requires staging's signed `station-verdict` — carried inside the entry, or
+accumulated on the channel beside it (`vexa-verify.sh` §6c reads both and says
+which). Installed on the
 standing station as ConfigMaps `vexa-contract-staging` / `vexa-contract-prod`.
 Changing a file changes its sha256 — every verdict and approval names the
 contract id + hash it was rendered under, which is why an instance moves only

@@ -556,11 +556,38 @@ if [ -n "$POLICY" ] && [ -f "$POLICY" ]; then
     fi
   fi
 
-  # ---- accumulated attestations: signatures that arrived AFTER the entry ----
-  # The chain's core motion: a candidate entry is published once; stations sign
-  # verdicts beside it. A downstream contract names the attestations it
-  # requires; each is pulled from the channel, its signature verified, and its
-  # subjects matched digest-for-digest against this entry's images.
+  # ---- require_attestations: the signed hand-off between stations ----------
+  #
+  # THE CLAUSE, AND ITS TWO CARRIERS. `internal-prod.json` has required
+  # `{kind: station-verdict, station: vexa-staging}` since the prod migration:
+  # cargo that never departed staging must not sync to prod. There are two
+  # places a station's verdict can live, and this section reads both.
+  #
+  #   EMBEDDED (§6c, below)   the verdict rides INSIDE the entry, as evidence
+  #                           of kind `station_verdict`. Written by
+  #                           publisher/vexa_station_verdict.py, carried by
+  #                           `platform-entry --station-verdict`. Binds to the
+  #                           candidate COMMIT and to the sha256 of the entry's
+  #                           own values_proven block — the proof half lane A
+  #                           added on 2026-08-31. This is the shape the
+  #                           station cell produces: DEPART compiles
+  #                           values_proven and signs the verdict over it, and
+  #                           the entry that leaves carries both.
+  #
+  #   ACCUMULATED (below)     an in-toto statement pushed to the channel BESIDE
+  #                           an already-published entry, at
+  #                           `<channel>/attestations:<kind>.<release>`. Binds
+  #                           by release version and image digest set only:
+  #                           there is no values_proven to hash, because the
+  #                           entry was sealed before the station ran.
+  #
+  # ONE CLAUSE, ONE ADJUDICATION, AND THE RUN SAYS WHICH. The embedded verdict
+  # is the STRONGER binding, so it wins where it exists — and where it exists
+  # and fails, that is the answer: there is no fallback to the weaker carrier
+  # after a refusal, or the strong check would be optional in practice. Where
+  # no embedded verdict from the required station is present, the run says so
+  # on the transcript before reaching for the channel, so a reader never has to
+  # infer which carrier produced the OK lines below.
   n_req=$(jq -r '.require_attestations // [] | length' "$POLICY")
   if [ "$n_req" -gt 0 ]; then
     REL=$(jq -r '.release.version' entry.json)
@@ -569,6 +596,100 @@ if [ -n "$POLICY" ] && [ -f "$POLICY" ]; then
     while [ "$i" -lt "$n_req" ]; do
       akind=$(jq -r --argjson i "$i" '.require_attestations[$i].kind' "$POLICY")
       astation=$(jq -r --argjson i "$i" '.require_attestations[$i].station // empty' "$POLICY")
+
+      # ---------------- 6c · the embedded station verdict --------------------
+      if [ "$akind" = "station-verdict" ] && [ -n "$astation" ]; then
+        svname=""
+        jq -r '.evidence[] | select(.kind == "station_verdict") | .name' entry.json > .sv-names
+        while IFS= read -r cand; do
+          [ -n "$cand" ] || continue
+          [ -f "evidence/$cand" ] || continue
+          if [ "$(jq -r '.station // ""' "evidence/$cand")" = "$astation" ]; then
+            svname=$cand; break
+          fi
+        done < .sv-names
+
+        if [ -n "$svname" ]; then
+          svf="evidence/$svname"
+          ok "station-verdict: '$astation' rides inside this entry as $svname"
+
+          # SIGNATURE. Against the SAME pinned key the entry itself verified
+          # with (§2). That is single-key mode and it is a real limit: today a
+          # valid verdict is one the channel key signed, so this proves the
+          # verdict is OURS, not that station '$astation' specifically produced
+          # it. Per-station machine identities — a key that only the station's
+          # CI holds, so no verdict can be signed from a laptop — are lane F of
+          # the machinery program. Until they land, this check is labelled for
+          # what it is rather than read as more.
+          if [ ! -f "$svf.sigstore.json" ]; then
+            fail "station-verdict '$astation': $svname carries no signature bundle — an unsigned verdict is a text file"
+          elif cosign verify-blob --key "$PUBKEY" --bundle "$svf.sigstore.json" \
+                 --insecure-ignore-tlog=true "$svf" >/dev/null 2>&1; then
+            ok "station-verdict '$astation': signature verifies against the pinned channel key (single-key mode; per-station keys are lane F)"
+          else
+            fail "station-verdict '$astation': signature does NOT verify against the pinned channel key"
+          fi
+
+          # THE VERDICT ITSELF. REFUSED is a real signed object — the station
+          # saying no — and it must never admit anything.
+          sv_v=$(jq -r '.verdict // ""' "$svf")
+          if [ "$sv_v" = "ELIGIBLE" ]; then
+            ok "station-verdict '$astation': verdict ELIGIBLE"
+          else
+            jq -r '.unanswered_values[]? | "  unanswered: \(.id) — \(.reason)"' "$svf" >&2
+            fail "station-verdict '$astation': verdict '$sv_v' — the station that ran this candidate did not clear it"
+          fi
+
+          # CANDIDATE IDENTITY. An estate entry's `release.source_sha` IS the
+          # commit it was captured at (cmd_platform_entry writes src.commit
+          # into it), so this is the same fact on both sides and not a
+          # translation. Without it, one station run's signature reads as
+          # covering every later candidate.
+          sv_c=$(jq -r '.candidate_sha // ""' "$svf")
+          entry_c=$(jq -r '.release.source_sha // ""' entry.json)
+          if [ "$sv_c" = "$entry_c" ]; then
+            ok "station-verdict '$astation': candidate $(printf %.12s "$sv_c")… is this entry's source commit"
+          else
+            fail "station-verdict '$astation': signed for candidate $sv_c, this entry ships $entry_c — a verdict earned on another candidate"
+          fi
+
+          # THE BINDING THAT MATTERS. §6b checked that the entry's
+          # values_proven block is well-formed and covers the contract; this
+          # checks that the block a station SIGNED is the block being shipped.
+          # Without it the two halves are merely adjacent: swap the proof after
+          # departure and every other check still passes.
+          #
+          # Canonical form, defined once in publisher/vexa_channel.py
+          # (canonical_values_proven): `jq -Sc` sorts object keys recursively
+          # and emits no whitespace, matching Python's
+          # sort_keys/separators/ensure_ascii=False; `tr -d '\n'` drops jq's
+          # trailing newline, which the Python side never writes.
+          sv_h=$(jq -r '.values_proven_sha256 // ""' "$svf")
+          if ! jq -e 'has("values_proven")' entry.json >/dev/null 2>&1; then
+            fail "station-verdict '$astation': signs values_proven sha256:$(printf %.12s "$sv_h")… and this entry carries no values_proven block at all"
+          else
+            got_h=$(jq -Sc '.values_proven' entry.json | tr -d '\n' | sha256sum | cut -d' ' -f1)
+            if [ "$got_h" = "$sv_h" ]; then
+              ok "station-verdict '$astation': signed over THIS entry's values_proven (sha256:$(printf %.12s "$got_h")…)"
+            else
+              fail "station-verdict '$astation': signs values_proven sha256:$sv_h, this entry's block hashes to sha256:$got_h — the signature is over a different proof than the one shipped"
+            fi
+          fi
+
+          # Recorded, not gated, and said out loud so the silence is not read
+          # as a passed check. The contract pair is the UPSTREAM station's
+          # contract, which a subscriber does not hold and cannot re-hash. The
+          # manifest hash has nothing to compare against until the consist
+          # manifest generator lands (lane C).
+          echo "note  station-verdict '$astation' was rendered against contract $(jq -r '.contract_id' "$svf") @ sha256:$(jq -r '.contract_sha256' "$svf" | cut -c1-12)… (that station's own contract; not re-hashed here)"
+          echo "note  station-verdict '$astation' names consist manifest sha256:$(jq -r '.manifest_sha256' "$svf" | cut -c1-12)… — recorded, NOT compared: nothing downstream holds the manifest yet"
+
+          i=$((i+1)); continue
+        fi
+        echo "note  no station_verdict evidence from '$astation' rides inside this entry;"
+        echo "note  looking for an attestation accumulated on the channel instead."
+      fi
+
       atag="$akind.$REL"
       adir=".att-$i"; mkdir -p "$adir"
       # shellcheck disable=SC2086
