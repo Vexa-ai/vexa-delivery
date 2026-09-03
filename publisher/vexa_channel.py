@@ -1436,12 +1436,42 @@ CHART_COMPONENT_IMAGES = {
     "runtime": "vexaai/v012-runtime",
     "agentApi": "vexaai/v012-agent-api",
     "terminal": "vexaai/v012-terminal",
+    # The Minutes tier. Absent from this table until 2026-09-03, which is why every chart carrying
+    # flows reached a station gate with its six containers unpinned and was refused (S8) no matter
+    # what the publisher did — and the chart could not have taken the pin anyway: flows.image was a
+    # flat string there, and deep_merge of {"image": {"tag": ...}} over a string REPLACES it,
+    # dropping the repository silently. Both halves had to move; the chart half is
+    # Vexa-ai/vexa@flows-tier-publishable.
+    "flows": "vexaai/v012-flows",
 }
+
+# A component whose image entered the release set LATER than the oldest release this publisher can
+# still package. `chart` must keep working for v0.12.23/25/26, whose candidate maps carry exactly
+# ten images and cannot name flows — and it must NOT silently skip the pin for a release that
+# should have it. Floor mirrors Vexa-ai/vexa release/candidate-image-map.mjs FLOWS_REQUIRED_FROM.
+CHART_COMPONENT_SINCE = {"flows": "v0.12.27"}
 SPAWNED_IMAGES = {
     "browserImage": "vexaai/vexa-bot",
     "agentImage": "vexaai/v012-agent-api",
     "agentWorkerImage": "vexaai/v012-agent-worker",
 }
+
+
+def _version_tuple(version):
+    """(major, minor, patch) of a vX.Y.Z tag, or None when it is not that shape."""
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)$", str(version))
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def component_predates_image(version, component):
+    """True only when this release is PROVABLY older than the release that first published the
+    component's image. Unparseable versions answer False — fail closed, so an unrecognised version
+    demands the pin and refuses rather than shipping an unpinned tier."""
+    since = CHART_COMPONENT_SINCE.get(component)
+    if not since:
+        return False
+    a, b = _version_tuple(version), _version_tuple(since)
+    return bool(a and b and a < b)
 
 
 def build_pins(version, candidate_map):
@@ -1455,7 +1485,11 @@ def build_pins(version, candidate_map):
             raise CheckFailure("C5", f"chart needs {repo} but the candidate map lacks it")
         return f"{version}@{m['digest']}"
 
-    pins = {c: {"image": {"tag": ref_tag(repo)}} for c, repo in CHART_COMPONENT_IMAGES.items()}
+    pins = {}
+    for c, repo in CHART_COMPONENT_IMAGES.items():
+        if repo not in images and component_predates_image(version, c):
+            continue    # the image did not exist at this release; the tier is off in that chart
+        pins[c] = {"image": {"tag": ref_tag(repo)}}
     pins.setdefault("runtime", {}).update(
         {k: f"{repo}:{ref_tag(repo)}" for k, repo in SPAWNED_IMAGES.items()}
     )
