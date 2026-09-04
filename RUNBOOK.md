@@ -343,6 +343,66 @@ Admission verification runs again in production regardless.
 An unpinned prod reports `improper constraint: UNPINNED` at `Unknown`. **That
 is the gate, not a fault** — though the error text reads like one.
 
+### 2.2a · Pinning into a LIVE estate — the standard
+
+One `kubectl patch` rolls pods under whatever traffic the estate is carrying at
+that minute. Where that estate has users on it, the pin move above is not the
+whole move: these six run first, every time, no exceptions, and **the card
+carries the result**. Derived 2026-09-04 on our own estate, with 4 bots in
+meetings and ~35k gateway requests per 5 minutes.
+
+1. **Blast radius, from the render diff, not from memory.** Name every
+   Deployment and StatefulSet whose **pod template** differs between the
+   currently pinned entry and the candidate — digest, env, annotation, any of
+   them. Everything else is stated as **does not roll**, in those words. Bots
+   already in meetings survive only if the runtime does not roll: say which it
+   is, rather than leaving the reader to infer it.
+2. **Rollout invariants on every Deployment that owns a Service.** Read at
+   render time, before the pin: `strategy.rollingUpdate.maxUnavailable: 0`,
+   `maxSurge ≥ 1`, a real `readinessProbe`, and a `startupProbe` — or a
+   readiness probe whose failure budget (`failureThreshold × periodSeconds`) is
+   long enough to stand in for one. A Deployment missing them can take a
+   serving pod away and put back one that is about to fail; the estate loses
+   the surface between those two events. The checker is `P5 rollout-safety`
+   inside `platform-chart` (§ 1.3), **warn-only** today and blocking with
+   `--rollout-safety=block`.
+3. **Public-surface smoke at the exact digests, before the pin.** Through the
+   edge, not inside the cluster: health, the bot lifecycle end to end (request
+   → status → transcript → stop), a websocket subscribe, the admin routes, the
+   auth negatives (no token, wrong token, absent domain → 404), N-way
+   concurrency with a p95 — and a **route diff against what production serves
+   today**. A customer-facing route that disappeared or changed shape is a
+   finding that stops the pin; it is the one defect a green smoke will not show
+   you, because the smoke only asks about routes it knows.
+4. **Pre-pin conformance against the CURRENTLY pinned entry**, C7-ownership
+   included. `verify-cluster-conformance.py` (the operator-side runner that
+   drives this beat) compares the live objects with the entry that is pinned
+   *now*, and **C7 reads `metadata.managedFields`**: a field a pre-channel
+   `helm` still owns is a foreign field manager, and server-side apply will not
+   take it back. C1–C6 compare bytes and readiness and cannot see it. Run it
+   **before** the pin — after it, brownfield residue reads as a candidate
+   defect, and the fix is § 2.5 finding 4, in the chart.
+5. **A named rollback target.** The newest entry whose moving digests **all**
+   differ from the candidate's — never an intermediate entry that shares the
+   suspect image, which rolls back the version number and not the code. State
+   what else rolls back with it.
+6. **The operator names the window.** The card shows the live load at the
+   minute it was read, and the pin waits for the word — nobody schedules this
+   from the publishing side. During the roll: watch new-pod readiness and edge
+   5xx for the first minutes. Rollback is § 2.4, one line, measured at 26
+   seconds.
+
+THE CARD gains two lines when the estate has live users, and they sit with the
+rest of the pin card:
+
+```
+LIVE LOAD: <n> bots in meetings · <n> edge requests / 5 min (read <time>)
+ROLLS: <deployments whose pod template changes> · DOES NOT ROLL: <the rest> · ROLLBACK: <entry / chart version>
+```
+
+Both lines are read, not remembered: `LIVE LOAD` carries the minute it was read
+because a number without one is a guess, and `ROLLS` comes from step 1's diff.
+
 ### 2.3 Two approvals, by two parties
 
 They are not interchangeable, and conflating them is the error this section
@@ -386,7 +446,7 @@ restore. Check the migration notes in the release's evidence bundle first.
 Before a sync has ever run there is also a free exit: `argocd app delete
 --cascade=false`.
 
-### 2.5 Adopting an existing estate — three findings first
+### 2.5 Adopting an existing estate — four findings first
 
 From the prod migration plan (rung: PR-open
 [vexa-delivery-internal#39](https://github.com/Vexa-ai/vexa-delivery-internal/pull/39), **not executed** —
@@ -405,6 +465,18 @@ nothing migrated, adopted, patched, scaled or restarted):
 3. **The `vexa-platform-drift-detector` CronJob** runs `helm get manifest` +
    `kubectl diff` every 30 minutes and reports permanent drift the moment Helm
    stops being the source of truth. It already fails intermittently.
+4. **Fields the pre-channel `helm` still owns.** In a brownfield namespace the
+   old release manager remains the owner of individual fields it once set, and
+   **server-side apply will not remove a field it does not own** — so a
+   candidate that drops that field leaves the old value running, and the render
+   proof and the cluster disagree while every byte-comparing check says
+   CONFORMS. Two moves, both before the pin: **C7-ownership in the pre-pin
+   conformance run** (§ 2.2a step 4) surfaces the foreign manager by name, and
+   the residue is cleared **in the chart** —
+   `argocd.argoproj.io/sync-options: Replace=true` on the residue-bearing
+   Deployment, carried for exactly one entry and then removed. Never a
+   `kubectl patch`: a hand write into a live namespace is the break-glass § 4.4
+   refuses.
 
 ---
 
@@ -633,6 +705,23 @@ ApplicationSet (which `selfHeal` would itself contest) or `argocd app set
 ruling is that **break-glass moves into the prod-migration plan — prod does not
 migrate onto a mechanism whose failure mode is undefined.** Until it is built,
 step 4 is the only part this runbook can hold you to.
+
+**A break-glass proposal is a defect report against this channel** (founder
+ruling 2026-09-04: *"break glass means vexa-delivery failure — we will not be
+able to deliver to enterprises with break glass"*). Every prod write outside
+the pin that a delivery ever proposes is a gap in the channel, and it is closed
+**in the channel**, not by asking a human to approve the hand write. The night
+of 2026-09-04 proposed three and executed none; each had a chart answer:
+
+| What was proposed | The channel move instead |
+|---|---|
+| patch the Secret by hand — the chart could not carry the key | a **PreSync Job that mints it only if absent** (Vexa-ai/vexa-platform#403) |
+| call the internal endpoint by hand — a DB flag with no shipped opener | a **PostSync Job, GET-first and idempotent** (same PR) |
+| `kubectl patch` the object — a field a pre-channel `helm` still owns, which SSA will not remove | **`argocd.argoproj.io/sync-options: Replace=true`** on that Deployment for one entry, plus **C7-ownership failing pre-pin** so the residue is found before it matters (§ 2.5 finding 4) |
+
+The test is one question: *after this, does the next subscriber need a human at
+a keyboard in their namespace?* If yes, the channel is not delivering, and the
+fix belongs in the chart or in the publisher — not in a runbook step.
 
 **Cluster dead:** disaster recovery is a clean pull plus the secret store plus
 a database backup. That is the same statement as proof one in § 6.

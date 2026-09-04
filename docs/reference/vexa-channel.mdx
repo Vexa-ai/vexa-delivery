@@ -273,7 +273,8 @@ usage: vexa-channel platform-chart [-h] --release RELEASE --chart-dir CHART_DIR
                                    [--pin-set PIN_SET] [--values VALUES]
                                    [--pins-values PINS_VALUES] [--unpinnable REPO=REASON]
                                    [--chart-version CHART_VERSION] [--entry-seq ENTRY_SEQ]
-                                   --out-dir OUT_DIR [--push PUSH] [--insecure] [--no-verify-gate]
+                                   [--rollout-safety {warn,block}] --out-dir OUT_DIR [--push PUSH]
+                                   [--insecure] [--no-verify-gate]
 
 options:
   -h, --help            show this help message and exit
@@ -297,6 +298,13 @@ options:
                         carry — a values file cannot know its own future, and a stale entryTag
                         makes the PreSync gate verify the PREVIOUS entry's evidence (bbb station,
                         seq 7, 2026-08-29). Omitting it keeps the old behaviour and warns loudly.
+  --rollout-safety {warn,block}
+                        P5: every Deployment a rendered Service selects must carry maxUnavailable:
+                        0, maxSurge >= 1, a readinessProbe, and a startupProbe (or a readiness
+                        failure budget >= 60s) — the invariants that keep a pin from replacing a
+                        serving pod with one that is about to fail (RUNBOOK § 2.2a). `warn` prints
+                        the findings and packages anyway; `block` refuses. Recorded in the pins
+                        report under rollout_safety either way.
   --out-dir OUT_DIR
   --push PUSH           oci://host/path/charts destination
   --insecure

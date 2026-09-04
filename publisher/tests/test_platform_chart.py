@@ -6,6 +6,8 @@ exercised by hand against the real chart (see the PR that introduced it); these
 cover the pure functions that decide what gets pinned and what gets refused.
 """
 import argparse
+import contextlib
+import io
 import pathlib
 import shutil
 import subprocess
@@ -115,6 +117,158 @@ class TestUnpinnableSpec(unittest.TestCase):
         for spec in ("bitnami/kubectl", "bitnami/kubectl="):
             with self.assertRaises(vc.CheckFailure):
                 vc.parse_unpinnable([spec])
+
+
+def _manifests(*docs):
+    return "\n---\n".join(yaml.safe_dump(d) for d in docs)
+
+
+def _svc(name, selector, namespace=None):
+    meta = {"name": name}
+    if namespace:
+        meta["namespace"] = namespace
+    return {"apiVersion": "v1", "kind": "Service", "metadata": meta,
+            "spec": {"selector": selector}}
+
+
+def _dep(name, labels, containers=None, strategy=None, namespace=None):
+    meta = {"name": name}
+    if namespace:
+        meta["namespace"] = namespace
+    spec = {
+        "selector": {"matchLabels": labels},
+        "template": {"metadata": {"labels": labels},
+                     "spec": {"containers": containers if containers is not None else [
+                         {"name": "app",
+                          "readinessProbe": {"httpGet": {"path": "/health"}},
+                          "startupProbe": {"httpGet": {"path": "/health"}}}]}},
+    }
+    spec["strategy"] = strategy if strategy is not None else {
+        "type": "RollingUpdate", "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1}}
+    return {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": meta, "spec": spec}
+
+
+class TestRolloutSafety(unittest.TestCase):
+    """P5 — RUNBOOK § 2.2a. A Deployment that owns a Service and rolls without
+    these invariants can take a serving pod away before its replacement serves,
+    which is the one thing a pin into a LIVE estate must not do."""
+
+    def test_a_conforming_deployment_produces_no_finding(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}), _dep("api", {"app": "api"})))
+        self.assertEqual(r["findings"], [])
+        self.assertEqual([c["deployment"] for c in r["checked"]], ["api"])
+        self.assertEqual(r["checked"][0]["services"], ["api"])
+
+    def test_a_deployment_no_service_selects_is_out_of_scope(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}),
+            _dep("worker", {"app": "worker"}, strategy={"type": "Recreate"})))
+        self.assertEqual(r["findings"], [])
+        self.assertEqual(r["out_of_scope"], ["worker"])
+
+    def test_default_strategy_is_a_finding_because_it_defaults_to_25_percent(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}), _dep("api", {"app": "api"}, strategy={})))
+        self.assertEqual(len(r["findings"]), 1)
+        self.assertIn("no strategy.rollingUpdate", r["findings"][0]["missing"][0])
+
+    def test_recreate_is_named_as_such(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}),
+            _dep("api", {"app": "api"}, strategy={"type": "Recreate"})))
+        self.assertIn("not RollingUpdate", r["findings"][0]["missing"][0])
+
+    def test_nonzero_max_unavailable_and_zero_surge_are_both_named(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}),
+            _dep("api", {"app": "api"}, strategy={
+                "type": "RollingUpdate",
+                "rollingUpdate": {"maxUnavailable": 1, "maxSurge": 0}})))
+        missing = " · ".join(r["findings"][0]["missing"])
+        self.assertIn("maxUnavailable", missing)
+        self.assertIn("maxSurge", missing)
+
+    def test_percentage_forms_are_read_the_way_kubernetes_reads_them(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}),
+            _dep("api", {"app": "api"}, strategy={
+                "type": "RollingUpdate",
+                "rollingUpdate": {"maxUnavailable": "0%", "maxSurge": "25%"}})))
+        self.assertEqual(r["findings"], [])
+
+    def test_missing_readiness_probe_is_a_finding(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("flows-api", {"app": "flows-api"}),
+            _dep("flows-api", {"app": "flows-api"}, containers=[{"name": "app"}])))
+        self.assertIn("no readinessProbe", r["findings"][0]["missing"])
+
+    def test_no_startup_probe_needs_a_sixty_second_readiness_budget(self):
+        thin = [{"name": "app",  # defaults: 3 x 10s = 30s, under the budget
+                 "readinessProbe": {"httpGet": {"path": "/health"}}}]
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}), _dep("api", {"app": "api"}, containers=thin)))
+        self.assertIn("30s", " ".join(r["findings"][0]["missing"]))
+
+        fat = [{"name": "app", "readinessProbe": {
+            "httpGet": {"path": "/health"}, "failureThreshold": 12, "periodSeconds": 5}}]
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}), _dep("api", {"app": "api"}, containers=fat)))
+        self.assertEqual(r["findings"], [])
+
+    def test_a_service_in_another_namespace_does_not_select_these_pods(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}, namespace="other"),
+            _dep("api", {"app": "api"}, namespace="vexa", strategy={"type": "Recreate"})))
+        self.assertEqual(r["findings"], [])
+        self.assertEqual(r["out_of_scope"], ["api"])
+
+    def test_a_selector_must_be_a_subset_of_the_pod_labels(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api", "tier": "edge"}),
+            _dep("api", {"app": "api"}, strategy={"type": "Recreate"})))
+        self.assertEqual(r["out_of_scope"], ["api"])
+
+    def test_a_selectorless_service_selects_nothing(self):
+        r = vc.check_rollout_safety(_manifests(
+            _svc("external", {}),
+            _dep("api", {"app": "api"}, strategy={"type": "Recreate"})))
+        self.assertEqual(r["out_of_scope"], ["api"])
+
+
+class TestRolloutSafetyEmission(unittest.TestCase):
+    """Warn-only is the default; --rollout-safety=block turns the same finding
+    into a refusal. The finding itself is identical either way."""
+
+    def setUp(self):
+        self.report = vc.check_rollout_safety(_manifests(
+            _svc("flows-api", {"app": "flows-api"}),
+            _dep("flows-api", {"app": "flows-api"}, containers=[{"name": "app"}])))
+
+    def _emit(self, mode):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            vc.emit_rollout_safety(self.report, mode)
+        return buf.getvalue()
+
+    def test_warn_prints_and_does_not_refuse(self):
+        out = self._emit("warn")
+        self.assertIn("P5 WARN: flows-api: no readinessProbe", out)
+        self.assertIn("WARN-ONLY", out)
+
+    def test_block_refuses_and_names_the_deployment(self):
+        with self.assertRaises(vc.CheckFailure) as cm:
+            self._emit("block")
+        self.assertEqual(cm.exception.check, "P5")
+        self.assertIn("flows-api", str(cm.exception))
+
+    def test_a_clean_render_says_so(self):
+        clean = vc.check_rollout_safety(_manifests(
+            _svc("api", {"app": "api"}), _dep("api", {"app": "api"})))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            vc.emit_rollout_safety(clean, "block")
+        self.assertIn("P5 OK", buf.getvalue())
 
 
 class TestEntryTagStamp(unittest.TestCase):

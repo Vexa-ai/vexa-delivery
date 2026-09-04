@@ -2179,16 +2179,213 @@ def check_render_coverage(images, assignments_by_repo, unpinnable):
         )
 
 
-def rendered_images(chart, values_files):
-    """Every `image:` a `helm template` of this chart emits. Local, no cluster."""
+def render_chart(chart, values_files):
+    """`helm template` of this chart, as text. Local, no cluster.
+
+    One render feeds every check that reads the manifests — P3 (images) and P5
+    (rollout safety) both read THIS string, so they can never disagree about
+    what the package renders.
+    """
     cmd = ["helm", "template", "vexa-platform", str(chart)]
     for f in values_files:
         cmd += ["-f", str(f)]
-    out = run(cmd).stdout
+    return run(cmd).stdout
+
+
+def images_in_render(out):
+    """Every `image:` in a rendered manifest stream."""
     return sorted({
         m.group(1).strip().strip('"').strip("'")
         for m in re.finditer(r"^\s*image:\s*(.+?)\s*$", out, re.M)
     })
+
+
+def rendered_images(chart, values_files):
+    """Every `image:` a `helm template` of this chart emits. Local, no cluster."""
+    return images_in_render(render_chart(chart, values_files))
+
+
+# ------------------------------------------------------- P5 · rollout safety
+#
+# WHY THIS EXISTS (RUNBOOK § 2.2a, founder ruling 2026-09-04: "we have people
+# actively using the service now, so be careful not to break the service").
+#
+# A pin into an estate with live users rolls pods under live traffic. A
+# Deployment that owns a Service and does NOT carry
+#
+#   strategy.rollingUpdate.maxUnavailable: 0   (never take a serving pod away
+#                                               before its replacement serves)
+#   strategy.rollingUpdate.maxSurge >= 1       (there has to BE a replacement)
+#   a readinessProbe                           (or "serving" means "started")
+#   a startupProbe, or a readiness failure budget long enough to stand in for
+#   one                                        (or a slow boot reads as healthy)
+#
+# can replace a serving pod with one that is about to fail, and the estate
+# loses the surface between the two events. This is a RENDER-TIME check: it
+# reads the manifests the package will install, before anything is pinned.
+#
+# Warn-only by default while the estate's own Deployments are brought up to it;
+# --rollout-safety=block turns the same finding into a refusal. The finding is
+# recorded in the pins report either way, so a pin card can render it.
+
+# k8s defaults, applied when a probe leaves the field out.
+_PROBE_FAILURE_THRESHOLD = 3
+_PROBE_PERIOD_SECONDS = 10
+# The readiness failure budget that stands in for a missing startupProbe.
+ROLLOUT_READINESS_BUDGET_SECONDS = 60
+
+
+def _surge_at_least_one(value):
+    """maxSurge >= 1, in either of the two shapes k8s accepts."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value >= 1
+    s = str(value).strip()
+    if s.endswith("%"):
+        try:
+            return float(s[:-1]) > 0
+        except ValueError:
+            return False
+    try:
+        return int(s) >= 1
+    except ValueError:
+        return False
+
+
+def _is_zero(value):
+    """maxUnavailable: 0 — the int, the string, or 0%."""
+    if value is None or isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value == 0
+    s = str(value).strip()
+    if s.endswith("%"):
+        s = s[:-1]
+    try:
+        return float(s) == 0.0
+    except ValueError:
+        return False
+
+
+def _pod_labels(dep):
+    """The labels a Service would select on: the pod template's own labels,
+    falling back to the (immutable) selector when a template carries none."""
+    spec = dep.get("spec") or {}
+    tmpl = ((spec.get("template") or {}).get("metadata") or {}).get("labels") or {}
+    if tmpl:
+        return tmpl
+    return ((spec.get("selector") or {}).get("matchLabels") or {})
+
+
+def _readiness_budget_seconds(probe):
+    ft = probe.get("failureThreshold", _PROBE_FAILURE_THRESHOLD)
+    period = probe.get("periodSeconds", _PROBE_PERIOD_SECONDS)
+    try:
+        return int(ft) * int(period)
+    except (TypeError, ValueError):
+        return 0
+
+
+def check_rollout_safety(render_text, budget_seconds=ROLLOUT_READINESS_BUDGET_SECONDS):
+    """P5 over a rendered manifest stream. Pure: no cluster, no helm.
+
+    A Deployment is IN SCOPE when a rendered Service selects its pods — k8s
+    semantics, so the Service's selector must be a non-empty subset of the pod
+    template's labels, and a namespace stated on both must agree. Everything
+    else in the render is out of scope and is named as such in the report.
+    """
+    import yaml
+
+    docs = [d for d in yaml.safe_load_all(render_text) if isinstance(d, dict)]
+    services = [d for d in docs if d.get("kind") == "Service"]
+    deployments = [d for d in docs if d.get("kind") == "Deployment"]
+
+    def _ns(doc):
+        return (doc.get("metadata") or {}).get("namespace")
+
+    def _name(doc):
+        return (doc.get("metadata") or {}).get("name") or "<unnamed>"
+
+    checked, findings, out_of_scope = [], [], []
+    for dep in sorted(deployments, key=_name):
+        labels = _pod_labels(dep)
+        owned = []
+        for svc in services:
+            sel = (svc.get("spec") or {}).get("selector") or {}
+            if not sel:
+                continue
+            if _ns(svc) and _ns(dep) and _ns(svc) != _ns(dep):
+                continue
+            if all(str(labels.get(k)) == str(v) for k, v in sel.items()):
+                owned.append(_name(svc))
+        if not owned:
+            out_of_scope.append(_name(dep))
+            continue
+
+        spec = dep.get("spec") or {}
+        strategy = spec.get("strategy") or {}
+        rolling = strategy.get("rollingUpdate") or {}
+        missing = []
+        if (strategy.get("type") or "RollingUpdate") != "RollingUpdate":
+            missing.append(f"strategy.type is {strategy.get('type')}, not RollingUpdate")
+        elif not rolling:
+            missing.append("no strategy.rollingUpdate (maxUnavailable defaults to 25%)")
+        else:
+            if not _is_zero(rolling.get("maxUnavailable")):
+                missing.append(
+                    f"maxUnavailable is {rolling.get('maxUnavailable')!r}, not 0")
+            if not _surge_at_least_one(rolling.get("maxSurge")):
+                missing.append(f"maxSurge is {rolling.get('maxSurge')!r}, not >= 1")
+
+        containers = ((spec.get("template") or {}).get("spec") or {}).get("containers") or []
+        readiness = [c.get("readinessProbe") for c in containers if c.get("readinessProbe")]
+        startup = [c for c in containers if c.get("startupProbe")]
+        if not readiness:
+            missing.append("no readinessProbe")
+        if not startup:
+            budgets = [_readiness_budget_seconds(p) for p in readiness]
+            best = max(budgets) if budgets else 0
+            if best < budget_seconds:
+                missing.append(
+                    "no startupProbe and the readiness failure budget is "
+                    f"{best}s, under {budget_seconds}s")
+
+        row = {"deployment": _name(dep), "namespace": _ns(dep),
+               "services": sorted(owned), "missing": missing}
+        checked.append(row)
+        if missing:
+            findings.append(row)
+
+    return {
+        "checked": checked,
+        "findings": findings,
+        "out_of_scope": sorted(out_of_scope),
+        "services": sorted(_name(s) for s in services),
+        "readiness_budget_seconds": budget_seconds,
+    }
+
+
+def emit_rollout_safety(report, mode):
+    """Print P5 and, in `block` mode, refuse. Returns the report unchanged."""
+    findings = report["findings"]
+    n = len(report["checked"])
+    for row in findings:
+        print(f"  P5 WARN: {row['deployment']}: " + "; ".join(row["missing"]))
+    if not findings:
+        if n:
+            print(f"  P5 OK: {n} service-owning Deployments carry the rollout invariants")
+        else:
+            print("  P5 OK: this render has no Deployment that a Service selects")
+        return report
+    summary = (f"{len(findings)} of {n} service-owning Deployments miss a rollout "
+               f"invariant: " + ", ".join(r["deployment"] for r in findings))
+    if mode == "block":
+        raise CheckFailure("P5", summary)
+    print(f"  P5 WARN-ONLY (checker not blocking): {summary}")
+    return report
 
 
 def prune_stale_subcharts(chart_dir):
@@ -2286,7 +2483,8 @@ def _platform_chart_from_overlay(args, src_chart, unpinnable):
     # P3 — THE guarantee in this mode. Render the PACKAGED ARTIFACT (helm
     # package rewrites charts/, so the tree and the tgz are not the same
     # chart) and refuse if any rendered image lacks a digest.
-    images = rendered_images(tgz, [pins_file])
+    render = render_chart(tgz, [pins_file])
+    images = images_in_render(render)
     unpinned = [i for i in images if "@sha256:" not in i and ref_repo(i) not in unpinnable]
     if unpinned:
         raise CheckFailure("P3", "rendered chart still has un-pinned images: " + ", ".join(unpinned))
@@ -2303,10 +2501,12 @@ def _platform_chart_from_overlay(args, src_chart, unpinnable):
         "unpinnable": unpinnable,
         "pruned_subchart_archives": pruned,
         "rendered_images": images,
+        "rollout_safety": check_rollout_safety(render),
     }
     (out / f"platform-pins-{cyd['version']}.json").write_text(json.dumps(report, indent=1))
     (out / f"platform-pins-{cyd['version']}.yaml").write_text(pins_file.read_text())
     print(f"  P3 OK: {len(images)} rendered images, all digest-pinned")
+    emit_rollout_safety(report["rollout_safety"], getattr(args, "rollout_safety", "warn"))
     if pruned:
         print(f"  pruned stale subchart archives: {', '.join(pruned)}")
 
@@ -2433,7 +2633,8 @@ def cmd_platform_chart(args):
     # require every image it emits to carry a digest.
     # P3 renders the PACKAGED ARTIFACT, not the source tree: `helm package`
     # rewrites charts/, so the tree and the tgz are not the same chart.
-    images = rendered_images(tgz, overlay_files + [pins_file])
+    render = render_chart(tgz, overlay_files + [pins_file])
+    images = images_in_render(render)
     unpinned = [i for i in images if "@sha256:" not in i and ref_repo(i) not in unpinnable]
     if unpinned:
         raise CheckFailure("P3", "rendered chart still has un-pinned images: " + ", ".join(unpinned))
@@ -2447,11 +2648,13 @@ def cmd_platform_chart(args):
         "unpinnable": unpinnable,
         "pruned_subchart_archives": pruned,
         "rendered_images": images,
+        "rollout_safety": check_rollout_safety(render),
     }
     (out / f"platform-pins-{cyd['version']}.json").write_text(json.dumps(report, indent=1))
     (out / f"platform-pins-{cyd['version']}.yaml").write_text(pins_file.read_text())
     for line in images:
         print(f"  rendered {line}")
+    emit_rollout_safety(report["rollout_safety"], getattr(args, "rollout_safety", "warn"))
 
     if args.push:
         cmd = ["helm", "push", str(tgz), args.push]
@@ -3172,6 +3375,14 @@ def main(argv=None):
                          "entryTag makes the PreSync gate verify the PREVIOUS entry's evidence "
                          "(bbb station, seq 7, 2026-08-29). Omitting it keeps the old behaviour "
                          "and warns loudly.")
+    pc.add_argument("--rollout-safety", choices=["warn", "block"], default="warn",
+                    help="P5: every Deployment a rendered Service selects must carry "
+                         "maxUnavailable: 0, maxSurge >= 1, a readinessProbe, and a "
+                         "startupProbe (or a readiness failure budget >= 60s) — the "
+                         "invariants that keep a pin from replacing a serving pod with "
+                         "one that is about to fail (RUNBOOK § 2.2a). `warn` prints the "
+                         "findings and packages anyway; `block` refuses. Recorded in the "
+                         "pins report under rollout_safety either way.")
     pc.add_argument("--out-dir", required=True)
     pc.add_argument("--push", help="oci://host/path/charts destination")
     pc.add_argument("--insecure", action="store_true")
