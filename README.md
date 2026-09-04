@@ -63,6 +63,17 @@ migration.
 | `spec/` | the channel format and conformance specification |
 | `docs/` | operator documentation and the ADR series |
 
+## Pinning into an estate that has users on it
+
+A promotion is one field, but it rolls pods under whatever traffic the estate is carrying at
+that minute. Where there are live users the standard is [RUNBOOK § 2.2a](RUNBOOK.md): blast
+radius read from the render diff (everything else stated as *does not roll*), rollout
+invariants on every Deployment that owns a Service, public-surface smoke at the exact digests
+including a route diff against what production serves today, pre-pin conformance against the
+entry pinned right now, a named rollback target, and the operator naming the window against
+the live load shown on the card. The second of those is enforced at package time as **P5
+rollout-safety** in `platform-chart` — warn-only today, blocking with `--rollout-safety=block`.
+
 ## Design principles
 
 - **Pull-only.** The publisher can never push into a subscribing environment and holds no

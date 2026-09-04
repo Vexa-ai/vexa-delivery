@@ -22,6 +22,19 @@ image consistency, provenance verification, bundle digesting, completeness-or-br
 schema): any failure refuses the entry with exit 3. `build` needs the `jsonschema` package and,
 unless `--skip-cosign-verify`, the `cosign` binary; `push` needs `oras` + `cosign`.
 
+## P5 rollout-safety — the check that protects a LIVE estate
+
+`platform-chart` renders the packaged artifact and reads two things off that one render:
+**P3**, every image carries a digest, and **P5**, every Deployment that a rendered Service
+selects carries `strategy.rollingUpdate.maxUnavailable: 0`, `maxSurge >= 1`, a
+`readinessProbe`, and a `startupProbe` (or a readiness failure budget of at least 60s). A
+Deployment missing them can take a serving pod away and put back one that is about to fail —
+precisely what a pin into an estate with live users must never do. P5 is **warn-only** today:
+it prints `P5 WARN: <deployment>: <what is missing>` plus a summary, packages anyway, and
+records the finding in `platform-pins-<version>.json` under `rollout_safety` so a pin card can
+render it. `--rollout-safety=block` turns the same finding into a refusal. The operator
+protocol it serves is [RUNBOOK § 2.2a](../RUNBOOK.md).
+
 ## The signing toolchain is pinned — T1 and T2
 
 The publisher signs with **cosign 2.6.5**, not with whatever cosign is on `PATH`:
