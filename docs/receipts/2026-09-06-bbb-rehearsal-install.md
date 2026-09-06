@@ -1,6 +1,6 @@
 ---
 title: "Rehearsing the kit against a namespace-scoped tenant behind a pull-through registry"
-description: "The transport and both gates proven end to end; six kit defects found, five of them on the paths a struggling subscriber hits first. Rung 4 of 4 — a PSA-restricted tenant with Kyverno emulating restricted-v2, NOT OpenShift."
+description: "The transport and both gates exercised end to end; seven kit defects found, three of them on the paths a struggling subscriber hits first. Rung 4 of 4 — a PSA-restricted tenant with Kyverno emulating restricted-v2, NOT OpenShift."
 ---
 
 **Date:** 2026-09-06. **Channel:** a private subscriber channel, referred to
@@ -68,7 +68,7 @@ A private channel entry, pulled through a customer-shaped pull-through
 registry, signature-verified offline against a key delivered by a separate
 route. That is the whole thesis, and it holds.
 
-### Gate 2 — Kyverno signature admission: **DENY**, and the images are genuinely unsigned
+### Gate 2 — Kyverno signature admission: **DENY**, because the installer was never told where the signatures are
 
 All six Vexa Deployments were denied:
 
@@ -80,31 +80,46 @@ vexa-verify-channel-signature:
 ```
 
 `install.sh` warns in its own comments that this message is **byte-identical**
-whether the image is unsigned or merely unfetchable — an authenticated
-signature repository returns 401 and the rule fails closed with the same words.
-Earlier rehearsals recorded "signature admission blocked" without being able to
-say which. **This run separates them, from outside the cluster:**
+whether the image is unsigned, unfetchable, or merely looked for in the wrong
+place. This run's first reading of it — *unsigned* — was wrong, and the
+correction is the finding.
 
-| Probe (anonymous, Docker Hub) | Result |
+**The images are signed.** Every image digest of entry 4 answers **200** at the
+channel's own signature repository,
+`channel.vexa.ai/vexa/channel/<subscriber>-stable/signatures`, at the
+conventional `sha256-<digest>.sig` path, carrying a genuine cosign object: a
+`vnd.dev.cosign.simplesigning.v1+json` layer, a
+`vnd.dev.sigstore.bundle.v0.3+json` layer, and the
+`dev.cosignproject.cosign/signature` annotation — the exact layout
+[the signature-layout receipt](/receipts/2026-08-25-signature-layout) proved
+this Kyverno **ADMITS**. Signature reads on the channel are credential-free by
+design (RUNBOOK § 5.2), so anyone holding the entry can re-run this check.
+
+| Probe | Result |
 |---|---|
-| manifest for the exact denied digest | **200** — reachable, so not a fetch failure |
-| manifest for that digest's cosign `.sig` tag | **404** |
-| `.sig` tags on `vexaai/v012-gateway` | **0** |
-| `.sig` tags on the five sibling repos | **0, 0, 0, 0, 0** |
+| the six `.sig` objects at the **channel** signature repository | **200 · 200 · 200 · 200 · 200 · 200** |
+| the same digests' `.sig` tags on **Docker Hub** | **404**; 0 `.sig` tags across all six `vexaai/v012-*` repos |
 
-The **entry** is signed and verifies. The **chart** is signed. The **images are
-not**, and they are not mirrored into the channel, so `--signature-repository`
-cannot repair it — there is nowhere a signature exists to point it at.
+This run probed only the second row and concluded from it. The second row is
+the layout working as designed — the signatures live at the channel, which is
+where the entry says they live — not evidence of an unsigned image.
 
-**The consequence is the finding:** on this entry, the kit's own default
-admission policy is **unsatisfiable**. A subscriber following `kit/README.md`
-literally installs a policy that denies every Vexa workload. Stated as a
-finding, not as a diagnosis of the publish crank — the publish that produced
-this entry was not read.
+**What failed is the install, not the packet.** This run did not pass
+`--signature-repository`, so `install.sh:262-267` **deleted the repository line
+out of the admission policy** and Kyverno looked for signatures beside each
+image on Docker Hub, where by design there are none. That is the failure
+[`tested` § *The from-docs run, 2026-08-27*](/tested#the-from-docs-run-2026-08-27)
+already documents, reproduced here — and it is **defect 7** below.
+
+Withdrawn, in full: *"the images are genuinely unsigned"*, *"there is nowhere a
+signature exists to point it at"*, and *"on this entry the kit's own default
+admission policy is unsatisfiable"*. The policy is satisfiable and this entry
+satisfies it. Nothing follows from this run about the publish crank, and no
+advice to run with admission off follows from it either.
 
 ---
 
-## Six defects in the kit
+## Seven defects in the kit
 
 ### 1 · `install.sh` has no adoption path, and running it against an existing Argo is destructive
 
@@ -242,8 +257,37 @@ path that breaks is the failure-reporting path.** A subscriber whose install
 goes wrong cannot file the receipt that would represent them — precisely when we
 most need it.
 
+### 7 · `install.sh` demands a flag for something it already knows, and degrades silently without it
+
+`--signature-repository` defaults to *"alongside each image"* (`install.sh:39`)
+— the one layout this channel does not use. When the flag is absent, lines
+262-267 neither warn nor refuse; they **delete** the `${SIGNATURE_REPOSITORY}`
+line from the rendered policy, and the admission rule that results denies every
+Vexa workload with a message that reads exactly like an unsigned image. That is
+Gate 2 above, and it cost this run its whole second half.
+
+The script holds both halves of the correct value already. It composes
+`--registry` and `--channel` into `${REGISTRY}/vexa/channel/${CHANNEL}` for the
+Argo repository (`install.sh:298,315`); the signature repository is that same
+reference plus `/signatures` — which is precisely what the onboarding mail and
+[the install page](/install#step-3-install) ask the subscriber to retype by
+hand.
+
+**Suggested shape:** derive `SIG_REPO` from `--registry` + `--channel` by
+default, keep the flag as the override for a subscriber who mirrors the channel
+elsewhere, and make *no signature repository* an explicit opt-out rather than a
+silent deletion.
+
+This is the third time this defect has been paid for: once on 2026-08-27
+(recorded on [`tested`](/tested#the-from-docs-run-2026-08-27)), once here, and
+once again in the reading of this run's own DENY. The 2026-08-27 fix put the
+flag in the documented command — which repairs the copy-paste path and leaves
+every other path open.
+
 Defects 2 and 6 are one class: *the kit raises where it should report*, on the
-two paths a struggling subscriber hits first.
+two paths a struggling subscriber hits first. Defect 7 is the mirror of it —
+*the kit silently proceeds where it should refuse* — and it is the one that
+produced a false finding rather than a slow one.
 
 ---
 
@@ -270,7 +314,7 @@ three workloads that reached Running were mutated to `runAsUser 1000920000`,
 |---|---|
 | Subscription | `sync=OutOfSync`, `health=Healthy`, revision `0.12.35` |
 | Running | minio, postgres, redis |
-| Denied at admission | gateway, admin-api, agent-api, meeting-api, runtime, terminal |
+| Denied at admission | gateway, admin-api, agent-api, meeting-api, runtime, terminal — all six for defect 7, not for anything about the entry |
 | `kit/report` | **PASS**, 664 lines |
 | `kit/smoke` | **FAIL**, no receipt |
 | Ingest | **REFUSED at S2** |
