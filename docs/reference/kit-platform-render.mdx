@@ -42,12 +42,13 @@ options
                     Omitted by default: OpenShift assigns the range itself,
                     and a range invented here would be a fabricated
                     constraint. See kit/platform/README.md.
-  --app-team-subject KIND/NAME  bind the app team to both projects, e.g.
-                    Group/vexa-app-team or ServiceAccount/vexa-tenant (a
-                    ServiceAccount is taken to live in the project). Omitted
-                    by default: most platform teams grant project access
-                    through their own mechanism (`oc adm policy`), and this
-                    pack should not presume it.
+  --app-team-subject KIND/NAME  bind ONE app-team identity to BOTH projects,
+                    e.g. Group/vexa-app-team, User/…, ServiceAccount/… (which
+                    is taken to live in the staging project unless you write
+                    ServiceAccount/NAMESPACE/NAME). Omitted by default: most
+                    platform teams grant project access through their own
+                    mechanism (`oc adm policy`), and this pack should not
+                    presume it.
   --app-team-role   the ClusterRole the binding above references (default:
                     admin — OpenShift's project admin)
   --argo-namespace  namespace holding the argocd-application-controller
