@@ -536,6 +536,16 @@ def record_credential_events(root: pathlib.Path, *, channel: str, station: str,
     back, possibly twice, possibly overlapping with the last copy. Deduplicating
     on the whole event means a re-ingest is a no-op and nobody has to track a
     cursor for it.
+
+    WHICH IS WHY THE EDGE STAMPS A `seq` ON EVERY ATTEMPT. Dedup-by-content and
+    a second-resolution `ts` together collapsed a burst into one row: ten
+    identical `no-park` attempts inside one second were ten identical events,
+    and this kept one — in the record whose reason for existing is to show that
+    somebody hammered a station (2026-09-07 rehearsal, finding 3). The sequence
+    makes each attempt its own row while re-ingest still adds nothing, because
+    the number is written into the log once and travels with it. Nothing here
+    trusts the number: the comparison is still the whole row, and the sort uses
+    it only to order attempts that share a second.
     """
     channel = safe_name("channel", channel)
     station = safe_name("station", station)
@@ -554,7 +564,8 @@ def record_credential_events(root: pathlib.Path, *, channel: str, station: str,
         known.append(row)
         added += 1
 
-    known.sort(key=lambda e: (e.get("ts") or "", e.get("event") or ""))
+    known.sort(key=lambda e: (e.get("ts") or "", e.get("event") or "",
+                              e.get("seq") or 0))
     doc.update({
         "schema_version": SCHEMA_VERSION,
         "channel": channel,

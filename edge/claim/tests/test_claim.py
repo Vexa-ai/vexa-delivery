@@ -347,6 +347,11 @@ class Park(unittest.TestCase):
             self.assertIn("outcome", event)
             self.assertIn("source", event)
             self.assertIn("ts", event)
+        # One number per attempt, stamped at append. `ts` is second-resolution,
+        # so without it two attempts in the same second are one row in a ledger
+        # that deduplicates on content — and a burst is invisible in the record
+        # that exists to show bursts.
+        self.assertEqual([json.loads(ln)["seq"] for ln in lines], [1, 2])
         self.assertNotIn(CREDENTIAL["password"], vc.attempts_path(self.spool).read_text())
 
 

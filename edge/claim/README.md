@@ -38,7 +38,7 @@ on:
 |---|---|---|
 | `<station>.park.json` | the publisher | the ciphertext and the code's salt; never edited, only deleted |
 | `<station>.<park_id>.state.json` | the edge | attempts, terminal state |
-| `attempts.ndjson` | the edge | every attempt: station, outcome, source, time |
+| `attempts.ndjson` | the edge | every attempt: station, outcome, source, time, sequence |
 
 A new park mints a new `park_id` and therefore a new state file, so parking again
 never resets a counter this process does not own. On any terminal outcome —
@@ -119,7 +119,12 @@ Three ordering rules are load-bearing:
 - **Both rate limits are checked before the state machine.** A request the
   limiter refuses never reaches the park, so it must not cost the subscriber one
   of their five attempts — otherwise anyone could burn a station's code by being
-  noisy rather than by guessing.
+  noisy rather than by guessing. The **station** is read out of the body before
+  the limiter rules, and only so the refusal lands in the right station's
+  record: `rate-limited` is the outcome that means *one address hammered this
+  station*, and it used to be the one outcome that station could not see. The
+  park itself is not read on that path — that is a disk access keyed on a name
+  the caller chose.
 - **Decryption happens before the park is retired.** A decryption failure is our
   misconfiguration — the wrong identity file, a park sealed to a rotated key —
   and burning the subscriber's only code over our own mistake would make them
@@ -231,6 +236,33 @@ python3 publisher/vexa_stations.py record-credential \
 - **The spool is a single directory on one host.** No replication: a lost spool
   loses live parks, and the recovery is to park again, which rotates. Nothing a
   subscriber already claimed is affected.
-- **Nobody has built this image or run this service.** Every claim about its
-  behaviour above is a claim about `claim_edge.py`, which `tests/` exercises
-  against a real socket and a fixture spool — not about a running deployment.
+- **Nothing here is deployed.** The image has been built and the service run
+  once, as a throwaway rehearsal rig on a build host — never as a service, never
+  on the live edge, never with a real credential. Every claim above is a claim
+  about `claim_edge.py` plus that one rehearsal, not about a deployment.
+
+## What the rehearsal proved, and what it did not
+
+On **2026-09-07** the whole path was run end to end against a throwaway rig
+before any subscriber could hear a code: parked with `add --park`, claimed by
+`kit/claim.sh` into a cluster namespace, the refusals exercised, the attempts log
+reduced into a scratch ledger. Made-up credential, throwaway key, nothing real
+minted. Receipt: [`#31`](https://github.com/Vexa-ai/vexa-delivery/pull/31). It
+found three defects, all fixed on this branch — a non-executable `kit/claim.sh`,
+a rate-limited attempt that reached no station's record, and a burst inside one
+second that reduced to a single ledger row.
+
+**Two things it did not prove. Both are open.**
+
+- **Expiry has never fired in a running service.** Both parks went terminal by
+  redemption or burn well inside their fifteen minutes, so the TTL branch was
+  never taken against a wall clock. It is covered by tests, with the clock
+  injected — which proves the transition, not that a service left alone for
+  fifteen minutes retires the park it is holding.
+- **Source attribution behind a proxy is unproven.** There was no TLS and no
+  Caddy, so `CLAIM_TRUST_FORWARDED_FOR` stayed off throughout. What was shown is
+  that distinct sources get distinct buckets; what was **not** shown is this
+  service reading the header Caddy actually sets, in the deployment where that
+  setting is switched on. The per-source limit — and every `source` in the
+  attempts log behind that proxy — is worth exactly what the header is worth,
+  and nobody has yet watched one arrive.

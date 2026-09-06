@@ -60,8 +60,11 @@ test-report:
 # its stub LOGS every invocation, so "it did not apply that" is checkable
 # rather than merely claimed. The claim one runs against a fixture edge and the
 # same stub, where the assertion that matters is negative: the credential must
-# never reach stdout.
+# never reach stdout. First, the cheapest gate of them all: every kit script is
+# executable in the TREE, which is what a fresh clone gets and what
+# `./kit/claim.sh` needs to be a command at all.
 test-kit:
+	bash kit/tests/test_script_modes.sh
 	bash kit/tests/test_install_dry_run.sh
 	bash kit/tests/test_install_adopt.sh
 	bash kit/tests/test_install_manifests.sh

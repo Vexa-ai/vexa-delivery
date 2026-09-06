@@ -30,9 +30,10 @@ walked around. The arithmetic is written out in README.md.
 
 WHAT IT NEVER DOES: log a credential, log a code, write either to disk, echo
 either into an error, or keep a decrypted value beyond the response it is
-serving. The attempts log carries station, outcome, source and time, and the
-`code_sha256` of the park it was aimed at — never of the code that was offered,
-because that hash IS the code to anyone willing to spend a minute searching.
+serving. The attempts log carries station, outcome, source, time, a per-attempt
+sequence, and the `code_sha256` of the park it was aimed at — never of the code
+that was offered, because that hash IS the code to anyone willing to spend a
+minute searching.
 
 DEPLOYMENT: see README.md in this directory. This service has NOT been deployed
 by the change that introduced it — the live edge is founder-owned.
@@ -208,24 +209,64 @@ class Config:
         return vexa_claim.age_decrypt(self.identity, armor)
 
 
+# "the body carried no code at all", as distinct from "it carried null". They
+# take different paths — a missing code is malformed, a null one is a code that
+# cannot match and costs an attempt like any other wrong one — and `None` alone
+# cannot tell them apart.
+MISSING = object()
+
+
+def read_claim(body: bytes) -> "tuple[str | None, object]":
+    """`(station, code)` from a request body. Decides nothing, touches nothing.
+
+    Split out of `serve_claim` so the STATION can be read before the rate
+    limiter rules on the request. The station is not secret and not a
+    credential; it is the row the attempt belongs to.
+
+    Returns the station even when the rest of the body is unusable — a body
+    naming a good station with no code is still attributable — and `None` for a
+    name that is absent, malformed, or not one a station could have.
+    """
+    station = None
+    try:
+        payload = json.loads(body)
+        station = vexa_claim.validate_station(payload["station"])
+        return station, payload["code"]
+    except (json.JSONDecodeError, KeyError, TypeError, vexa_claim.ClaimError):
+        return station, MISSING
+
+
 def serve_claim(config: Config, body: bytes, source: str) -> "tuple[int, bytes]":
     """One claim, start to finish. Pure enough to test without a socket."""
-    station = None
     park_id = None
     park_hash = None
+    # BEFORE the limiter, and only to know which station this attempt is about.
+    # The limiter fires first by design — a request it refuses must not cost the
+    # subscriber one of their five attempts — but it used to fire before anything
+    # had read the body, so `rate-limited` was written with station `-` and the
+    # ledger dropped it as unattributed. That is the one event class meaning
+    # "one address hammered THIS station", and it was the one class the station's
+    # own record could not show (2026-09-07 rehearsal, finding 2).
+    #
+    # Reading first costs a JSON parse bounded by MAX_BODY on a request that may
+    # be refused; it is pure, takes no lock and touches no disk, and it buys the
+    # attribution. The ORDER OF OUTCOMES is unchanged: rate-limited still wins
+    # over malformed, and the wire answer is the same 403 for both.
+    #
+    # The station and no more: the park id below is a disk read keyed on a name
+    # the caller chose, and this is the one path whose whole job is to stop
+    # doing work for a source that is hammering us. The ledger attributes by
+    # station.
+    station, code = read_claim(body)
     try:
         if not config.limiter.allow(source):
             raise vexa_claim.ClaimRefused(vexa_claim.REFUSAL_RATE_LIMITED)
-        try:
-            payload = json.loads(body)
-            station = vexa_claim.validate_station(payload["station"])
-            code = payload["code"]
-        except (json.JSONDecodeError, KeyError, TypeError, vexa_claim.ClaimError):
-            raise vexa_claim.ClaimRefused(vexa_claim.REFUSAL_MALFORMED) from None
+        if station is None or code is MISSING:
+            raise vexa_claim.ClaimRefused(vexa_claim.REFUSAL_MALFORMED)
 
-        # After the parse, because it is keyed on the station, and before the
-        # state machine, because a request that never reaches the state machine
-        # must not cost the subscriber one of their five attempts.
+        # After the station is known, because it is keyed on the station, and
+        # before the state machine, because a request that never reaches the
+        # state machine must not cost the subscriber one of their five attempts.
         if not config.park_limiter.allow(station):
             raise vexa_claim.ClaimRefused(vexa_claim.REFUSAL_PARK_RATE_LIMITED)
 

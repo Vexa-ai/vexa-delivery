@@ -187,6 +187,51 @@ class EdgeCase(unittest.TestCase):
         # state machine, so it must not have cost the subscriber one of five.
         self.assertEqual(outcomes.count(vc.REFUSAL_WRONG_CODE), 3)
 
+    def test_a_rate_limited_attempt_still_names_its_station(self):
+        # `rate-limited` is the one outcome that means "one address hammered
+        # THIS station", and it was the one outcome the station's own record
+        # could not show: the limiter fires before the state machine, nothing
+        # had read the body yet, so the event was written with station `-` and
+        # `record-credential` dropped it as unattributed (2026-09-07 rehearsal).
+        self.config.limiter = ce.RateLimiter(limit=2, window=60)
+        record = self.park("123456")
+        wire = [self.post({"code": "222222", "station": "pilot"}) for _ in range(4)]
+        limited = [a for a in self.attempts()
+                   if a["outcome"] == vc.REFUSAL_RATE_LIMITED]
+        self.assertEqual(len(limited), 2)
+        for event in limited:
+            self.assertEqual(event["station"], "pilot")
+            self.assertEqual(event["source"], "127.0.0.1")
+            # The STATION, and no more. It was already in the body, so reading
+            # it is free; the park id would be a disk read keyed on a name the
+            # caller chose, on the one path whose whole job is to stop doing
+            # work for a source that is hammering us. Attribution is by station,
+            # and that is what the ledger needs.
+            self.assertIsNone(event["park_id"])
+            self.assertIsNone(event["code_sha256"])
+        # THE WIRE IS UNCHANGED. Reading the station buys the record something;
+        # it must buy the caller nothing.
+        for status, body in wire:
+            self.assertEqual(status, 403)
+            self.assertEqual(body, ce.REFUSED_BODY)
+        # And it still costs the park nothing — it never reached the state
+        # machine, so it must not have spent one of the subscriber's five.
+        self.assertEqual(
+            vc.read_json(vc.state_path(self.spool, "pilot",
+                                       record["park_id"]))["attempts"], 2)
+        self.assertNotIn("222222", vc.attempts_path(self.spool).read_text())
+
+    def test_a_rate_limited_body_that_names_no_station_stays_unattributed(self):
+        # There is nothing to attribute it to, and inventing one would put an
+        # attacker's string in a station's record.
+        self.config.limiter = ce.RateLimiter(limit=1, window=60)
+        self.post(b"{not json")
+        self.post({"code": "123456", "station": "../etc"})
+        self.assertEqual([a["station"] for a in self.attempts()],
+                         [vc.UNATTRIBUTED, vc.UNATTRIBUTED])
+        self.assertEqual([a["outcome"] for a in self.attempts()],
+                         [vc.REFUSAL_MALFORMED, vc.REFUSAL_RATE_LIMITED])
+
     def test_rate_limit_window_expires(self):
         limiter = ce.RateLimiter(limit=2, window=60)
         self.assertTrue(limiter.allow("a", now=0))
@@ -319,6 +364,33 @@ class EdgeCase(unittest.TestCase):
         self.assertNotIn("123456", raw)
         self.assertNotIn("222222", raw)
         self.assertNotIn("BEGIN AGE", raw)
+
+    def test_identical_attempts_in_one_second_are_distinct_events(self):
+        # `ts` is second-resolution and the ledger deduplicates on the whole
+        # event, so ten identical attempts inside one second used to reduce to
+        # ONE row while the spool kept all ten — a burst reading exactly like a
+        # single request in the record that exists to show bursts. The sequence
+        # is what keeps the count (2026-09-07 rehearsal, finding 3).
+        for _ in range(10):
+            self.assertEqual(
+                self.post({"code": "222222", "station": "absent"})[0], 403)
+        events = self.attempts()
+        self.assertEqual(len(events), 10)
+        self.assertEqual({e["outcome"] for e in events}, {vc.REFUSAL_NO_PARK})
+        self.assertEqual([e["seq"] for e in events], list(range(1, 11)))
+        # Distinct as WHOLE EVENTS, which is what the reducer compares.
+        self.assertEqual(
+            len({json.dumps(e, sort_keys=True) for e in events}), 10)
+
+    def test_the_sequence_survives_a_restart(self):
+        # In-memory would be enough for one process and wrong across two: a
+        # restarted edge would re-issue numbers a copied-back log already
+        # carries. It is seeded from the log itself.
+        self.post({"code": "222222", "station": "absent"})
+        self.post({"code": "222222", "station": "absent"})
+        vc._SEQ.clear()  # what a restart looks like from here
+        self.post({"code": "222222", "station": "absent"})
+        self.assertEqual([e["seq"] for e in self.attempts()], [1, 2, 3])
 
     def test_an_unparseable_body_is_logged_unattributed(self):
         # It names no station, so the ledger can route it aside instead of

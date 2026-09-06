@@ -71,6 +71,7 @@ import re
 import secrets
 import subprocess
 import tempfile
+import threading
 
 SCHEMA_VERSION = 1
 
@@ -511,15 +512,69 @@ def redeem(
     }
 
 
+_SEQ_LOCK = threading.Lock()
+_SEQ: "dict[str, int]" = {}
+
+
+def last_seq(path: pathlib.Path) -> int:
+    """The highest `seq` already in a log, or 0. Read once per spool."""
+    if not path.is_file():
+        return 0
+    highest = 0
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                value = json.loads(line).get("seq")
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, int) and value > highest:
+                highest = value
+    return highest
+
+
+def next_seq(spool: pathlib.Path) -> int:
+    """The next attempt number for this spool. Monotonic, and it survives a
+    restart by reading the log it is about to be appended to."""
+    key = str(pathlib.Path(spool).resolve())
+    with _SEQ_LOCK:
+        seq = _SEQ.get(key)
+        if seq is None:
+            seq = last_seq(attempts_path(spool))
+        seq += 1
+        _SEQ[key] = seq
+        return seq
+
+
 def append_attempt(spool: pathlib.Path, event: dict) -> None:
     """One line per attempt, append-only, NEVER the value.
 
     This file is the edge's half of the ledger's return path: the operator
     copies it back and `vexa_stations.py record-credential` reduces it into
     `credential-events.yaml` beside the station's state.
+
+    THE SEQUENCE IS STAMPED HERE, AND IT IS WHAT KEEPS THE COUNT. That reducer
+    deduplicates on the whole event, which is what makes re-ingesting the same
+    log a no-op with no cursor for anyone to maintain — but `ts` is
+    second-resolution, so ten identical attempts inside one second were ten
+    identical rows and the ledger kept ONE. A burst read exactly like a single
+    request in the record that exists to show bursts (2026-09-07 rehearsal,
+    finding 3: ten `no-park` attempts became one row while the spool kept all
+    ten). One monotonic number per attempt makes the rows distinct without
+    making re-ingest add anything: it is written into the log once, so a second
+    copy of that log carries the same numbers.
+
+    A sequence rather than a sub-second timestamp because it also shows what a
+    finer clock would not: a GAP is a line that left this file. It is monotonic
+    per spool and continues across a restart, because it is seeded from the log
+    itself; if the log is rotated away it starts again, which is why the
+    reducer still compares whole rows rather than trusting the number alone.
     """
     spool.mkdir(parents=True, exist_ok=True)
     path = attempts_path(spool)
+    event = {**event, "seq": next_seq(spool)}
     with open(path, "a") as fh:
         fh.write(json.dumps(event, sort_keys=True) + "\n")
 

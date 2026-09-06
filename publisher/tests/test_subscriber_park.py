@@ -338,6 +338,39 @@ class AttemptsIngest(unittest.TestCase):
         self.ingest(path)
         self.assertEqual(len(self.events()), before)
 
+    def test_a_burst_inside_one_second_keeps_its_count(self):
+        # Dedup-by-content plus a second-resolution `ts` collapsed ten identical
+        # attempts into ONE row — in the file whose reason for existing is to
+        # show that somebody hammered a station. The edge's per-attempt `seq` is
+        # what keeps the count (2026-09-07 rehearsal, finding 3).
+        burst = [{"event": "claim", "ts": "2026-09-06T12:03:00Z",
+                  "station": "pilot", "outcome": "no-park",
+                  "source": "203.0.113.7", "seq": n} for n in range(1, 11)]
+        path = self.write_log(burst)
+        self.assertEqual(self.ingest(path), 0)
+        rows = [e for e in self.events() if e.get("outcome") == "no-park"]
+        self.assertEqual(len(rows), 10)
+        self.assertEqual([e["seq"] for e in rows], list(range(1, 11)))
+        # ...and the property that made dedup-by-content worth having survives:
+        # the same log ingested twice still adds nothing, with no cursor.
+        before = len(self.events())
+        self.ingest(path)
+        self.assertEqual(len(self.events()), before)
+
+    def test_attempts_sharing_a_second_are_ordered_by_sequence(self):
+        # A second copy of the log can overlap the first, so rows arrive out of
+        # order; within one second `ts` cannot order them and `seq` can.
+        self.ingest(self.write_log([
+            {"event": "claim", "ts": "2026-09-06T12:04:00Z", "station": "pilot",
+             "outcome": "wrong-code", "source": "203.0.113.7", "seq": 3},
+            {"event": "claim", "ts": "2026-09-06T12:04:00Z", "station": "pilot",
+             "outcome": "rate-limited", "source": "203.0.113.7", "seq": 1},
+            {"event": "claim", "ts": "2026-09-06T12:04:00Z", "station": "pilot",
+             "outcome": "wrong-code", "source": "203.0.113.7", "seq": 2},
+        ]))
+        self.assertEqual([e["seq"] for e in self.events() if e.get("seq")],
+                         [1, 2, 3])
+
 
 if __name__ == "__main__":
     unittest.main()
