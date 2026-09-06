@@ -30,6 +30,13 @@ make check-private-tokens
 
 Adding a token: hash the lowercased string with sha256 somewhere private and
 append the digest. Never paste the string into this repository to compute it.
+Add the spelling variants too — an abbreviation with and without its umlaut is
+two tokens, and only the ones on the list are refused.
+
+**What hashing cannot catch**, stated rather than left to be discovered: a token
+that is percent-encoded, split across lines, or run together with its
+neighbours produces different words and hashes to nothing on the list. This gate
+refuses the spelling a human types, which is the one that reaches a page.
 
 Public examples use neutral names — `pilot-stable` for a subscriber channel,
 "the pilot subscriber" for the party.
