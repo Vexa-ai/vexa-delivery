@@ -55,9 +55,16 @@ test-validate:
 test-report:
 	@if [ -d kit/report/tests ]; then python3 -m unittest discover -s kit/report/tests -v; else echo "kit/report/tests not present yet; skipped"; fi
 
-# install.sh's dry-run contract, exercised against a stub kubectl.
+# install.sh's contracts, exercised against a stub kubectl. The dry-run one
+# asserts on what is RENDERED; the adoption one asserts on what is EXECUTED —
+# its stub LOGS every invocation, so "it did not apply that" is checkable
+# rather than merely claimed.
 test-kit:
 	bash kit/tests/test_install_dry_run.sh
+	bash kit/tests/test_install_adopt.sh
+	bash kit/tests/test_install_manifests.sh
+	bash kit/tests/test_install_dry_run_secrets.sh
+	bash kit/tests/test_install_object_names.sh
 
 # The in-cluster verifier's evidence model, against fixture entries with stub
 # oras/cosign. Offline: no registry, no cluster, no signature.

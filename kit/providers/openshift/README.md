@@ -78,10 +78,37 @@ issued by a platform team you do not control.
   namespace-scoped Argo is ~7 pods of real quota, and it needs a namespaced
   `*/*/*` Role beyond `admin`, created by the platform team (escalation
   prevention blocks the tenant from creating it themselves).
-- **The LimitRange max must be ≥ 2560Mi.** The bot's memory-backed `/dev/shm`
-  (2Gi) counts against its 2560Mi memory limit. Against the recorded rig
-  LimitRange (default 64Mi, max 1Gi) the bot is refused at admission — P2 and
-  P6 both name it.
+- **The LimitRange Container `max.memory` must be ≥ the LARGEST container limit
+  in the delivered chart — not merely ≥ 2560Mi.** This is a one-time
+  platform-team ask; a tenant is Forbidden to patch a LimitRange, correctly.
+
+  2560Mi is the *bot's floor*, and it was being read as the ceiling. The bot's
+  memory-backed `/dev/shm` (2Gi) counts against its own 2560Mi limit, so
+  anything below that refuses the bot — P2 and P6 both name it. But the bot is
+  not the largest container the channel delivers: at chart `0.12.35` **the
+  chart's own postgres asks for a 4Gi limit**, and on 2026-09-06 a project whose
+  ceiling was exactly the recorded 2560Mi refused it:
+
+  ```
+  pods "vexa-vexa-postgres-0" is forbidden: maximum memory usage per Container
+  is 2560Mi, but limit is 4Gi
+  ```
+
+  So ask for it as a **function of the entry**, and read the number off the
+  entry you are about to install rather than off this page:
+
+  ```bash
+  helm template vexa oci://<registry>/vexa/channel/<channel>/charts/vexa \
+    --values customer-values.yaml > rendered.yaml
+  # the ask is the largest of these, and never below 2560Mi:
+  grep -A2 'limits:' rendered.yaml | grep memory
+  ```
+
+  Then hand that same file to the preflight — `install.sh --manifests
+  rendered.yaml`, or let the installer render it itself — and P2 compares every
+  delivered container against the ceiling before anything is installed. Without
+  it P2 sees only the bot profile, which is how a 4Gi postgres reached admission
+  with a green preflight behind it.
 - Spawned meeting bots inherit the LimitRange defaults today; first-class
   resource fields on spawned workloads are tracked upstream, and the LimitRange
   is the documented interim.

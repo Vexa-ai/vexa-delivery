@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+# A cut-down stand-in for `helm template` of the delivered chart, carrying the
+# one shape the 2026-09-06 rehearsal proved the preflight never saw: a postgres
+# StatefulSet whose memory LIMIT (4Gi) is above the LimitRange ceiling the
+# recorded OpenShift project imposes (2560Mi, sized for the bot's /dev/shm).
+#
+# Admission refused this pod at sync time, after the install, with the preflight
+# green — because install.sh passed no --manifests and P2 evaluated only the
+# synthetic bot profile. The gateway below is a workload that fits, so a test
+# can tell "P2 checked the chart" from "P2 failed everything".
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vexa-vexa-postgres
+spec:
+  serviceName: vexa-vexa-postgres
+  template:
+    spec:
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vexa-vexa-gateway
+spec:
+  template:
+    spec:
+      containers:
+        - name: gateway
+          image: docker.io/vexaai/v012-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

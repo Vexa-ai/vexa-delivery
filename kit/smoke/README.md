@@ -17,6 +17,16 @@ accepted — that is the point of S3, and why it cannot be fully automated.
 `--non-interactive` (CI/rehearsal) skips or bounds the human phase but never
 fakes it: no admitted bot → honest FAIL.
 
+**The receipt is written on every path, including a failed one.** A phase that
+raises becomes a FAIL finding and the run carries on to write the receipt, so
+what a struggling subscriber sends back is a report rather than a console. That
+matters downstream, not just here: `vexa_validate` reads this file into the
+station report's `smoke_receipt` section, and the publisher's ingest refuses a
+report that has none — so a smoke that crashed used to take the whole station
+report with it (2026-09-06: `REFUSED S2: bundle is incomplete; missing
+smoke_receipt`). The guard above covered S3 only; S1 and S2 are the two a
+struggling subscriber hits first.
+
 ## S3 meeting links
 
 Validation has to run on the platform the customer actually meets on, so S3

@@ -27,6 +27,12 @@ required
 options
   --customer-values customer-local values file injected into the subscription
                     (default: profiles/vexa/customer-values.example.yaml)
+  --manifests       rendered manifests of the delivered set, handed to the
+                    preflight so P2/P3 check EVERY workload's declared
+                    resources against your LimitRange and quota — not just the
+                    synthetic bot profile. Without it the installer renders the
+                    chart itself with 'helm template'; if that is not possible
+                    it says so and the preflight checks the bot alone.
   --staging-ns      namespace the staging Application deploys into
                     (default vexa-staging)
   --prod-ns         namespace the production Application deploys into
@@ -64,6 +70,15 @@ options
                     PreSync verify gate on (default: off)
   --kubeconfig      kubeconfig path (default: ambient)
   --plain-http      registry is plain HTTP (test rigs only; implies insecure)
+  --argocd MODE     what to do about Argo CD: auto (default) | adopt | install |
+                    skip. auto DETECTS an existing install first: absent ->
+                    install the pin; present at the pinned version -> ADOPT it
+                    and write nothing; present at another version -> REFUSE and
+                    say so, before a single object is applied. adopt takes an
+                    existing install whatever version it is; install always
+                    applies the upstream manifests; skip leaves Argo entirely
+                    alone (you install it, we subscribe to it).
+  --kyverno MODE    the same four modes for Kyverno.
   --skip-preflight  do not run the conformance preflight (NOT recommended)
   --dry-run         render everything, apply nothing
 EOF
@@ -71,7 +86,7 @@ EOF
 }
 
 PROVIDER="" REGISTRY="" CHANNEL="" PUBKEY="" SIG_REPO="" REGISTRY_CA="" REGISTRY_USER=""
-CUSTOMER_VALUES="" VERIFIER_IMAGE=""
+CUSTOMER_VALUES="" VERIFIER_IMAGE="" MANIFESTS=""
 # The chart the subscription installs and the Helm release name it installs
 # under. Both were hardcoded to "vexa". ADOPTION MAKES THAT FATAL: taking
 # ownership of an existing release means matching the name that release
@@ -81,6 +96,7 @@ CUSTOMER_VALUES="" VERIFIER_IMAGE=""
 CHART_NAME=vexa RELEASE_NAME=vexa
 STAGING_NS=vexa-staging PROD_NS=vexa-prod PROD_PIN=""
 KUBECONFIG_ARG=() PLAIN_HTTP=false REGISTRY_INSECURE=false SKIP_PREFLIGHT=false DRY_RUN=false
+ARGOCD_MODE=auto KYVERNO_MODE=auto
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -94,6 +110,7 @@ while [ $# -gt 0 ]; do
     --chart-name) CHART_NAME=$2; shift 2;;
     --release-name) RELEASE_NAME=$2; shift 2;;
     --customer-values) CUSTOMER_VALUES=$2; shift 2;;
+    --manifests) MANIFESTS=$2; shift 2;;
     --contract) CONTRACT=$2; shift 2;;
     --contract-prod) CONTRACT_PROD=$2; shift 2;;
     --verifier-image) VERIFIER_IMAGE=$2; shift 2;;
@@ -102,6 +119,8 @@ while [ $# -gt 0 ]; do
     --prod-pin) PROD_PIN=$2; shift 2;;
     --kubeconfig) KUBECONFIG_ARG=(--kubeconfig "$2"); shift 2;;
     --plain-http) PLAIN_HTTP=true; shift;;
+    --argocd) ARGOCD_MODE=$2; shift 2;;
+    --kyverno) KYVERNO_MODE=$2; shift 2;;
     --registry-insecure) REGISTRY_INSECURE=true; shift;;
     --skip-preflight) SKIP_PREFLIGHT=true; shift;;
     --dry-run) DRY_RUN=true; shift;;
@@ -111,6 +130,13 @@ done
 if [ -z "$PROVIDER" ] || [ -z "$REGISTRY" ] || [ -z "$CHANNEL" ] || [ -z "$PUBKEY" ]; then
   usage
 fi
+
+for mode_pair in "--argocd:$ARGOCD_MODE" "--kyverno:$KYVERNO_MODE"; do
+  case "${mode_pair#*:}" in
+    auto|adopt|install|skip) ;;
+    *) echo "install.sh: ${mode_pair%%:*} takes auto|adopt|install|skip, not '${mode_pair#*:}'"; exit 2;;
+  esac
+done
 
 if [ -n "$REGISTRY_USER" ] && [ -z "${VEXA_CHANNEL_PASS:-}" ]; then
   echo "install.sh: --registry-user given but VEXA_CHANNEL_PASS is not set."
@@ -131,28 +157,272 @@ KYVERNO_NS=${KYVERNO_NAMESPACE:-kyverno}
 # ${arr[@]+"${arr[@]}"} — empty-array expansion is "unbound" under set -u on bash 3.2 (macOS
 # default), so a run without --kubeconfig crashed at the first kubectl call
 kc() { kubectl ${KUBECONFIG_ARG[@]+"${KUBECONFIG_ARG[@]}"} "$@"; }
+# THE DRY RUN MUST NOT PRINT A CREDENTIAL, and on 2026-09-06 it printed the
+# registry password in cleartext inside the rendered Argo repository Secret. The
+# Harbor robot credential that render burned was rotated the same hour. A render
+# an operator cannot save, paste into a ticket, or leave in scrollback is not a
+# review artifact, so redaction is not a courtesy here — it is what makes
+# --dry-run usable for the thing it exists for.
+#
+# The SHAPE survives and only the value goes: a reviewer needs to see that a
+# repository Secret carrying a username exists, never what the password is. The
+# channel PUBLIC key is deliberately not touched — it is public, and whether the
+# right key landed is exactly what a reviewer is checking.
+redact_secrets() {
+  VEXA_REDACT_PASS="${VEXA_CHANNEL_PASS:-}" python3 -c '
+import base64, os, re, sys
+text = sys.stdin.read()
+pw = os.environ.get("VEXA_REDACT_PASS") or ""
+if pw:
+    # the literal, and the two encodings kubectl puts it through on the way
+    # into a dockerconfigjson Secret
+    for form in (pw, base64.b64encode(pw.encode()).decode()):
+        text = text.replace(form, "REDACTED")
+# ...and the carriers, replaced wholesale rather than searched inside: a base64
+# blob that DECODES to a credential is a credential.
+text = re.sub(r"(?mi)^(\s*(?:\.dockerconfigjson|password|token|auth)\s*:\s*)\S.*$",
+              r"\1REDACTED", text)
+sys.stdout.write(text)
+'
+}
+
 apply() {
-  if $DRY_RUN; then echo "--- would apply:"; cat; else kc apply -f -; fi
+  if $DRY_RUN; then echo "--- would apply:"; redact_secrets; else kc apply -f -; fi
+}
+
+# `apply >/dev/null` silences the one-line confirmation a REAL apply prints.
+# Under --dry-run it silenced the RENDER: the rehearsal's dry run emitted 0
+# ConfigMaps and 2 Secrets where a real run writes 2 contract ConfigMaps, 2
+# pubkey Secrets, 2 kubelet pull Secrets and 2 repo Secrets. Six objects a
+# reviewing subscriber never saw, in the command whose whole promise is "render
+# everything, apply nothing".
+apply_quiet() {
+  if $DRY_RUN; then apply; else apply >/dev/null; fi
+}
+
+# 0 · ADOPTION PLAN — decided BEFORE a single object is written ----------------
+#
+# The rehearsal that produced this section ran the installer as a namespace-
+# scoped tenant against a cluster that ALREADY had Argo CD v3.5.1 and Kyverno
+# v1.19.0 — exactly the pinned versions. A server-side dry-run measured what
+# the unconditional steps 2 and 3 below would have done: 49 objects
+# `serverside-applied` and 9 `Forbidden`. Among the 49, `argocd-dex-server` and
+# `argocd-application-controller` — re-adding the upstream hard-coded UIDs
+# (dex 1001, redis 999) that the cluster's own SCC then rejects. So a real run
+# HALF-LANDS: it breaks a working Argo, is Forbidden on the cluster-scoped
+# nine, `set -e` stops the script, and the operator is left with a broken Argo
+# and no subscription.
+#
+# Both halves of that are fixed here, and both are refusals rather than
+# repairs, because the only safe thing to do with a component somebody else
+# already owns is to leave it alone and say so:
+#
+#   1. DETECT what is already installed and compare it with the pin. Present at
+#      the pinned version -> ADOPT (write nothing). Present at another version
+#      -> REFUSE, naming both versions. Absent -> install.
+#   2. Before installing, SERVER-SIDE DRY-RUN the upstream manifest. Any
+#      Forbidden means this credential cannot complete the install, so the
+#      install does not start. A refusal that costs nothing is the whole point
+#      of asking first.
+
+# The deployment that identifies each component, and the image whose tag
+# carries its version. Argo is looked for under both its upstream name and the
+# OpenShift GitOps operator's, because on OpenShift the house Argo is the
+# operator's and it is the one that must be adopted rather than duplicated.
+detect_component() {   # $1 = namespace, $2.. = candidate deployment names
+  local ns=$1; shift
+  local d img
+  for d in "$@"; do
+    img=$(kc -n "$ns" get deploy "$d" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+    if [ -n "$img" ]; then
+      case "$img" in
+        *@sha256:*) echo "$d unknown";;         # digest-pinned: no version to read
+        *:*)        echo "$d ${img##*:}";;
+        *)          echo "$d unknown";;
+      esac
+      return 0
+    fi
+  done
+  echo "- absent"
+}
+
+# What auto does with what it found. Prints the chosen action on stdout and the
+# human sentence on stderr, so the caller can capture one without losing the
+# other.
+plan_component() {   # $1 = label  $2 = mode  $3 = pinned version  $4 = found deploy  $5 = found version
+  local label=$1 mode=$2 pin=$3 found_deploy=$4 found=$5
+  case "$mode" in
+    skip)
+      echo >&2 "   $label: --$label skip — not touched, not checked. Yours to install."
+      echo skip; return 0;;
+    install)
+      echo >&2 "   $label: --$label install — applying the pinned upstream manifests${found:+ over the existing $found_deploy $found}."
+      echo install; return 0;;
+  esac
+  if [ "$found" = "absent" ]; then
+    echo >&2 "   $label: not present — installing $pin"
+    echo install; return 0
+  fi
+  if [ "$mode" = "adopt" ]; then
+    if [ "$found" = "$pin" ]; then
+      echo >&2 "   $label: ADOPTING the existing $found_deploy — it is already $pin. Nothing is applied."
+    else
+      echo >&2 "   $label: ADOPTING the existing $found_deploy ($found) though the pin is $pin — versions differ, adopted on your say-so. Nothing is applied."
+    fi
+    echo adopt; return 0
+  fi
+  if [ "$found" = "$pin" ]; then
+    echo >&2 "   $label: ADOPTING the existing $found_deploy — it is already $pin. Nothing is applied."
+    echo adopt; return 0
+  fi
+  echo refuse
+  return 0
+}
+
+refuse_version() {   # $1 = label  $2 = pin  $3 = found deploy  $4 = found version
+  cat >&2 <<EOF
+
+REFUSING — nothing has been applied.
+
+  $1 is already installed in this cluster ($3), and it is not the version this
+  kit pins:
+
+      installed: $4
+      pinned:    $2
+
+  Installing over it would overwrite a component somebody else owns, and on a
+  cluster where this credential is namespace-scoped it would half-land: the
+  namespaced objects written, the cluster-scoped ones Forbidden, and the script
+  stopped in between. So it does not start.
+
+  Three ways forward, and they are yours to choose:
+
+    --$1 adopt     take the installed $4 as it is. The kit writes nothing to it
+                   and subscribes against it. Its behaviour at that version is
+                   not what we pinned; that is the trade.
+    --$1 skip      leave it entirely alone and do not check it either.
+    --$1 install   apply the pinned manifests over it anyway. Read the paragraph
+                   above before you do.
+EOF
+  exit 3
+}
+
+ARGOCD_FOUND=$(detect_component "$ARGOCD_NS" argocd-server openshift-gitops-server)
+KYVERNO_FOUND=$(detect_component "$KYVERNO_NS" kyverno-admission-controller kyverno)
+ARGOCD_DEPLOY=${ARGOCD_FOUND%% *}; ARGOCD_HAVE=${ARGOCD_FOUND##* }
+KYVERNO_DEPLOY=${KYVERNO_FOUND%% *}; KYVERNO_HAVE=${KYVERNO_FOUND##* }
+
+echo "== what is already here (checked before anything is written)"
+ARGOCD_ACTION=$(plan_component argocd "$ARGOCD_MODE" "$ARGOCD_VERSION" "$ARGOCD_DEPLOY" "$ARGOCD_HAVE")
+[ "$ARGOCD_ACTION" = refuse ] && refuse_version argocd "$ARGOCD_VERSION" "$ARGOCD_DEPLOY" "$ARGOCD_HAVE"
+KYVERNO_ACTION=$(plan_component kyverno "$KYVERNO_MODE" "$KYVERNO_VERSION" "$KYVERNO_DEPLOY" "$KYVERNO_HAVE")
+[ "$KYVERNO_ACTION" = refuse ] && refuse_version kyverno "$KYVERNO_VERSION" "$KYVERNO_DEPLOY" "$KYVERNO_HAVE"
+
+# Ask the API server what this credential could actually write, and refuse
+# BEFORE writing any of it. `--dry-run=server` runs the full admission path —
+# RBAC included — so a Forbidden here is the same Forbidden the real apply
+# would hit, minus the 49 objects that would already be on disk by then.
+precheck_apply() {   # $1 = label  $2 = manifest url  $3.. = extra kubectl args
+  local label=$1 url=$2; shift 2
+  local out rc=0
+  out=$(kc apply --server-side --force-conflicts --dry-run=server "$@" -f "$url" 2>&1) || rc=$?
+  local forbidden
+  forbidden=$(printf '%s\n' "$out" | grep -i -c 'forbidden' || true)
+  if [ "$rc" -ne 0 ] || [ "$forbidden" -gt 0 ]; then
+    cat >&2 <<EOF
+
+REFUSING — nothing has been applied.
+
+  A server-side dry-run of the $label install came back with $forbidden
+  Forbidden object(s) (kubectl exit $rc). This credential cannot complete the
+  install, and a partial one is worse than none: the objects it CAN write land,
+  the rest are refused, and the cluster is left with a half-installed component
+  and no subscription. That is the failure this check exists to prevent.
+
+  What the API server said:
+
+$(printf '%s\n' "$out" | grep -i 'forbidden' | sed 's/^/      /' | head -20)
+
+  This is a one-time platform-team ask, not something to work around: have
+  someone with cluster scope install $label, then re-run with
+  \`--$label adopt\` (or \`--$label skip\`) and the rest of this installer is
+  namespace-scoped work your own credential can do.
+EOF
+    exit 3
+  fi
 }
 
 # 1 · preflight ---------------------------------------------------------------
+#
+# THE PREFLIGHT MUST BE GIVEN THE DELIVERED SET. Until the bbb rehearsal this
+# call passed --namespace and nothing else, so `objects = []` and P2/P3
+# evaluated ONLY the synthetic bot profile — never the chart. P2's own anchor is
+# vexa#1005, "a customer LimitRange squeezed undeclared bots to 64Mi"; the same
+# class then happened at sync time, to postgres, because the check ran against
+# nothing: the chart's own postgres asks for a 4Gi limit and the project's
+# LimitRange ceiling was 2560Mi, sized for the bot's /dev/shm. Admission refused
+# it, after the install, with the preflight green.
+CV_FILE=${CUSTOMER_VALUES:-$HERE/profiles/vexa/customer-values.example.yaml}
 if ! $SKIP_PREFLIGHT; then
   echo "== preflight (conformance before anything is installed)"
-  python3 "$HERE/preflight/vexa_preflight.py" \
-    --namespace "$STAGING_NS" ${KUBECONFIG_ARG[@]+"${KUBECONFIG_ARG[@]}"} \
+  PF_MANIFESTS="$MANIFESTS"
+  if [ -z "$PF_MANIFESTS" ]; then
+    # Render the chart ourselves. Anonymously and with whatever OCI credential
+    # `helm registry login` already left on this machine — the password is NOT
+    # put on helm's argv, where it would land in the process list and the shell
+    # history of the same run that refuses to print it.
+    RENDER_DIR=$(mktemp -d); RENDER="$RENDER_DIR/rendered.yaml"
+    HELM_EXTRA=()
+    $PLAIN_HTTP && HELM_EXTRA+=(--plain-http)
+    $REGISTRY_INSECURE && HELM_EXTRA+=(--insecure-skip-tls-verify)
+    if command -v helm >/dev/null 2>&1 && \
+       helm template "$RELEASE_NAME" "oci://${REGISTRY}/vexa/channel/${CHANNEL}/charts/${CHART_NAME}" \
+         --namespace "$STAGING_NS" --values "$CV_FILE" \
+         ${HELM_EXTRA[@]+"${HELM_EXTRA[@]}"} > "$RENDER" 2>"$RENDER_DIR/err"; then
+      PF_MANIFESTS="$RENDER"
+      echo "   rendered the delivered chart for the preflight: $PF_MANIFESTS"
+    else
+      cat <<EOF
+   WARNING the delivered chart was NOT rendered, so the preflight below checks
+           only the dynamic bot profile. P2 (LimitRange) and P3 (quota) will not
+           see a single workload the channel actually delivers — which is how a
+           4Gi postgres limit got past a 2560Mi ceiling in the 2026-09-06
+           rehearsal and was refused at admission instead.
+           Reason: $( command -v helm >/dev/null 2>&1 && head -1 "$RENDER_DIR/err" 2>/dev/null || echo "helm is not on PATH" )
+           Fix it either way, and re-run:
+             helm registry login ${REGISTRY}          # then re-run this installer
+             # or render it yourself and hand it over:
+             helm template ${RELEASE_NAME} oci://${REGISTRY}/vexa/channel/${CHANNEL}/charts/${CHART_NAME} \\
+               --values ${CV_FILE} > rendered.yaml
+             $0 ... --manifests rendered.yaml
+EOF
+    fi
+  fi
+  PF_ARGS=(--namespace "$STAGING_NS")
+  [ -n "$PF_MANIFESTS" ] && PF_ARGS+=(--manifests "$PF_MANIFESTS")
+  PF_ARGS+=(${KUBECONFIG_ARG[@]+"${KUBECONFIG_ARG[@]}"})
+  echo "   vexa_preflight.py ${PF_ARGS[*]}"
+  python3 "$HERE/preflight/vexa_preflight.py" "${PF_ARGS[@]}" \
     || { echo "preflight FAILED — fix the findings (or rerun with --skip-preflight to proceed anyway, on your own head)"; exit 1; }
 else
   echo "== preflight SKIPPED by flag"
 fi
 
-# 2 · Argo CD (pinned) --------------------------------------------------------
-echo "== Argo CD ${ARGOCD_VERSION} into namespace ${ARGOCD_NS}"
+# 2 · Argo CD (pinned, or the one already here) -------------------------------
+ARGOCD_URL="https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
+case "$ARGOCD_ACTION" in
+  skip)  echo "== Argo CD: skipped by flag (namespace ${ARGOCD_NS} assumed to hold your own)";;
+  adopt) echo "== Argo CD ${ARGOCD_HAVE}: ADOPTED in namespace ${ARGOCD_NS} — nothing applied to it";;
+  *)     echo "== Argo CD ${ARGOCD_VERSION} into namespace ${ARGOCD_NS}";;
+esac
+if [ "$ARGOCD_ACTION" = install ]; then
 kc create namespace "$ARGOCD_NS" --dry-run=client -o yaml | apply
 if ! $DRY_RUN; then
+  precheck_apply argocd "$ARGOCD_URL" -n "$ARGOCD_NS"
   # --server-side: the ApplicationSet CRD exceeds the 256KB last-applied
   # annotation limit under client-side apply (same failure class the argocd
   # spike hit, finding 6)
-  kc apply --server-side --force-conflicts -n "$ARGOCD_NS" -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml" >/dev/null
+  kc apply --server-side --force-conflicts -n "$ARGOCD_NS" -f "$ARGOCD_URL" >/dev/null
   kc -n "$ARGOCD_NS" rollout status deploy/argocd-repo-server --timeout=300s
   kc -n "$ARGOCD_NS" rollout status deploy/argocd-applicationset-controller --timeout=300s
 
@@ -181,12 +451,44 @@ if ! $DRY_RUN; then
     kc -n "$ARGOCD_NS" rollout restart deploy/argocd-server deploy/argocd-application-controller >/dev/null 2>&1 || true
   echo "   resourceTrackingMethod=annotation (adoption-safe; label tracking cannot write into immutable selectors)"
 fi
+fi
 
-# 3 · Kyverno (pinned) --------------------------------------------------------
-echo "== Kyverno ${KYVERNO_VERSION} into namespace ${KYVERNO_NS}"
-if ! $DRY_RUN; then
-  kc apply --server-side --force-conflicts -f "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/install.yaml" >/dev/null
-  kc -n "$KYVERNO_NS" rollout status deploy/kyverno-admission-controller --timeout=300s
+# An ADOPTED Argo is somebody else's, and the tracking method is a cluster-wide
+# setting that restarts its controller. We READ it and, if it is wrong, say so
+# with the two commands — we do not restart a controller managing Applications
+# we know nothing about.
+if [ "$ARGOCD_ACTION" = adopt ] && ! $DRY_RUN; then
+  TRACKING=$(kc -n "$ARGOCD_NS" get configmap argocd-cm \
+    -o jsonpath='{.data.application\.resourceTrackingMethod}' 2>/dev/null || true)
+  if [ "$TRACKING" = "annotation" ]; then
+    echo "   resourceTrackingMethod=annotation already set on the adopted Argo"
+  else
+    cat <<EOF
+   NOTE the adopted Argo tracks resources by '${TRACKING:-label (the default)}', not by annotation.
+   Label tracking writes app.kubernetes.io/instance into spec.selector, which is IMMUTABLE on a
+   Deployment the chart already rendered — the Application then sits permanently OutOfSync on a
+   resource it cannot fix. This installer does NOT change it: it restarts a controller that is
+   managing Applications it knows nothing about. Run these two yourself, before the first sync:
+     kubectl -n ${ARGOCD_NS} patch configmap argocd-cm --type merge -p '{"data":{"application.resourceTrackingMethod":"annotation"}}'
+     kubectl -n ${ARGOCD_NS} rollout restart deploy/argocd-server statefulset/argocd-application-controller
+EOF
+  fi
+fi
+
+# 3 · Kyverno (pinned, or the one already here) --------------------------------
+KYVERNO_URL="https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/install.yaml"
+case "$KYVERNO_ACTION" in
+  skip)  echo "== Kyverno: skipped by flag. The channel's admission policy still lands in step 4;"
+         echo "   it needs a Kyverno in this cluster to have any effect.";;
+  adopt) echo "== Kyverno ${KYVERNO_HAVE}: ADOPTED in namespace ${KYVERNO_NS} — the install is not re-applied";;
+  *)     echo "== Kyverno ${KYVERNO_VERSION} into namespace ${KYVERNO_NS}";;
+esac
+if [ "$KYVERNO_ACTION" != skip ] && ! $DRY_RUN; then
+  if [ "$KYVERNO_ACTION" = install ]; then
+    precheck_apply kyverno "$KYVERNO_URL"
+    kc apply --server-side --force-conflicts -f "$KYVERNO_URL" >/dev/null
+    kc -n "$KYVERNO_NS" rollout status deploy/kyverno-admission-controller --timeout=300s
+  fi
   if $PLAIN_HTTP; then
     # test rigs only; the upstream manifest carries --allowInsecureRegistry=false,
     # so rewrite the args (a blind append leaves both values in place)
@@ -325,22 +627,21 @@ CONTRACT_FILE=${CONTRACT:-$HERE/verify/policy.example.yaml}
 CONTRACT_PROD_FILE=${CONTRACT_PROD:-$CONTRACT_FILE}
 for pair in "vexa-contract-staging:$CONTRACT_FILE:$STAGING_NS" "vexa-contract-prod:$CONTRACT_PROD_FILE:$PROD_NS"; do
   cmname=${pair%%:*}; rest=${pair#*:}; file=${rest%%:*}; ns=${rest##*:}
-  kc create namespace "$ns" --dry-run=client -o yaml | apply >/dev/null
+  kc create namespace "$ns" --dry-run=client -o yaml | apply_quiet
   python3 - "$file" <<PYEOF2 > /tmp/vexa-contract.json
 import json, sys, yaml
 print(json.dumps(yaml.safe_load(open(sys.argv[1])) or {}))
 PYEOF2
   kc -n "$ns" create configmap "$cmname" --from-file=contract.json=/tmp/vexa-contract.json \
-    --dry-run=client -o yaml | apply >/dev/null
+    --dry-run=client -o yaml | apply_quiet
   kc -n "$ns" create secret generic vexa-channel-pubkey --from-file=channel.pub="$PUBKEY" \
-    --dry-run=client -o yaml | apply >/dev/null
+    --dry-run=client -o yaml | apply_quiet
   echo "   $ns: $cmname ($(basename "$file")) + channel key"
 done
 rm -f /tmp/vexa-contract.json
 
 # 6 · the subscription --------------------------------------------------------
 echo "== channel subscription (ApplicationSet: staging follows 'current'; prod follows YOUR pin)"
-CV_FILE=${CUSTOMER_VALUES:-$HERE/profiles/vexa/customer-values.example.yaml}
 echo "   customer values: $CV_FILE"
 VERIFY_ENABLED=false; [ -n "$VERIFIER_IMAGE" ] && VERIFY_ENABLED=true
 
@@ -373,15 +674,40 @@ VERIFY_ENABLED=false; [ -n "$VERIFIER_IMAGE" ] && VERIFY_ENABLED=true
 # It is created unconditionally with --registry-user, NOT gated on the
 # verifier being enabled. The two credentials answer to different consumers
 # and one is not a substitute for the other.
+#
+# AND IT IS CALLED `vexa-channel-pull`, NOT `vexa-channel-registry` (2026-09-06).
+# It carried the same name as the Argo REPOSITORY Secret above, and the two are
+# different objects of different types — Opaque against
+# kubernetes.io/dockerconfigjson. They never collided only because ARGOCD_NS
+# defaults to `argocd` and this one lives in the workload namespace. On ONE
+# PROJECT — the shape the openshift profile exists for — they are one object:
+# the second create failed with
+#
+#     type: Invalid value: "kubernetes.io/dockerconfigjson": field is immutable
+#
+# and all nine ServiceAccounts were left pointing their imagePullSecrets at an
+# Opaque Argo secret the kubelet cannot use. That is precisely the
+# ImagePullBackOff the comment above was written to prevent, reintroduced by a
+# namespace choice. A name that is only unique because of a default is not
+# unique.
+#
+# CARRYING OVER AN EXISTING INSTALL: nothing to do by hand. The ServiceAccount
+# patch below is a merge patch on a LIST, so it REPLACES the whole
+# imagePullSecrets array — every account stops referring to the old name on the
+# next run of this installer or of self-update.sh. The old Secret is then
+# unreferenced and can be deleted at leisure; the migration note in
+# kit/README.md gives the one command and says how to tell the two objects apart
+# before you delete either.
 # --------------------------------------------------------------------------
+KUBELET_PULL_SECRET=vexa-channel-pull
 if [ -n "$REGISTRY_USER" ]; then
   echo "== image-pull credential for the kubelet, in each workload namespace"
   for ns in "$STAGING_NS" "$PROD_NS"; do
-    kc create namespace "$ns" --dry-run=client -o yaml | apply >/dev/null
-    kc -n "$ns" create secret docker-registry vexa-channel-registry \
+    kc create namespace "$ns" --dry-run=client -o yaml | apply_quiet
+    kc -n "$ns" create secret docker-registry "$KUBELET_PULL_SECRET" \
       --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" \
-      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply >/dev/null
-    echo "   $ns: vexa-channel-registry"
+      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply_quiet
+    echo "   $ns: $KUBELET_PULL_SECRET"
 
     # AND ATTACH IT TO THE SERVICE ACCOUNTS, which is not belt-and-braces.
     #
@@ -399,9 +725,13 @@ if [ -n "$REGISTRY_USER" ]; then
     #
     # It runs on every install because ServiceAccounts appear as the estate
     # syncs, not before it — so it is also re-run by self-update.
+    #
+    # A merge patch REPLACES a list, which is what carries an existing install
+    # over: an account still pointing at the old `vexa-channel-registry` name
+    # stops doing so here, without anyone having to find it first.
     for sa in $(kc -n "$ns" get serviceaccounts -o name 2>/dev/null); do
       kc -n "$ns" patch "$sa" --type merge \
-        -p '{"imagePullSecrets":[{"name":"vexa-channel-registry"}]}' >/dev/null 2>&1 || true
+        -p "{\"imagePullSecrets\":[{\"name\":\"$KUBELET_PULL_SECRET\"}]}" >/dev/null 2>&1 || true
     done
   done
 fi
@@ -414,7 +744,7 @@ if [ -n "$REGISTRY_USER" ] && $VERIFY_ENABLED; then
   for ns in "$STAGING_NS" "$PROD_NS"; do
     kc -n "$ns" create secret docker-registry "$VERIFY_REGISTRY_SECRET" \
       --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" \
-      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply >/dev/null
+      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply_quiet
   done
 fi
 VERIFY_INSECURE=false
