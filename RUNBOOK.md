@@ -865,11 +865,12 @@ Pull-only per subscriber; no GitHub accounts, no per-customer ceremony. **The
 password is never written anywhere** — not to a file, not to a log, not to the
 process title, not to a remote argv: `add` prints it once to stdout and
 forgets it. Vault it immediately in the operator's secrets vault
-(`$CHANNEL_CREDENTIAL_VAULT`), then deliver it
-**age-encrypted** to a key the subscriber already controls (usually an SSH
-public key from their GitHub account, fingerprint cited in the mail), or hand
-it to their own vendor-credential intake. `channel.pub` travels by a different
-route, because a trust anchor and a secret must not share a channel.
+(`$CHANNEL_CREDENTIAL_VAULT`), then deliver it by one of the routes in
+[onboarding/credential-delivery.md](onboarding/credential-delivery.md) — their
+own vendor-credential intake if they have one, otherwise a **claim code**
+(§ 5.5), and age-encryption only when they ask for it and already hold the key.
+`channel.pub` travels by a different route, because a trust anchor and a secret
+must not share a channel.
 
 Special cases: `add publisher` also rewrites the edge's `PUBLISHER_BCRYPT`;
 `add edge-signature-reader` also rewrites `EDGE_READER_BASIC` (§ 5.3);
@@ -884,7 +885,82 @@ key only they hold.
 
 A subscriber whose registry needs credentials passes
 `install.sh --registry-user <user>` with the password in `VEXA_CHANNEL_PASS` —
-**never in argv**.
+**never in argv** — or `install.sh --claim-code <code>`, which fetches it and
+never puts it in front of a person at all (§ 5.5).
+
+### 5.5 Delivering by claim code, and rotating one
+
+*Rung: PR-open. The publisher half and the kit half are code with tests; the
+edge service is packaged with a deploy note and **is not deployed** — nobody has
+built its image or run it. Design and deploy note:
+[edge/claim/README.md](edge/claim/README.md).*
+
+The credential is minted as always, then **sealed to the edge's own key** and
+parked under a **six-digit code** with a fifteen-minute life. The code is read
+on a call; their cluster exchanges it for the credential and writes the Secret.
+Nobody on their side ever sees the value, and it exists in no mail, chat, ticket
+or document.
+
+```bash
+# on the call, with them at a terminal
+python3 publisher/vexa_subscriber.py add <account> --park \
+  --channel <channel> --station <station>
+#   stdout line 1: <account>:<password>   -> vault it, as always
+#   stdout line 2: 123 456                -> say these six digits out loud
+
+# they run, and nothing is printed but the receipt
+./kit/claim.sh --code 123456 --edge https://<channel host>/claim \
+  --station <station> --namespace <their prod namespace>
+
+# afterwards, close the return leg
+scp $CHANNEL_REGISTRY_SSH:$CHANNEL_ROOT/claims/attempts.ndjson .
+python3 publisher/vexa_stations.py record-credential \
+  --channel <channel> --events attempts.ndjson
+```
+
+Site values (`$CHANNEL_CLAIM_EDGE`, `$CHANNEL_CLAIM_EDGE_RECIPIENT`,
+`$CHANNEL_CLAIM_SPOOL_SSH`) live in
+[config/channel.example.env](config/channel.example.env). The park is recorded
+in the ledger at `channels/<channel>/stations/<station>/credential-events.yaml`
+— station, when, by whom, code hash, expiry, and every attempt the edge saw.
+Never the value.
+
+**Six digits is one of a million, and the counting is what makes that enough.**
+Five failed attempts burn the park, from all sources together: 5 in 1,000,000,
+once. The edge adds ten attempts per minute per source with a fifteen-minute
+cooling period after that — one address gets one window inside a code's life —
+and twenty requests per minute per park across every source, so extra addresses
+buy no extra guesses. The ledger's `code_sha256` is **salted** per park, because
+an unsalted digest of six digits is a millisecond search and the ledger outlives
+the park by years; the salt stays in the park file on the edge and dies with it.
+Arithmetic in full: [edge/claim/README.md](edge/claim/README.md).
+
+**Rotation is the same act.** `add` rotates, so re-parking a station is how a
+rotation is delivered: new password, new code, same account, one command. There
+is no separate verb and nothing extra to remember.
+
+**And there is a gap, which the design does not hide.** The registry's htpasswd
+holds **one hash per account**, so the moment `add` writes the new line the old
+credential stops working — *at mint time, not at claim time*. Between the park
+and the claim the subscriber has no working credential: minutes on the happy
+path, indefinitely if the code expires unredeemed. Their cluster keeps running
+what it already pulled; what stops is the next pull and the next receipt.
+
+Two procedures, and which one you use is a decision about their tolerance:
+
+| | When | How |
+|---|---|---|
+| **Park on the call** | the normal path | they are on the phone, the gap is the length of one `claim.sh`. Do not park before the call "to save time" — that starts the clock with nobody to read the code to |
+| **Overlap on a second account** | a gap is unacceptable — a production estate mid-sync, or an operator who cannot be on a call | `add <account>-next --park …`, they claim it and prove a pull, **then** `revoke <account>`. Both credentials are live in between, which is the point; the old one dies on an act you take after seeing the new one work |
+
+There is no grace timer, and adding one would be a claim we cannot honour: an
+overlap needs two live hashes, which needs two accounts, which is the second
+procedure written out. **A rotation whose old credential is still live is a
+second account, not a setting.**
+
+A claimed code is spent. An expired or burned one is not re-issued — you park
+again, which rotates again, because re-sending a value we no longer hold is not
+something this tool can do even if it were wise.
 
 ---
 

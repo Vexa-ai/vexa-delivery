@@ -13,7 +13,8 @@ Source: `publisher/vexa_stations.py` · audience: publisher
 Emitted from `python3 publisher/vexa_stations.py --help`.
 
 ```text
-usage: vexa-stations [-h] [--ledger LEDGER] {record-publish,record-ingest,pin,show} ...
+usage: vexa-stations [-h] [--ledger LEDGER]
+                     {record-publish,record-ingest,pin,record-credential,show} ...
 
 vexa-stations — the reducer that writes the channel/station ledger.
 
@@ -52,10 +53,11 @@ between them is a finding, not a bug: it means a promotion did not land, or a
 station moved itself.
 
 positional arguments:
-  {record-publish,record-ingest,pin,show}
+  {record-publish,record-ingest,pin,record-credential,show}
     record-publish      reduce a published entry into channel.yaml
     record-ingest       reduce an ingested station into state.yaml
     pin                 move a station's pin (a promotion)
+    record-credential   reduce the claim edge's attempts log into credential-events.yaml
     show                render the ledger
 
 options:
@@ -114,6 +116,19 @@ options:
   --position POSITION   chart version, or * to follow
   --justification JUSTIFICATION
                         the dev station's receipt that justifies the promotion
+```
+
+## `record-credential`
+
+Ingest the claim edge's `attempts.ndjson` after a delivery — the return leg of credential delivery, and the only place "who tried to claim this station's code, and how it ended" becomes part of the record. Reach for it whenever you copy the spool back, including after a claim that went fine: a park with an opening row and no closing one is a code whose fate nobody wrote down. Re-ingesting the same file is a no-op, so there is no cursor to keep.
+
+```text
+usage: vexa-stations record-credential [-h] --channel CHANNEL --events EVENTS
+
+options:
+  -h, --help         show this help message and exit
+  --channel CHANNEL
+  --events EVENTS    the edge's attempts.ndjson, copied back from the spool
 ```
 
 ## `show`

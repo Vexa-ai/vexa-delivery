@@ -188,6 +188,24 @@ STATE_HEADER = """\
 # flags: derived on every ingest, except `revoked`, which is a human's word
 # and is preserved across reductions."""
 
+CREDENTIAL_HEADER = """\
+# credential-events.yaml — WRITTEN ONLY BY `record_credential_events`.
+#
+# Who parked a credential for this station, when, under which code hash, with
+# what expiry — and every attempt the edge saw against it. NEVER the credential,
+# never the code, never the ciphertext: the reducer refuses the whole batch if
+# an event carries one, because it is the last thing standing between an
+# internet-facing service's log and a git repository.
+#
+# A THIRD SURFACE IN THE STATION DIRECTORY, deliberately, and not an exception
+# to the one-writer rule. `state.yaml` and `receipts/` are written only by
+# ingest; this file is written only by the credential path. One file, one
+# writer — the rule is about the surface, and the surface is the file.
+#
+# The two halves arrive by different routes and merge here by content: `park`
+# from the publisher at mint time, `claim` from the edge's attempts log when an
+# operator copies it back. Re-ingesting the same log is a no-op."""
+
 
 # ---------------------------------------------------------- publish reducer
 
@@ -451,6 +469,128 @@ def record_pin(root: pathlib.Path, *, channel: str, station: str, position: str,
             "commit": sha}
 
 
+# ------------------------------------------------------- credential reducer
+
+# Key names that must never reach this file. Checked by NAME, not by shape:
+# a heuristic that tried to recognise a credential by looking at values would
+# pass the first password that happened to look like a hostname, and the cost
+# of being wrong here is a secret in git history, which is not removable.
+# `code_salt` is on the list for the same reason as `password`, one step
+# removed: `code_sha256` is a digest of that salt and a six-digit code, so a row
+# carrying both is a code anyone can recover in milliseconds. The salt belongs
+# to the park file on the edge and dies with it.
+FORBIDDEN_EVENT_KEYS = {"password", "pass", "secret", "credential", "ciphertext",
+                        "code", "claim_code", "code_salt", "token", "htpasswd"}
+
+CREDENTIAL_EVENT_KINDS = {"park", "claim"}
+
+
+def park_event(record: dict) -> dict:
+    """The park, as the ledger keeps it: everything except the value.
+
+    Built from the park record the publisher just wrote, field by field rather
+    than by copying-and-deleting. A denylist over a record that carries the
+    ciphertext is one forgotten key away from committing it; an allowlist that
+    names each field cannot be.
+    """
+    return {
+        "event": "park",
+        "ts": record["parked_at"],
+        "park_id": record["park_id"],
+        "account": record["account"],
+        "code_sha256": record["code_sha256"],
+        "expires_at": record["expires_at"],
+        "ttl_seconds": record["ttl_seconds"],
+        "max_attempts": record["max_attempts"],
+        "parked_by": record["parked_by"],
+        "edge": record["edge"],
+        "rotation": record["rotation"],
+    }
+
+
+def check_event(event: dict) -> dict:
+    """Refuse an event that carries a value, or that is not one of ours."""
+    if not isinstance(event, dict):
+        raise LedgerError(f"credential event is not a mapping: {event!r}")
+    kind = event.get("event")
+    if kind not in CREDENTIAL_EVENT_KINDS:
+        raise LedgerError(
+            f"credential event {kind!r} is not one of {sorted(CREDENTIAL_EVENT_KINDS)}"
+        )
+    if not event.get("ts"):
+        raise LedgerError("credential event has no `ts`")
+    leaked = sorted(set(event) & FORBIDDEN_EVENT_KEYS)
+    if leaked:
+        raise LedgerError(
+            f"credential event carries {leaked} — the ledger records that a "
+            "credential moved, never the credential. Refusing the batch."
+        )
+    return event
+
+
+def record_credential_events(root: pathlib.Path, *, channel: str, station: str,
+                             events: list, commit: bool = True) -> dict:
+    """Merge credential events into stations/<station>/credential-events.yaml.
+
+    Idempotent by content: the edge's attempts log is a file an operator copies
+    back, possibly twice, possibly overlapping with the last copy. Deduplicating
+    on the whole event means a re-ingest is a no-op and nobody has to track a
+    cursor for it.
+
+    WHICH IS WHY THE EDGE STAMPS A `seq` ON EVERY ATTEMPT. Dedup-by-content and
+    a second-resolution `ts` together collapsed a burst into one row: ten
+    identical `no-park` attempts inside one second were ten identical events,
+    and this kept one — in the record whose reason for existing is to show that
+    somebody hammered a station (2026-09-07 rehearsal, finding 3). The sequence
+    makes each attempt its own row while re-ingest still adds nothing, because
+    the number is written into the log once and travels with it. Nothing here
+    trusts the number: the comparison is still the whole row, and the sort uses
+    it only to order attempts that share a second.
+    """
+    channel = safe_name("channel", channel)
+    station = safe_name("station", station)
+    path = station_dir(root, channel, station) / "credential-events.yaml"
+    doc = load_yaml(path)
+    known = list(doc.get("events") or [])
+    seen = {json.dumps(e, sort_keys=True) for e in known}
+
+    added = 0
+    for event in events:
+        row = {k: v for k, v in check_event(event).items() if v is not None}
+        key = json.dumps(row, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        known.append(row)
+        added += 1
+
+    known.sort(key=lambda e: (e.get("ts") or "", e.get("event") or "",
+                              e.get("seq") or 0))
+    doc.update({
+        "schema_version": SCHEMA_VERSION,
+        "channel": channel,
+        "station": station,
+        "events": known,
+        "updated_at": utcnow(),
+    })
+    if added:
+        write_yaml(path, CREDENTIAL_HEADER, doc)
+
+    sha = None
+    if commit and added:
+        kinds = ", ".join(sorted({e.get("event") for e in events})) or "none"
+        sha = commit_paths(
+            root,
+            f"{channel}/{station}: credential events +{added} ({kinds})\n\n"
+            "Reduced by publisher/vexa_stations.py. The ledger records that a "
+            "credential moved and under which code hash; the value is sealed to "
+            "the edge's key and never passes through here.\n\n<!-- vexa-agent -->",
+            [path],
+        )
+    return {"channel": channel, "station": station, "path": str(path),
+            "added": added, "total": len(known), "commit": sha}
+
+
 # ------------------------------------------------------------------ reading
 
 
@@ -526,6 +666,65 @@ def cmd_pin(args) -> int:
     return 0
 
 
+def cmd_record_credential(args) -> int:
+    """Ingest the claim edge's attempts log — the credential path's return leg.
+
+    The log is one NDJSON file covering every station the edge served, so it is
+    grouped here and reduced per station: one commit each, naming the station,
+    because 'which customer's code was guessed at' is the question this file
+    exists to answer and a single mixed commit hides it.
+    """
+    root = resolve_root(args.ledger)
+    by_station: "dict[str, list]" = {}
+    unattributed = 0
+    for lineno, raw in enumerate(pathlib.Path(args.events).read_text().splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise LedgerError(f"{args.events} line {lineno}: {exc}") from None
+        name = event.get("station")
+        # THE STATION FIELD IS ATTACKER-CONTROLLED — it comes off a public
+        # endpoint's request body. Two guards, and both are needed:
+        #
+        #   the regex     an attempt whose body never parsed names no station
+        #                 at all. Refusing the batch over it let one junk POST
+        #                 block the return leg for every real event, which is a
+        #                 denial of the record by anyone with curl.
+        #   the directory a well-formed name for a station that does not exist
+        #                 would CREATE its directory here. A caller posting a
+        #                 thousand plausible names would grow a thousand
+        #                 directories in the operator's ledger, one commit each.
+        #
+        # A real station always has a directory before its attempts arrive:
+        # `add --park` writes its park row at mint time, which is necessarily
+        # before anyone can claim against it.
+        if not name or not NAME_RE.match(str(name)) or not (
+            station_dir(root, args.channel, str(name)).is_dir()
+        ):
+            unattributed += 1
+            continue
+        by_station.setdefault(name, []).append(
+            {k: v for k, v in event.items() if k != "station"}
+        )
+    if not by_station:
+        print(f"ledger: {args.events} holds no attributable events "
+              f"({unattributed} unattributed)")
+        return 0
+    for station, events in sorted(by_station.items()):
+        out = record_credential_events(root, channel=args.channel, station=station,
+                                       events=events)
+        print(f"ledger: {out['channel']}/{station} credential events +{out['added']} "
+              f"of {len(events)} -> {out['path']} ({out['commit'] or 'no change'})")
+    if unattributed:
+        print(f"ledger: {unattributed} attempt(s) named no station this channel "
+              f"knows — probes at the endpoint; they stay in {args.events} and "
+              f"enter no station's record")
+    return 0
+
+
 def add_ledger_flag(parser: argparse.ArgumentParser) -> None:
     """Shared by vexa_channel.py push and vexa_station.py ingest."""
     parser.add_argument("--ledger", help="checkout of the vexa-stations ledger "
@@ -559,11 +758,19 @@ def main(argv=None) -> int:
     pin.add_argument("--justification", required=True,
                      help="the dev station's receipt that justifies the promotion")
 
+    rc = sub.add_parser("record-credential",
+                        help="reduce the claim edge's attempts log into "
+                             "credential-events.yaml")
+    rc.add_argument("--channel", required=True)
+    rc.add_argument("--events", required=True,
+                    help="the edge's attempts.ndjson, copied back from the spool")
+
     sub.add_parser("show", help="render the ledger")
 
     args = p.parse_args(argv)
     try:
         return {"record-publish": cmd_record_publish, "record-ingest": cmd_record_ingest,
+                "record-credential": cmd_record_credential,
                 "pin": cmd_pin, "show": cmd_show}[args.cmd](args)
     except LedgerError as e:
         print(f"REFUSED {e}", file=sys.stderr)

@@ -44,6 +44,20 @@ options
                     gate.
   --signature-repository  OCI repo where cosign signatures live (default:
                     alongside each image)
+  --claim-code CODE claim the channel credential with the six digits read to you
+                    on a call, INSTEAD of --registry-user plus VEXA_CHANNEL_PASS.
+                    Written 123 456 and typed either way: 123456, or '123 456'
+                    in quotes. The credential is fetched from the channel edge
+                    over TLS, used for every registry secret this script writes,
+                    and also written to the station credential Secret in
+                    --prod-ns. It never appears on your screen, in your shell
+                    history or in a file. The code is single-use and lives ~15
+                    minutes.
+  --claim-edge URL  claim endpoint (default https://<registry>/claim — the claim
+                    service is behind the same edge as the registry, so it is
+                    the host you already allowed through your firewall)
+  --station NAME    your station name, which the claim is bound to
+                    (default: the channel name)
   --registry-user   username for an AUTHENTICATED channel registry. The
                     password is read from the VEXA_CHANNEL_PASS environment
                     variable, never from argv. Required whenever your channel
@@ -52,7 +66,8 @@ options
                     Kyverno also receives it; against channel.vexa.ai the
                     signature read paths are anonymous so it is not needed
                     for admission, but it is needed if you mirror the channel
-                    into your own authenticated registry.
+                    into your own authenticated registry. Use this OR
+                    --claim-code, not both.
   --chart-name NAME  chart to install from the channel (default: vexa). An
                     estate channel serves the vexa-platform chart.
   --release-name N  Helm release name (default: vexa). MUST match the existing
@@ -87,6 +102,7 @@ EOF
 
 PROVIDER="" REGISTRY="" CHANNEL="" PUBKEY="" SIG_REPO="" REGISTRY_CA="" REGISTRY_USER=""
 CUSTOMER_VALUES="" VERIFIER_IMAGE="" MANIFESTS=""
+CLAIM_CODE="" CLAIM_EDGE="" STATION="" STATION_SECRET=vexa-station-credential
 # The chart the subscription installs and the Helm release name it installs
 # under. Both were hardcoded to "vexa". ADOPTION MAKES THAT FATAL: taking
 # ownership of an existing release means matching the name that release
@@ -106,6 +122,9 @@ while [ $# -gt 0 ]; do
     --channel-pubkey) PUBKEY=$2; shift 2;;
     --signature-repository) SIG_REPO=$2; shift 2;;
     --registry-user) REGISTRY_USER=$2; shift 2;;
+    --claim-code) CLAIM_CODE=$2; shift 2;;
+    --claim-edge) CLAIM_EDGE=$2; shift 2;;
+    --station) STATION=$2; shift 2;;
     --registry-ca) REGISTRY_CA=$2; shift 2;;
     --chart-name) CHART_NAME=$2; shift 2;;
     --release-name) RELEASE_NAME=$2; shift 2;;
@@ -138,6 +157,12 @@ for mode_pair in "--argocd:$ARGOCD_MODE" "--kyverno:$KYVERNO_MODE"; do
   esac
 done
 
+if [ -n "$REGISTRY_USER" ] && [ -n "$CLAIM_CODE" ]; then
+  echo "install.sh: --registry-user and --claim-code are two ways to get the same"
+  echo "  credential. Pass one. --claim-code fetches it; --registry-user says you"
+  echo "  already have it in VEXA_CHANNEL_PASS."
+  exit 2
+fi
 if [ -n "$REGISTRY_USER" ] && [ -z "${VEXA_CHANNEL_PASS:-}" ]; then
   echo "install.sh: --registry-user given but VEXA_CHANNEL_PASS is not set."
   echo "  export VEXA_CHANNEL_PASS=... (the password never goes on the command line)"
@@ -351,6 +376,54 @@ EOF
     exit 3
   fi
 }
+
+# 0 · claim the credential ----------------------------------------------------
+#
+# FIRST, before preflight and before a byte of Argo CD is fetched. A claim code
+# lives about fifteen minutes and the installs below take longer than that, so a
+# claim attempted at the point of first use would routinely expire mid-install —
+# after Argo and Kyverno are already down, which is the worst moment to need a
+# second phone call.
+#
+# The exchange lives in kit/claim.sh and is SOURCED, not run: there is one
+# implementation of it, and the credential exists in exactly one place — a shell
+# variable in this process. Shelling out would mean getting the value back
+# through stdout, a file, or a child's environment, and each of those is a way
+# of writing it down.
+if [ -n "$CLAIM_CODE" ]; then
+  CLAIM_EDGE=${CLAIM_EDGE:-https://${REGISTRY}/claim}
+  STATION=${STATION:-$CHANNEL}
+  if $DRY_RUN; then
+    # A dry run must NOT spend the code. Rehearsing an install is exactly when
+    # an operator has not yet been given a fresh one, and a rehearsal that
+    # burned it would be a trap: the real run would then fail with the generic
+    # refusal, saying nothing about why.
+    echo "== claim code: NOT spent (dry run). The real run posts to $CLAIM_EDGE"
+    echo "   as station '$STATION'. Rehearse the exchange itself with:"
+    echo "     ./kit/claim.sh --code <code> --edge $CLAIM_EDGE --station $STATION \\"
+    echo "       --namespace $PROD_NS --dry-run"
+    REGISTRY_USER="<claimed-at-run-time>"
+    VEXA_CHANNEL_PASS="<claimed-at-run-time>"
+  else
+    echo "== claiming the channel credential from $CLAIM_EDGE (station $STATION)"
+    # shellcheck source=claim.sh disable=SC1091
+    source "$HERE/claim.sh"
+    vexa_claim_fetch "$CLAIM_CODE" "$CLAIM_EDGE" "$STATION" || exit 1
+    REGISTRY_USER=$VEXA_CLAIM_USER
+    VEXA_CHANNEL_PASS=$VEXA_CLAIM_PASS
+    echo "   claimed; the code is now spent"
+
+    # The station credential Secret, in the prod namespace — the one object the
+    # station bundle expects an operator to bring (station/README.md). It is the
+    # SAME credential: the receipt sender pushes the station's report back to the
+    # channel with it, and everything below pulls from the channel with it.
+    kc create namespace "$PROD_NS" --dry-run=client -o yaml | kc apply -f - >/dev/null
+    vexa_claim_write_secret "$PROD_NS" "$STATION_SECRET" \
+      "$VEXA_CLAIM_USER" "$VEXA_CLAIM_PASS" \
+      ${KUBECONFIG_ARG[@]+"${KUBECONFIG_ARG[@]}"}
+    echo "   $PROD_NS: $STATION_SECRET (keys username, password)"
+  fi
+fi
 
 # 1 · preflight ---------------------------------------------------------------
 #

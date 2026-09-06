@@ -283,6 +283,134 @@ class PinMoves(unittest.TestCase):
                           justification="because")
 
 
+PARK = {
+    "schema_version": 1,
+    "park_id": "0123456789abcdef",
+    "station": "pilot",
+    "account": "pilot",
+    "code_sha256": "a" * 64,
+    "parked_at": "2026-09-06T12:00:00Z",
+    "expires_at": "2026-09-06T12:15:00Z",
+    "ttl_seconds": 900,
+    "max_attempts": 5,
+    "parked_by": "operator",
+    "edge": "https://channel.example/claim",
+    "rotation": False,
+    "ciphertext": "-----BEGIN AGE ENCRYPTED FILE-----\nfixture\n",
+}
+
+
+class CredentialEvents(unittest.TestCase):
+    """The third surface in a station directory, and the one that would be
+    unrecoverable if it ever recorded a value: git history does not forget."""
+
+    def setUp(self):
+        self.root = new_ledger()
+
+    def events_file(self, station="pilot"):
+        return (vs.station_dir(self.root, "pilot-stable", station)
+                / "credential-events.yaml")
+
+    def test_park_event_carries_the_facts_and_not_the_value(self):
+        event = vs.park_event(PARK)
+        self.assertEqual(event["event"], "park")
+        self.assertEqual(event["code_sha256"], PARK["code_sha256"])
+        self.assertEqual(event["expires_at"], PARK["expires_at"])
+        self.assertEqual(event["parked_by"], "operator")
+        # Built by naming each field, never by copying the record and deleting.
+        # A denylist over a record that carries the ciphertext is one forgotten
+        # key away from committing it; an allowlist cannot be.
+        self.assertNotIn("ciphertext", event)
+        for key in vs.FORBIDDEN_EVENT_KEYS:
+            self.assertNotIn(key, event)
+
+    def test_writes_the_file_and_commits_only_it(self):
+        out = vs.record_credential_events(
+            self.root, channel="pilot-stable", station="pilot",
+            events=[vs.park_event(PARK)])
+        self.assertEqual(out["added"], 1)
+        self.assertIsNotNone(out["commit"])
+        doc = vs.load_yaml(self.events_file())
+        self.assertEqual(doc["station"], "pilot")
+        self.assertEqual(len(doc["events"]), 1)
+        names = git(self.root, "show", "--name-only", "--format=", "HEAD").stdout.split()
+        self.assertEqual(
+            names, ["channels/pilot-stable/stations/pilot/credential-events.yaml"])
+
+    def test_it_never_touches_state_yaml_or_channel_yaml(self):
+        # One file, one writer. `state.yaml` and `receipts/` belong to ingest;
+        # this reducer must be invisible to them.
+        vs.record_credential_events(self.root, channel="pilot-stable", station="pilot",
+                                    events=[vs.park_event(PARK)])
+        sdir = vs.station_dir(self.root, "pilot-stable", "pilot")
+        self.assertFalse((sdir / "state.yaml").exists())
+        self.assertFalse(vs.channel_file(self.root, "pilot-stable").exists())
+
+    def test_re_ingesting_the_same_events_is_a_no_op(self):
+        # The edge's attempts log is a file an operator copies back, possibly
+        # twice, possibly overlapping the last copy. Deduplicating on the whole
+        # event means nobody has to keep a cursor for it.
+        attempt = {"event": "claim", "ts": "2026-09-06T12:03:00Z",
+                   "outcome": "claimed", "source": "203.0.113.7",
+                   "park_id": PARK["park_id"]}
+        first = vs.record_credential_events(
+            self.root, channel="pilot-stable", station="pilot",
+            events=[vs.park_event(PARK), attempt])
+        self.assertEqual(first["added"], 2)
+        again = vs.record_credential_events(
+            self.root, channel="pilot-stable", station="pilot",
+            events=[vs.park_event(PARK), attempt])
+        self.assertEqual(again["added"], 0)
+        self.assertIsNone(again["commit"])
+        self.assertEqual(len(vs.load_yaml(self.events_file())["events"]), 2)
+
+    def test_events_are_ordered_by_time_however_they_arrive(self):
+        late = {"event": "claim", "ts": "2026-09-06T12:09:00Z", "outcome": "claimed",
+                "source": "203.0.113.7"}
+        early = {"event": "claim", "ts": "2026-09-06T12:01:00Z",
+                 "outcome": "wrong-code", "source": "203.0.113.7"}
+        vs.record_credential_events(self.root, channel="pilot-stable", station="pilot",
+                                    events=[late])
+        vs.record_credential_events(self.root, channel="pilot-stable", station="pilot",
+                                    events=[vs.park_event(PARK), early])
+        stamps = [e["ts"] for e in vs.load_yaml(self.events_file())["events"]]
+        self.assertEqual(stamps, sorted(stamps))
+
+    def test_a_value_shaped_key_refuses_the_whole_batch(self):
+        # This reducer is the last thing between an internet-facing service's
+        # log and a git repository, and git history does not forget.
+        for leak in ({"password": "hunter2"}, {"ciphertext": "-----BEGIN AGE"},
+                     {"code": "ABCD2345"}, {"token": "x"}, {"secret": "x"}):
+            with self.subTest(leak=sorted(leak)):
+                event = {"event": "claim", "ts": "2026-09-06T12:01:00Z",
+                         "outcome": "claimed", "source": "203.0.113.7", **leak}
+                with self.assertRaises(vs.LedgerError) as caught:
+                    vs.record_credential_events(
+                        self.root, channel="pilot-stable", station="pilot",
+                        events=[vs.park_event(PARK), event])
+                self.assertIn("never the credential", str(caught.exception))
+        # ...and nothing from the refused batch landed, the good half included.
+        self.assertFalse(self.events_file().exists())
+
+    def test_an_unknown_event_kind_is_refused(self):
+        with self.assertRaises(vs.LedgerError):
+            vs.record_credential_events(
+                self.root, channel="pilot-stable", station="pilot",
+                events=[{"event": "exfiltrate", "ts": "2026-09-06T12:01:00Z"}])
+
+    def test_an_event_without_a_timestamp_is_refused(self):
+        with self.assertRaises(vs.LedgerError):
+            vs.record_credential_events(
+                self.root, channel="pilot-stable", station="pilot",
+                events=[{"event": "claim", "outcome": "claimed"}])
+
+    def test_an_unsafe_station_name_cannot_write_outside_the_ledger(self):
+        with self.assertRaises(vs.LedgerError):
+            vs.record_credential_events(
+                self.root, channel="pilot-stable", station="../../etc",
+                events=[vs.park_event(PARK)])
+
+
 class Guards(unittest.TestCase):
     def test_a_directory_that_is_not_a_git_checkout_is_refused(self):
         tmp = pathlib.Path(tempfile.mkdtemp())

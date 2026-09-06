@@ -4,7 +4,7 @@
 # release crank, it reads the operator's own environment, and `DRY_RUN=1` is the
 # form of it that touches nothing.
 
-.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-verify test-gates validate-goldens docs-reference check-docs check-private-tokens lint
+.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-verify test-edge test-gates validate-goldens docs-reference check-docs check-private-tokens lint
 
 # RUNBOOK § 1 as one command: fetch -> build -> sign-images -> push.
 #
@@ -26,7 +26,7 @@ publish:
 	 SIGNING_RECEIPT='$(SIGNING_RECEIPT)' WORK='$(WORK)' DRY_RUN='$(DRY_RUN)' \
 	 sh publisher/publish.sh
 
-test: test-publisher test-preflight test-smoke test-validate test-report test-kit test-verify test-gates validate-goldens check-docs check-private-tokens
+test: test-publisher test-preflight test-smoke test-validate test-report test-kit test-verify test-edge test-gates validate-goldens check-docs check-private-tokens
 
 test-publisher:
 	python3 -m unittest discover -s publisher/tests -v
@@ -58,13 +58,27 @@ test-report:
 # install.sh's contracts, exercised against a stub kubectl. The dry-run one
 # asserts on what is RENDERED; the adoption one asserts on what is EXECUTED —
 # its stub LOGS every invocation, so "it did not apply that" is checkable
-# rather than merely claimed.
+# rather than merely claimed. The claim one runs against a fixture edge and the
+# same stub, where the assertion that matters is negative: the credential must
+# never reach stdout. First, the cheapest gate of them all: every kit script is
+# executable in the TREE, which is what a fresh clone gets and what
+# `./kit/claim.sh` needs to be a command at all.
 test-kit:
+	bash kit/tests/test_script_modes.sh
 	bash kit/tests/test_install_dry_run.sh
 	bash kit/tests/test_install_adopt.sh
 	bash kit/tests/test_install_manifests.sh
 	bash kit/tests/test_install_dry_run_secrets.sh
 	bash kit/tests/test_install_object_names.sh
+	bash kit/tests/test_claim.sh
+
+# The claim edge: the park format, the claim state machine (park · claim · burn ·
+# expiry · attempt limit) and the service itself over a real loopback socket. No
+# keypair — `decrypt` is injected — so the transitions that decide who gets a
+# credential are proved in CI, where `age` is not installed. The one real age
+# round trip skips without the binary, the way bcrypt hashing already does.
+test-edge:
+	@if [ -d edge/claim/tests ]; then python3 -m unittest discover -s edge/claim/tests -v; else echo "edge/claim/tests not present yet; skipped"; fi
 
 # The in-cluster verifier's evidence model, against fixture entries with stub
 # oras/cosign. Offline: no registry, no cluster, no signature.
@@ -93,7 +107,7 @@ validate-goldens:
 # 0 — the local lint disagreed with CI for as long as that line existed. Test for
 # the tool, then run it as its own command so its exit status is the target's.
 lint:
-	python3 -m compileall -q publisher kit spec gates
+	python3 -m compileall -q publisher kit spec gates edge
 	@if ! command -v shellcheck >/dev/null; then \
 	  echo "lint: shellcheck is not installed (brew install shellcheck / apt-get install shellcheck)"; exit 1; \
 	fi

@@ -117,6 +117,14 @@ vexa-stations record-ingest: >-
   it — but it is how you backfill a station that was ingested before the ledger,
   without asking the customer to send the report again.
 
+vexa-stations record-credential: >-
+  Ingest the claim edge's `attempts.ndjson` after a delivery — the return leg of
+  credential delivery, and the only place "who tried to claim this station's
+  code, and how it ended" becomes part of the record. Reach for it whenever you
+  copy the spool back, including after a claim that went fine: a park with an
+  opening row and no closing one is a code whose fate nobody wrote down.
+  Re-ingesting the same file is a no-op, so there is no cursor to keep.
+
 vexa-stations pin: >-
   Move a station's pin: the promotion. This is the one write to `channel.yaml`
   a human makes, and it refuses to run without a justification, because a
@@ -135,7 +143,12 @@ vexa-subscriber list: >-
 vexa-subscriber add: >-
   Mint a credential for an account — the same verb rotates an existing one.
   Onboarding a new subscriber and rotating a compromised one are the same act
-  against the registry, and both end with an age-encrypted handoff.
+  against the registry, and the delivery leg is where they differ. `--park`
+  seals the new value to the channel edge's key and parks it under a six-digit
+  code you read aloud on a call, so nobody on their side ever sees the
+  credential and it exists in no mail, chat, ticket or document.
+  Without `--park` you are back to the age-encrypted handoff, which is the
+  right route only when the recipient already holds a key you have confirmed.
 
 vexa-subscriber revoke: >-
   Remove an account's credential. Use it when a pilot ends or a credential is
@@ -222,6 +235,17 @@ kit-install: >-
   position, plus the admission policy that pins the channel key. Prod gets an
   Application only when you set `--prod-pin`, because moving that pin is the
   operator's gate and not ours to pre-press.
+
+kit-claim: >-
+  Turn the short code someone read to you on a call into your channel credential,
+  written straight into a Secret in your cluster. Reach for it when you are
+  adding the credential to a cluster that is already installed, or re-adding one
+  after a rotation; a first install takes the same code through
+  `install.sh --claim-code` instead. The value never appears on your screen, so
+  there is nothing to paste, nothing in your shell history and nothing to shred
+  afterwards. `--print-once` is the exception, for the registry mirror that can
+  only be configured by pasting a password into a form: it prints, and warns
+  that the code is spent and the value now exists only where you put it.
 
 kit-self-update: >-
   Move an already-bootstrapped kit tree to a newer kit version, checked

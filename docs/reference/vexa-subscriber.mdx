@@ -40,16 +40,40 @@ options:
 
 ## `add`
 
-Mint a credential for an account — the same verb rotates an existing one. Onboarding a new subscriber and rotating a compromised one are the same act against the registry, and both end with an age-encrypted handoff.
+Mint a credential for an account — the same verb rotates an existing one. Onboarding a new subscriber and rotating a compromised one are the same act against the registry, and the delivery leg is where they differ. `--park` seals the new value to the channel edge's key and parks it under a six-digit code you read aloud on a call, so nobody on their side ever sees the credential and it exists in no mail, chat, ticket or document. Without `--park` you are back to the age-encrypted handoff, which is the right route only when the recipient already holds a key you have confirmed.
 
 ```text
-usage: vexa_subscriber add [-h] name
+usage: vexa_subscriber add [-h] [--park] [--channel CHANNEL] [--station STATION] [--edge EDGE]
+                           [--edge-recipient EDGE_RECIPIENT] [--park-out PARK_OUT]
+                           [--park-ssh PARK_SSH] [--ledger LEDGER] [--ttl SECONDS]
+                           [--parked-by PARKED_BY]
+                           name
 
 positional arguments:
-  name        account name, e.g. 'pilot'
+  name                  account name, e.g. 'pilot'
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help            show this help message and exit
+
+claim-code delivery (--park):
+  Seal the minted credential to the edge's key and park it under a 6-digit code you read on a
+  call. Line 1 of stdout is still the credential, to vault; line 2 is the six digits, grouped in
+  threes for reading aloud.
+
+  --park                park the credential for claiming at the channel edge
+  --channel CHANNEL     channel the station belongs to (required with --park; the ledger path)
+  --station STATION     station the code is bound to (default: the account name)
+  --edge EDGE           claim endpoint URL (default: $CHANNEL_CLAIM_EDGE)
+  --edge-recipient EDGE_RECIPIENT
+                        age recipients file holding the EDGE's public key — we encrypt to it and
+                        cannot decrypt what we wrote (default: $CHANNEL_CLAIM_EDGE_RECIPIENT)
+  --park-out PARK_OUT   spool directory this host can write (default: $CHANNEL_CLAIM_SPOOL)
+  --park-ssh PARK_SSH   scp target for the edge host's spool, e.g. root@host:/srv/channel/claims
+                        (default: $CHANNEL_CLAIM_SPOOL_SSH)
+  --ledger LEDGER       checkout of the vexa-stations ledger (default: $VEXA_STATIONS_DIR)
+  --ttl SECONDS         how long the code lives (default 900)
+  --parked-by PARKED_BY
+                        who parked it, for the ledger (default: $USER)
 ```
 
 ## `revoke`

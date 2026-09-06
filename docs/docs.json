@@ -68,6 +68,7 @@
                   "reference/vexa-validate",
                   "reference/kit-bootstrap",
                   "reference/kit-install",
+                  "reference/kit-claim",
                   "reference/kit-self-update"
                 ]
               }

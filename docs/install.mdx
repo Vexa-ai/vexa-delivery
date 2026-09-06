@@ -57,6 +57,8 @@ export VEXA_CHANNEL_PASS=<the credential from your onboarding mail>
   --verifier-image <the verifier image ref from your onboarding mail>
 ```
 
+**Given six digits on a call instead of a credential?** Pass `--claim-code <the six digits> --station <your-station>` in place of `--registry-user` and `VEXA_CHANNEL_PASS`: the installer fetches the credential over TLS and writes it straight into the cluster, so it never reaches your screen, your shell history or a file. The code is single-use and lives about fifteen minutes. On a cluster that is already installed, [`kit/claim.sh`](reference/kit-claim) does the same exchange on its own.
+
 Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster.
 
 **If your cluster already runs Argo CD or Kyverno**, say so with `--argocd` and `--kyverno`, which each take `auto` (the default), `adopt`, `install` or `skip`. `auto` looks before it writes: absent → it installs the pinned version; present at the pinned version → it **adopts** yours and applies nothing to it; present at another version → it **refuses and names the version**, before a single object is written. `skip` leaves that component entirely to you.
