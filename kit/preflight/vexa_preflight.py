@@ -49,6 +49,13 @@ Workloads under test come from --manifests (rendered YAML; converted via
 plus the built-in dynamic-bot profile (bots are spawned per meeting and never
 appear in a chart render; sizes are the measured production values,
 overridable). Exit 0 = no FAIL; 1 = at least one FAIL; 2 = usage error.
+
+A READ THIS CREDENTIAL IS REFUSED IS NOT A FINDING. Every cluster-scoped read
+is wrapped, and a check whose input could not be read reports UNKNOWN, naming
+the read and the refusal — never a traceback, never a PASS, never a FAIL. A
+namespace-scoped tenant cannot list nodes; saying so is the honest answer, and
+`--dump-snapshot` as an admin then `--snapshot` as the tenant is the way to
+turn an UNKNOWN into an answer.
 """
 import argparse
 import json
@@ -229,6 +236,25 @@ class Check:
             self.status = "WARN"
         self.findings.append(msg)
 
+    def unknown(self, msg, remedy=None):
+        """The check could not be evaluated — say so, never guess.
+
+        A read this credential is refused is NOT a finding about the cluster: a
+        namespace-scoped tenant cannot list nodes, and reporting that as PASS
+        claims something was verified, while reporting it as FAIL claims a
+        defect that was never observed. Both are lies of a different sign, and
+        the second is the one the field hit — `install.sh` printed
+        `preflight FAILED` having checked nothing at all.
+
+        UNKNOWN outranks PASS and WARN and never overrides a real FAIL: a check
+        that found something AND could not finish still found something.
+        """
+        if self.status in ("PASS", "WARN"):
+            self.status = "UNKNOWN"
+        self.findings.append(msg)
+        if remedy and not self.remedy:
+            self.remedy = remedy
+
     def note(self, msg):
         self.findings.append(msg)
 
@@ -250,9 +276,38 @@ class Check:
 # --------------------------------------------------------------------- checks
 
 
+def refused(snapshot, key):
+    """The reason `key` could not be read, or None if it could."""
+    return (snapshot.get("unreadable") or {}).get(key)
+
+
+def unknown_because(check, snapshot, key, what, remedy=None):
+    """If `key` was refused, mark the check UNKNOWN and say so. Returns True.
+
+    The sentence names the READ, not the cluster: "this could not be evaluated
+    because that read was refused" is a different claim from "this cluster is
+    fine" and from "this cluster is broken", and the caller must not be able to
+    mistake it for either.
+    """
+    reason = refused(snapshot, key)
+    if not reason:
+        return False
+    check.unknown(
+        f"UNEVALUATED — {what} needs `{key}`, and that read was refused: {reason}. "
+        f"This says nothing about the cluster; it says this credential cannot see it.",
+        remedy=remedy or (
+            "run it once with a credential that can read cluster scope and keep the result: "
+            "`vexa_preflight.py --dump-snapshot snap.json` as an admin, then "
+            "`--snapshot snap.json` with your own"),
+    )
+    return True
+
+
 def check_taints(snapshot, workloads):
     c = Check("P1", "Every delivered workload can schedule despite node taints",
               "vexa-platform#337 (6h addon strand); argocd spike finding 5")
+    if unknown_because(c, snapshot, "nodes", "scheduling against node taints"):
+        return c
     nodes = snapshot.get("nodes", [])
     if not nodes:
         c.skip("no nodes visible in snapshot")
@@ -295,6 +350,8 @@ def container_requirements(container):
 def check_limitranges(snapshot, workloads):
     c = Check("P2", "Declared resources on every container, and they fit the LimitRange",
               "vexa#1005 (a customer LimitRange squeezed undeclared bots to 64Mi); vexa-platform#338 (sizing env vars dead code)")
+    unknown_because(c, snapshot, "limitranges",
+                    "comparing declared limits against the namespace ceiling")
     lrs = snapshot.get("limitranges", [])
     lr_items = [i for lr in lrs for i in lr.get("spec", {}).get("limits", [])]
     container_lr = [i for i in lr_items if i.get("type") == "Container"]
@@ -348,6 +405,8 @@ def check_limitranges(snapshot, workloads):
 
 def check_quota(snapshot, workloads):
     c = Check("P3", "ResourceQuota headroom covers the declared totals", "handoff §6.1")
+    if unknown_because(c, snapshot, "resourcequotas", "quota headroom"):
+        return c
     quotas = snapshot.get("resourcequotas", [])
     if not quotas:
         c.note("no ResourceQuota in the namespace")
@@ -391,6 +450,8 @@ def parse_uid_range(annotation):
 def check_pod_security(snapshot, workloads):
     c = Check("P4", "SCC restricted-v2 / PodSecurity 'restricted' admission",
               "openshift readiness audit 2026-08-19: SCC mutates, then REJECTS explicit UIDs outside the namespace range; the hardened workloads are the rejected ones")
+    unknown_because(c, snapshot, "namespace",
+                    "reading the namespace's SCC uid-range and PSA labels")
     ns = snapshot.get("namespace", {})
     annotations = ns.get("metadata", {}).get("annotations", {}) or {}
     labels = ns.get("metadata", {}).get("labels", {}) or {}
@@ -465,6 +526,8 @@ def check_pod_security(snapshot, workloads):
 def check_netpol_static(snapshot, workloads):
     c = Check("P5", "NetworkPolicy lets the delivered workloads resolve DNS and reach the registry",
               "handoff §6.1 (netpol reachability); spike finding 9 (the only defence was an unenforced hostAliases sink)")
+    if unknown_because(c, snapshot, "networkpolicies", "detecting a default-deny egress policy"):
+        return c
     pols = snapshot.get("networkpolicies", [])
     if not pols:
         c.note("no NetworkPolicies in the namespace — nothing blocks; nothing isolates either")
@@ -504,6 +567,8 @@ def check_shm(snapshot, workloads):
     if not shm_workloads:
         c.note("no Memory-medium emptyDir in the delivered set (bot profile disabled?)")
         return c
+    unknown_because(c, snapshot, "limitranges", "the LimitRange half of this check")
+    unknown_because(c, snapshot, "nodes", "the node-allocatable half of this check")
     lr_items = [
         i
         for lr in snapshot.get("limitranges", [])
@@ -552,6 +617,8 @@ def check_storage(snapshot, objects):
     if not wants_pvc:
         c.note("delivered set carries no PVCs")
         return c
+    if unknown_because(c, snapshot, "storageclasses", "finding a default StorageClass"):
+        return c
     scs = snapshot.get("storageclasses", [])
     default = [
         s
@@ -574,6 +641,8 @@ def check_storage(snapshot, objects):
 
 def check_version(snapshot):
     c = Check("P9", "Kubernetes version floor", "kit pins Argo CD + Kyverno versions")
+    if unknown_because(c, snapshot, "server_version", "reading the API server's version"):
+        return c
     v = snapshot.get("server_version", {})
     minor = re.sub(r"\D", "", v.get("minor", "") or "")
     if not minor:
@@ -606,34 +675,72 @@ def kubectl_json(args, **kw):
     return json.loads(r.stdout)
 
 
-def take_snapshot(namespace, kubeconfig=None, context=None):
-    snap = {"namespace_name": namespace}
-    snap["nodes"] = kubectl_json(["get", "nodes"], kubeconfig=kubeconfig, context=context)["items"]
+def read_failure_reason(exc):
+    """One line naming why a read did not happen, safe to print.
+
+    A kubectl RBAC refusal already says everything useful ("cannot list
+    resource ... at the cluster scope"); the other cases have to be spelt out
+    because their exception text does not name the act that failed.
+    """
+    if isinstance(exc, RuntimeError):
+        return str(exc)
+    if isinstance(exc, FileNotFoundError):
+        return "kubectl is not on PATH"
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return "the read timed out (the API server did not answer)"
+    if isinstance(exc, ValueError):          # json.JSONDecodeError is a subclass
+        return "kubectl returned output that is not JSON"
+    return f"{type(exc).__name__}: {exc}"
+
+
+# Every read in take_snapshot goes through this. THE UNWRAPPED READ WAS THE
+# DEFECT: `kubectl get nodes` sat bare while every sibling — storageclasses
+# included — was inside try/except, so a namespace-scoped tenant got a Python
+# traceback out of a conformance tool, and `install.sh` then reported
+# `preflight FAILED` having evaluated nothing. A refused read is a fact about
+# this credential's scope, not about the cluster, and the checks below turn it
+# into UNKNOWN rather than into a verdict.
+def snapshot_read(snap, key, args, kubeconfig=None, context=None):
     try:
-        snap["namespace"] = kubectl_json(["get", "namespace", namespace], kubeconfig=kubeconfig, context=context)
-    except RuntimeError:
+        return kubectl_json(args, kubeconfig=kubeconfig, context=context)
+    except Exception as exc:                                        # noqa: BLE001
+        snap.setdefault("unreadable", {})[key] = read_failure_reason(exc)
+        return None
+
+
+def take_snapshot(namespace, kubeconfig=None, context=None):
+    snap = {"namespace_name": namespace, "unreadable": {}}
+    nodes = snapshot_read(snap, "nodes", ["get", "nodes"],
+                          kubeconfig=kubeconfig, context=context)
+    snap["nodes"] = (nodes or {}).get("items", [])
+    ns = snapshot_read(snap, "namespace", ["get", "namespace", namespace],
+                       kubeconfig=kubeconfig, context=context)
+    if ns is None:
         snap["namespace"] = {"metadata": {"name": namespace, "labels": {}, "annotations": {}}}
         snap["namespace_absent"] = True
+    else:
+        snap["namespace"] = ns
     for key, kind in (
         ("limitranges", "limitrange"),
         ("resourcequotas", "resourcequota"),
         ("networkpolicies", "networkpolicy"),
+        ("storageclasses", "storageclass"),
     ):
-        try:
-            snap[key] = kubectl_json(["get", kind, "-n", namespace], kubeconfig=kubeconfig, context=context)["items"]
-        except RuntimeError:
-            snap[key] = []
+        args = ["get", kind] if kind == "storageclass" else ["get", kind, "-n", namespace]
+        got = snapshot_read(snap, key, args, kubeconfig=kubeconfig, context=context)
+        snap[key] = (got or {}).get("items", [])
     try:
-        snap["storageclasses"] = kubectl_json(["get", "storageclass"], kubeconfig=kubeconfig, context=context)["items"]
-    except RuntimeError:
-        snap["storageclasses"] = []
-    api = kubectl(["api-versions"], kubeconfig=kubeconfig, context=context)
-    snap["openshift_scc"] = "security.openshift.io/v1" in (api.stdout or "")
-    ver = kubectl(["version", "-o", "json"], kubeconfig=kubeconfig, context=context)
+        api = kubectl(["api-versions"], kubeconfig=kubeconfig, context=context)
+        snap["openshift_scc"] = "security.openshift.io/v1" in (api.stdout or "")
+    except Exception as exc:                                        # noqa: BLE001
+        snap["openshift_scc"] = False
+        snap["unreadable"]["api_versions"] = read_failure_reason(exc)
     try:
+        ver = kubectl(["version", "-o", "json"], kubeconfig=kubeconfig, context=context)
         snap["server_version"] = json.loads(ver.stdout).get("serverVersion", {})
-    except Exception:
+    except Exception as exc:                                        # noqa: BLE001
         snap["server_version"] = {}
+        snap["unreadable"]["server_version"] = read_failure_reason(exc)
     return snap
 
 
@@ -789,7 +896,8 @@ def render(checks, as_json=False):
     lines.append("vexa-preflight — cluster conformance for a private channel")
     lines.append("=" * width)
     for c in checks:
-        badge = {"PASS": "PASS", "WARN": "WARN", "FAIL": "FAIL", "SKIP": "skip"}[c.status]
+        badge = {"PASS": "PASS", "WARN": "WARN", "FAIL": "FAIL", "SKIP": "skip",
+                 "UNKNOWN": "????"}[c.status]
         lines.append(f"[{badge}] {c.cid} · {c.title}")
         for f in c.findings:
             lines.append(f"       {f}")
@@ -802,8 +910,16 @@ def render(checks, as_json=False):
 
 
 def overall(checks):
+    unknown = [c.cid for c in checks if c.status == "UNKNOWN"]
     if any(c.status == "FAIL" for c in checks):
-        return "FAIL — fix the findings above before first sync"
+        tail = f" ({len(unknown)} check(s) could not be evaluated: {', '.join(unknown)})" if unknown else ""
+        return f"FAIL — fix the findings above before first sync{tail}"
+    # UNKNOWN is not a pass and it is not a failure. Rolling it into either is
+    # the error this verdict exists to stop: the field saw `preflight FAILED`
+    # printed over checks that had never run.
+    if unknown:
+        return (f"PASS on what could be checked — {len(unknown)} check(s) NOT EVALUATED "
+                f"({', '.join(unknown)}). Nothing failed; some things were never looked at.")
     if any(c.status == "WARN" for c in checks):
         return "PASS with warnings"
     return "PASS"

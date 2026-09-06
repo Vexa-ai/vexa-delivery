@@ -73,6 +73,13 @@ plus the built-in dynamic-bot profile (bots are spawned per meeting and never
 appear in a chart render; sizes are the measured production values,
 overridable). Exit 0 = no FAIL; 1 = at least one FAIL; 2 = usage error.
 
+A READ THIS CREDENTIAL IS REFUSED IS NOT A FINDING. Every cluster-scoped read
+is wrapped, and a check whose input could not be read reports UNKNOWN, naming
+the read and the refusal — never a traceback, never a PASS, never a FAIL. A
+namespace-scoped tenant cannot list nodes; saying so is the honest answer, and
+`--dump-snapshot` as an admin then `--snapshot` as the tenant is the way to
+turn an UNKNOWN into an answer.
+
 options:
   -h, --help            show this help message and exit
   --namespace NAMESPACE
