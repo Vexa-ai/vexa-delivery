@@ -3,8 +3,10 @@
 `GET /vexa/channel/<name>` — the address a subscriber is handed, answered as a
 page instead of `404 page not found`.
 
-**Not deployed.** Nobody has built this image or run this service. The live edge
-is founder-owned; [§ Deploy](#deploy) is the note for whoever does it.
+**Deployed 2026-09-06** on the live channel edge:
+[receipt](/receipts/2026-09-06-edge-claim-and-channel-page). [§ Deploy](#deploy)
+is what was done, with one correction marked **⚠** where the note as written
+would have failed.
 
 | | |
 |---|---|
@@ -151,6 +153,12 @@ handle @channel_page {
 }
 ```
 
+> **⚠ `127.0.0.1` only if Caddy runs on the host.** Where Caddy is itself a
+> container — as it is on the live edge — that loopback is the Caddy container's
+> own and the publish above is unreachable from it. Attach this service to the
+> registry stack's network and proxy to its alias (`reverse_proxy
+> page-edge:8089`).
+
 Order matters: this stanza must not shadow `/v2/…`, and the regexp above cannot
 — `/v2/` is a different prefix, and the pattern admits exactly one path segment
 after `/vexa/channel/`. Caddy passes the `Authorization` header through by
@@ -184,6 +192,6 @@ is intended rather than as it drifted.
   delegates rather than deciding. It shows one channel and never enumerates —
   no listing, no `_catalog`, no link to another channel — but the scoping is
   the edge's to tighten, not this service's to claim.
-- **Nobody has built this image or run this service.** Every claim above is a
-  claim about `page_edge.py` and `vexa_page.py`, which `tests/` exercises
-  against a real socket and a fixture registry — not about a running deployment.
+- **The one-minute cache has been observed doing exactly this.** On 2026-09-06 a
+  credential revoked seconds earlier got `401` on `/v2/` and `200` on its page.
+  The pull path is what matters and it refused at once; the page is a page.
