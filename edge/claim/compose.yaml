@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The claim edge, as it joins the channel host's existing stack. NOT APPLIED by
+# the change that added this file — see README.md § Deploy. The live edge is
+# founder-owned.
+#
+# It is a SEPARATE compose project on purpose. Merging it into the registry's
+# own compose file would put this service's restarts on the registry's blast
+# radius, and `docker compose up -d --force-recreate` is already how
+# `vexa_subscriber.py` rotates credentials (RUNBOOK § 5.4) — a recreate that
+# also bounced the registry every time somebody added an account would be a new
+# way to take the channel down during onboarding, which is exactly when nobody
+# is watching for it.
+#
+#     docker compose -f edge/claim/compose.yaml up -d
+#
+# `$CHANNEL_ROOT` is the same root the registry stack uses (config/channel.env).
+
+name: vexa-claim-edge
+
+services:
+  claim-edge:
+    image: ${CLAIM_EDGE_IMAGE:?set CLAIM_EDGE_IMAGE to the built, digest-pinned ref}
+    restart: unless-stopped
+    # LOOPBACK ONLY. Caddy reverse-proxies /claim to this port and owns TLS,
+    # exactly as it owns the registry's. Published on 0.0.0.0 this would be an
+    # unauthenticated credential endpoint on a public IP with no certificate.
+    ports:
+      - "127.0.0.1:8088:8088"
+    environment:
+      CLAIM_LISTEN: 0.0.0.0:8088
+      CLAIM_SPOOL: /spool
+      CLAIM_IDENTITY: /identity/claim-edge.key
+      CLAIM_RATE_LIMIT: "20"
+      CLAIM_RATE_WINDOW: "60"
+      # 1 only because Caddy is in front and sets X-Forwarded-For. Reached
+      # directly, that header is whatever the caller typed.
+      CLAIM_TRUST_FORWARDED_FOR: "1"
+    volumes:
+      # The spool: the publisher scps parks in, this service reads them, marks
+      # state and deletes the ciphertext on any terminal outcome. It must be
+      # WRITABLE — the attempt counter and the attempts log live here, and a
+      # read-only spool would make five failed attempts unrecordable and the
+      # burn unenforceable.
+      - ${CHANNEL_ROOT:?set CHANNEL_ROOT}/claims:/spool
+      # The private half of the park key. Read-only, and the service refuses to
+      # start if it is group- or world-readable.
+      - ${CHANNEL_ROOT:?set CHANNEL_ROOT}/claim-edge.key:/identity/claim-edge.key:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

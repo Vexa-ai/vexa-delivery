@@ -83,6 +83,14 @@ MAX_ATTEMPTS = 5
 
 STATION_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
+# The station of an attempt whose body never parsed. Chosen because it can
+# never BE a station name (STATION_RE requires a leading alphanumeric), so the
+# ledger can route it aside instead of mistaking it for one — and it must be
+# routed aside: one junk POST at the endpoint used to refuse a whole batch of
+# real events, which would have blocked the return leg for as long as anyone
+# was probing.
+UNATTRIBUTED = "-"
+
 LIVE = "live"
 REDEEMED = "redeemed"
 BURNED = "burned"

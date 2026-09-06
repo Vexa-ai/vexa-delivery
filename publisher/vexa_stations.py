@@ -661,6 +661,7 @@ def cmd_record_credential(args) -> int:
     """
     root = resolve_root(args.ledger)
     by_station: "dict[str, list]" = {}
+    unattributed = 0
     for lineno, raw in enumerate(pathlib.Path(args.events).read_text().splitlines(), 1):
         line = raw.strip()
         if not line:
@@ -670,19 +671,42 @@ def cmd_record_credential(args) -> int:
         except json.JSONDecodeError as exc:
             raise LedgerError(f"{args.events} line {lineno}: {exc}") from None
         name = event.get("station")
-        if not name:
-            raise LedgerError(f"{args.events} line {lineno}: event names no station")
+        # THE STATION FIELD IS ATTACKER-CONTROLLED — it comes off a public
+        # endpoint's request body. Two guards, and both are needed:
+        #
+        #   the regex     an attempt whose body never parsed names no station
+        #                 at all. Refusing the batch over it let one junk POST
+        #                 block the return leg for every real event, which is a
+        #                 denial of the record by anyone with curl.
+        #   the directory a well-formed name for a station that does not exist
+        #                 would CREATE its directory here. A caller posting a
+        #                 thousand plausible names would grow a thousand
+        #                 directories in the operator's ledger, one commit each.
+        #
+        # A real station always has a directory before its attempts arrive:
+        # `add --park` writes its park row at mint time, which is necessarily
+        # before anyone can claim against it.
+        if not name or not NAME_RE.match(str(name)) or not (
+            station_dir(root, args.channel, str(name)).is_dir()
+        ):
+            unattributed += 1
+            continue
         by_station.setdefault(name, []).append(
             {k: v for k, v in event.items() if k != "station"}
         )
     if not by_station:
-        print(f"ledger: {args.events} holds no events")
+        print(f"ledger: {args.events} holds no attributable events "
+              f"({unattributed} unattributed)")
         return 0
     for station, events in sorted(by_station.items()):
         out = record_credential_events(root, channel=args.channel, station=station,
                                        events=events)
         print(f"ledger: {out['channel']}/{station} credential events +{out['added']} "
               f"of {len(events)} -> {out['path']} ({out['commit'] or 'no change'})")
+    if unattributed:
+        print(f"ledger: {unattributed} attempt(s) named no station this channel "
+              f"knows — probes at the endpoint; they stay in {args.events} and "
+              f"enter no station's record")
     return 0
 
 
