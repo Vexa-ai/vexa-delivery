@@ -805,9 +805,11 @@ manifest GET with no `Accept` header returns `MANIFEST_UNKNOWN` (content
 negotiation), and an anonymous GET of a signature that does not exist is a 404
 — which is how "unsigned" reaches Kyverno.
 
-**The channel page row is new and NOT DEPLOYED.** *Rung: packaged 2026-09-06 in
-[`edge/page/`](edge/page/README.md), which carries the deploy note; the live edge
-is founder-owned and nobody has built this image.* It exists because the address
+**The channel page row is new and LIVE.** *Rung: deployed on the live edge
+2026-09-06 —
+[receipt](docs/receipts/2026-09-06-edge-claim-and-channel-page.md). The bare
+channel path answered `404 page not found` before it and answers a page after
+it, anonymous and credentialed both proven on the wire.* It exists because the address
 in the handover — `channel.vexa.ai/vexa/channel/<name>` — is a registry
 reference, and a browser opening it read `404 page not found`: the first thing
 the taker saw of the delivery. The service holds **no credential of its own**;
@@ -862,6 +864,20 @@ python3 publisher/vexa_subscriber.py add <account>    # mint — also rotates
 python3 publisher/vexa_subscriber.py revoke <account> # remove, stack recreated
 ```
 
+> **⚠ THIS SECTION AND § 5.3 DESCRIBE A TOOL THAT IS NOT MERGED (found
+> 2026-09-06).** The three commands above, and the whole standalone-host
+> paragraph below, are true only of
+> [vexa-delivery-internal#46](https://github.com/Vexa-ai/vexa-delivery-internal/pull/46),
+> **open since 2026-08-25**. The `vexa_subscriber.py` in this tree still writes
+> the **in-cluster** path — namespace `channel-registry`, Secret
+> `registry-htpasswd`, `kubectl rollout restart` on two Deployments that have
+> been **scaled to 0 since the channel moved off the cluster on that same day**.
+> Run as written today it edits the rollback path, prints a credential that
+> authenticates nowhere, and reports success. Until that PR merges, `add` and
+> `revoke` against the live host are hand operations on `$CHANNEL_ROOT/htpasswd`
+> and `$CHANNEL_ROOT/env` followed by the recreate. The `--park` half is
+> unaffected and was used unmodified against the live edge on 2026-09-06.
+
 The tool operates the **standalone host** (`$CHANNEL_REGISTRY_SSH`,
 `$CHANNEL_ROOT/` — site values in
 [`config/channel.example.env`](config/channel.example.env)) over SSH — since
@@ -902,10 +918,13 @@ never puts it in front of a person at all (§ 5.5).
 
 ### 5.5 Delivering by claim code, and rotating one
 
-*Rung: PR-open. The publisher half and the kit half are code with tests; the
-edge service is packaged with a deploy note and **is not deployed** — nobody has
-built its image or run it. Design and deploy note:
-[edge/claim/README.md](edge/claim/README.md).*
+*Rung: **live**. Merged, and the edge service deployed on the live channel host
+2026-09-06 with the whole six-digit path run end to end against it — parked,
+claimed into a cluster Secret, wrong code, burn, burned code and expiry each
+observed once, all with a throwaway subscriber that was revoked afterwards.
+**No real credential has been parked yet**: the first one is a phone call.
+Receipt: [2026-09-06-edge-claim-and-channel-page](docs/receipts/2026-09-06-edge-claim-and-channel-page.md).
+Design and deploy note: [edge/claim/README.md](edge/claim/README.md).*
 
 The credential is minted as always, then **sealed to the edge's own key** and
 parked under a **six-digit code** with a fifteen-minute life. The code is read

@@ -4,8 +4,11 @@
 subscriber's cluster presents a short code read aloud on a call; it gets the
 credential once, and the code dies.
 
-**Not deployed.** Nobody has built this image or run this service. The live edge
-is founder-owned; [§ Deploy](#deploy) is the note for whoever does it.
+**Deployed 2026-09-06** on the live channel edge, and the six-digit path ran end
+to end against it with a throwaway subscriber before any real code was parked:
+[receipt](/receipts/2026-09-06-edge-claim-and-channel-page). [§ Deploy](#deploy)
+is what was done, with four corrections marked **⚠** where the note as written
+would have failed.
 
 | | |
 |---|---|
@@ -174,13 +177,20 @@ mkdir -m 700 $CHANNEL_ROOT/claims
 chown 65532:65532 $CHANNEL_ROOT/claims $CHANNEL_ROOT/claim-edge.key
 ```
 
-**2 · Build and push the image, digest-pinned.** On the build host, never on the
-laptop. The image is two Python files and `age`; the build context is this
-directory only.
+**2 · Build the image, digest-pinned.** Never on a laptop. The image is two
+Python files and `age`; the build context is this directory only.
 
 ```bash
 docker build -t <registry>/vexa/claim-edge:<tag> edge/claim
 ```
+
+> **⚠ 2026-09-06:** the build host could not pull the pinned base — Docker Hub's
+> anonymous `429` — and BuildKit resolves a pinned `FROM` against the registry
+> even when the bytes are already local. It was built **on the channel host**,
+> whose own pull succeeded, and deliberately **not pushed to the channel
+> registry**: the edge's own images must not live in the registry the edge
+> serves (RUNBOOK § 5.1's circular dependency, one level down). `CLAIM_EDGE_IMAGE`
+> was pinned to the image ID, which is what "digest, not the tag" is protecting.
 
 **3 · Start it.** `CLAIM_EDGE_IMAGE` must be the digest, not the tag.
 
@@ -199,6 +209,19 @@ handle /claim {
 }
 ```
 
+> **⚠ ABOVE THE WRITE GATE.** The Caddyfile's `@write method PUT POST PATCH
+> DELETE` gate matches **POST on every path**, and `handle` blocks are mutually
+> exclusive and evaluated in order. This stanza placed after it is shadowed and
+> every claim answers `401` from the publisher gate — indistinguishable, on the
+> wire, from a wrong code, during the call where somebody is reading six digits
+> aloud.
+>
+> **⚠ `127.0.0.1` only if Caddy runs on the host.** Where Caddy is itself a
+> container — as it is on the live edge — that loopback is the Caddy container's
+> own and the publish below is unreachable from it. Attach this service to the
+> registry stack's network and proxy to its alias (`reverse_proxy
+> claim-edge:8088`). The wrong shape validates and starts; only a claim fails.
+
 `X-Forwarded-For` is set by Caddy, and `CLAIM_TRUST_FORWARDED_FOR=1` is correct
 **only** behind it. Reached directly, that header is whatever the caller typed,
 and trusting it would hand every guesser a fresh rate-limit bucket per request.
@@ -206,6 +229,13 @@ and trusting it would hand every guesser a fresh rate-limit bucket per request.
 **5 · Give the publisher the public half** as `$CHANNEL_CLAIM_EDGE_RECIPIENT`,
 and set `$CHANNEL_CLAIM_EDGE` and `$CHANNEL_CLAIM_SPOOL_SSH` — see
 [`config/channel.example.env`](../../config/channel.example.env).
+
+> **⚠ Chown each park after it lands.** `deliver_park` scps as the SSH user
+> (root), so a park arrives `root:root 0600` inside a spool owned by `65532` and
+> the service — correctly not root — cannot open it. Step 1 chowns the
+> directory, which is not enough. Until the publisher does it, follow every park
+> with `chown 65532:65532 $CHANNEL_ROOT/claims/<station>.park.json`. The symptom
+> is the uniform `403`, on the call, and it says nothing.
 
 **6 · Copy the attempts log back** after a delivery, so the return leg closes:
 
@@ -236,10 +266,10 @@ python3 publisher/vexa_stations.py record-credential \
 - **The spool is a single directory on one host.** No replication: a lost spool
   loses live parks, and the recovery is to park again, which rotates. Nothing a
   subscriber already claimed is affected.
-- **Nothing here is deployed.** The image has been built and the service run
-  once, as a throwaway rehearsal rig on a build host — never as a service, never
-  on the live edge, never with a real credential. Every claim above is a claim
-  about `claim_edge.py` plus that one rehearsal, not about a deployment.
+- **No real credential has been parked yet.** The service is deployed and the
+  path is proven, but every claim it has served was for a throwaway station
+  minted and revoked inside a rehearsal. The first real code is a phone call,
+  not a deploy.
 
 ## What the rehearsal proved, and what it did not
 
@@ -252,17 +282,15 @@ found three defects, all fixed on this branch — a non-executable `kit/claim.sh
 a rate-limited attempt that reached no station's record, and a burst inside one
 second that reduced to a single ledger row.
 
-**Two things it did not prove. Both are open.**
+**Two things it did not prove. Both were closed on the live edge on 2026-09-06**
+([receipt](/receipts/2026-09-06-edge-claim-and-channel-page)), and only because
+that run was behind real TLS and real Caddy:
 
-- **Expiry has never fired in a running service.** Both parks went terminal by
-  redemption or burn well inside their fifteen minutes, so the TTL branch was
-  never taken against a wall clock. It is covered by tests, with the clock
-  injected — which proves the transition, not that a service left alone for
-  fifteen minutes retires the park it is holding.
-- **Source attribution behind a proxy is unproven.** There was no TLS and no
-  Caddy, so `CLAIM_TRUST_FORWARDED_FOR` stayed off throughout. What was shown is
-  that distinct sources get distinct buckets; what was **not** shown is this
-  service reading the header Caddy actually sets, in the deployment where that
-  setting is switched on. The per-source limit — and every `source` in the
-  attempts log behind that proxy — is worth exactly what the header is worth,
-  and nobody has yet watched one arrive.
+- **Expiry had never fired in a running service.** It has now: a park given a
+  60-second life and left alone answered the **correct** code with `expired` and
+  retired itself, the TTL branch taken against a wall clock rather than an
+  injected one.
+- **Source attribution behind a proxy was unproven.** It is now: with
+  `CLAIM_TRUST_FORWARDED_FOR=1` behind Caddy, every row in `attempts.ndjson`
+  carried the caller's real public address rather than the proxy's, which is
+  what the per-source limit is worth exactly as much as.
