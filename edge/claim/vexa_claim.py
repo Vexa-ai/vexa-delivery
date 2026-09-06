@@ -428,7 +428,17 @@ def redeem(
         terminate(spool, state, EXPIRED, "ttl elapsed", now)
         raise ClaimRefused(REFUSAL_EXPIRED)
 
-    if not codes_match(code, park["code_sha256"]):
+    try:
+        matched = codes_match(code, park["code_sha256"])
+    except ClaimError:
+        # A code outside the alphabet, of the wrong length, or not a string at
+        # all CANNOT match, so it takes the same branch as a wrong one. It used
+        # to escape as a ClaimError, which the service answered `503` while a
+        # merely wrong code got `403` — a free oracle separating "malformed" from
+        # "wrong", on the one value the whole design keeps secret. One branch,
+        # one answer, and it costs an attempt like any other failed claim.
+        matched = False
+    if not matched:
         state["attempts"] += 1
         if state["attempts"] >= state["max_attempts"]:
             terminate(
