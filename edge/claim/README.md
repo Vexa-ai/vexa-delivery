@@ -184,13 +184,22 @@ Python files and `age`; the build context is this directory only.
 docker build -t <registry>/vexa/claim-edge:<tag> edge/claim
 ```
 
-> **⚠ 2026-09-06:** the build host could not pull the pinned base — Docker Hub's
-> anonymous `429` — and BuildKit resolves a pinned `FROM` against the registry
-> even when the bytes are already local. It was built **on the channel host**,
-> whose own pull succeeded, and deliberately **not pushed to the channel
-> registry**: the edge's own images must not live in the registry the edge
-> serves (RUNBOOK § 5.1's circular dependency, one level down). `CLAIM_EDGE_IMAGE`
-> was pinned to the image ID, which is what "digest, not the tag" is protecting.
+> **⚠ 2026-09-06, two things the first live build learned.**
+>
+> **Docker Hub will `429` the anonymous pull of the pinned base**, and BuildKit
+> resolves a pinned `FROM` against the registry even when the bytes are already
+> in the local store — so transporting the base does not help. Build through a
+> pull-through cache with a **named-context override**, which leaves this
+> Dockerfile untouched: `--build-context "<the FROM as written
+> here>=docker-image://<cache>/library/debian@sha256:<the same digest>"`. Check
+> the base layer of the result against the base's own.
+>
+> **Do not push these to the channel registry.** The edge's own images must not
+> live in the registry the edge serves — RUNBOOK § 5.1's circular dependency, one
+> level down — and it would list our infrastructure in a `_catalog` every
+> subscriber can read. Move the image by `docker save | docker load` and pin
+> `CLAIM_EDGE_IMAGE` to the id **on the host that runs it**: an image id does not
+> survive `save`/`load`, so the build host's id is not the one to write down.
 
 **3 · Start it.** `CLAIM_EDGE_IMAGE` must be the digest, not the tag.
 

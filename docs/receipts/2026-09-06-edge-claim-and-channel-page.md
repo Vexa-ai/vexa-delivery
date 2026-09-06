@@ -55,34 +55,49 @@ account names — no value of either was read.
 |---|---|---|---|
 | `channel-registry-1` | `registry@sha256:1be55279…` | `5000` (compose network only) | unchanged |
 | `channel-caddy-1` | `caddy@sha256:df7f1c2f…` | `80`, `443` | unchanged image; +42 Caddyfile lines |
-| `vexa-claim-edge-claim-edge-1` | `vexa/claim-edge:36cc1cc` · `sha256:084b3c0250914d9328c00af2ca4b5881a9aa03fbec007f33be50a8ab30dd1516` | `127.0.0.1:8088` + alias `claim-edge` on the stack network | the age identity for parked credentials, and the spool |
-| `vexa-page-edge-page-edge-1` | `vexa/page-edge:36cc1cc` · `sha256:6fdd0a364deb9fecba451749b2823511292dbc3d9bbb0cac3b9f8f86178b03a7` | `127.0.0.1:8089` + alias `page-edge` on the stack network | **nothing** — no key, no htpasswd, no credential |
+| `vexa-claim-edge-claim-edge-1` | `vexa/claim-edge:36cc1cc` · `sha256:870d1621bc9a2a12237c44a13613f73d5f4c3cfc5c415afda3fcab7718251e6a` | `127.0.0.1:8088` + alias `claim-edge` on the stack network | the age identity for parked credentials, and the spool |
+| `vexa-page-edge-page-edge-1` | `vexa/page-edge:36cc1cc` · `sha256:95d79f827ce52ea386e4926a9dc932101e2ac43b2d584e928ffba33e6fa87842` | `127.0.0.1:8089` + alias `page-edge` on the stack network | **nothing** — no key, no htpasswd, no credential |
 
 Three compose projects, as `edge/*/compose.yaml` intends: `channel` unchanged,
 `vexa-claim-edge` and `vexa-page-edge` beside it, so adding an account never
 bounces the registry.
 
-**Where the images were built, and why not on the build host.** The build host
-**could not pull the pinned base** — `debian:trixie-slim@sha256:d7e12182…`
-returns Docker Hub's anonymous `429`, the same obstacle
-[the claim-code rehearsal](/receipts/2026-09-07-claim-code-rehearsal) recorded a
-day earlier, and BuildKit resolves a pinned `FROM` against the registry even
-when the bytes are already in the local store (verified: the base was
-transported there and the build still failed at `load metadata`). The two ways
-around it were a production Docker Hub credential left at rest on a shared build
-host, or editing a pinned `FROM` on a deploy path at midnight. So **both images
-were built on the channel host itself**, from the exact pinned base digest that
-host fetched from Docker Hub, with a build context of two Python files each and
-`apt-get install age python3` — seconds of work on an idle host, not a workload.
+**Where the images were built — corrected the same night.** The first build was
+made **on the channel host**, after the build host answered Docker Hub's
+anonymous `429` on the pinned base and BuildKit was observed resolving a pinned
+`FROM` against the registry even with the bytes already local. That reasoning
+was **wrong, and its own source said so**: the
+[claim-code rehearsal](/receipts/2026-09-07-claim-code-rehearsal) had hit the
+same `429` a day earlier and recorded the way past it — *"built from the
+identical digest fetched through the rig's own pull-through cache, using
+BuildKit's named-context override"*. The cache was there the whole time; it was
+read and not acted on.
+
+So both images were **rebuilt on the build host** through its own pull-through
+cache, with `--build-context <the pinned FROM>=docker-image://<the same digest
+through the cache>` so `edge/*/Dockerfile` was **not edited**. The base layer of
+the result is `sha256:411a8667…`, byte-identical to the pinned base's own. They
+were transferred to the channel host by `docker save | docker load`, the two
+services swapped onto them, and **every proof in § 4 and the whole claim
+exchange in § 5 re-run against the new images** before this was written. The
+build context and the builder cache are gone from the channel host.
+
+*A note for whoever pins one of these next:* **an image ID does not survive
+`save`/`load`.** The same image arrived on the channel host under a different
+`sha256:` than the build host gave it — the layers are identical, the config
+digest is not. `CLAIM_EDGE_IMAGE` and `PAGE_EDGE_IMAGE` are therefore pinned to
+the **channel host's** id for each, which is immutable there and is what the
+compose files' "the digest, not the tag" is protecting, but it is not a
+cross-host name. A registry manifest digest would be; the next paragraph is why
+there is not one.
 
 **They were deliberately not pushed to the channel registry.** That registry is
 the subscribers' distribution copy; putting the edge's own images in it would
 make restoring the edge depend on the registry the edge serves, which is § 5.1's
-circular dependency one level down. Both images are reproducible from
-`edge/*/Dockerfile` and their pinned base, so nothing is lost by their living
-only on the host that runs them. `CLAIM_EDGE_IMAGE` and `PAGE_EDGE_IMAGE` are
-therefore pinned to the **image ID** — content-addressed, immutable, and what
-the compose files' "digest, not the tag" is protecting.
+circular dependency one level down. It would also put our infrastructure image
+names in a `_catalog` every subscriber credential can read. Both images are
+reproducible from `edge/*/Dockerfile` and their pinned base, so nothing is lost
+by their living only on the host that runs them and the host that built them.
 
 **The age key pair was minted on the host**, by `age-keygen` inside the
 claim-edge image itself so no package was installed on the host to do it. The
@@ -279,13 +294,11 @@ and now observed.
 
 ## What was left behind, deliberately
 
-- `$CHANNEL_ROOT/claims/attempts.ndjson` and three `*.state.json` files — the
+- `$CHANNEL_ROOT/claims/attempts.ndjson` and four `*.state.json` files — the
   edge's own record of this run. No value, no code, no salt, no ciphertext. The
   return leg (`vexa_stations.py record-credential`) has **not** been run against
   the real ledger: these are rehearsal stations, and their park rows went to a
   scratch ledger, not to `vexa-stations`.
-- `/opt/channel-build/` — the build context the two images were built from, kept
-  as their provenance.
 - `/opt/channel-snapshots/<ts>/` — the rollback image of `$CHANNEL_ROOT`.
 
 ## What is undone
@@ -297,7 +310,7 @@ and now observed.
   against the live host are hand operations and the RUNBOOK overstates them.
 - **The four findings above are not fixed in this change** — this is a receipt.
 - **The rate limiter is still in memory** and resets on restart; it was reset
-  twice by the recreates in this run.
+  several times by the recreates in this run.
 - **A subscriber credential still reads any channel's page**, as
   `edge/page/README.md § Limits, stated` says. Tightening it is the edge's
   `basic_auth` line, and the page inherits it for free.
