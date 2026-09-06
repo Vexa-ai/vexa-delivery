@@ -65,12 +65,13 @@ options
                     Omitted by default: OpenShift assigns the range itself,
                     and a range invented here would be a fabricated
                     constraint. See kit/platform/README.md.
-  --app-team-subject KIND/NAME  bind the app team to both projects, e.g.
-                    Group/vexa-app-team or ServiceAccount/vexa-tenant (a
-                    ServiceAccount is taken to live in the project). Omitted
-                    by default: most platform teams grant project access
-                    through their own mechanism (\`oc adm policy\`), and this
-                    pack should not presume it.
+  --app-team-subject KIND/NAME  bind ONE app-team identity to BOTH projects,
+                    e.g. Group/vexa-app-team, User/…, ServiceAccount/… (which
+                    is taken to live in the staging project unless you write
+                    ServiceAccount/NAMESPACE/NAME). Omitted by default: most
+                    platform teams grant project access through their own
+                    mechanism (\`oc adm policy\`), and this pack should not
+                    presume it.
   --app-team-role   the ClusterRole the binding above references (default:
                     admin — OpenShift's project admin)
   --argo-namespace  namespace holding the argocd-application-controller
@@ -375,12 +376,21 @@ EOF
 
 app_team_binding() {   # $1 = namespace
   [ -n "$APP_TEAM_SUBJECT" ] || return 0
-  local kind=${APP_TEAM_SUBJECT%%/*} name=${APP_TEAM_SUBJECT#*/}
-  local subject
+  local kind=${APP_TEAM_SUBJECT%%/*} rest=${APP_TEAM_SUBJECT#*/}
+  local subject sa_ns sa_name
   case "$kind" in
-    Group|User) subject="- {apiGroup: rbac.authorization.k8s.io, kind: ${kind}, name: ${name}}";;
-    ServiceAccount) subject="- {kind: ServiceAccount, name: ${name}, namespace: $1}";;
-    *) echo "render.sh: --app-team-subject wants Group/NAME, User/NAME or ServiceAccount/NAME" >&2; exit 2;;
+    Group|User) subject="- {apiGroup: rbac.authorization.k8s.io, kind: ${kind}, name: ${rest}}";;
+    ServiceAccount)
+      # ONE identity, BOTH projects. Resolving a ServiceAccount's namespace to
+      # "whichever project this binding is in" would name two different
+      # accounts and give the app team admin on staging and nothing on
+      # production — which is not a team, it is two. The default namespace is
+      # therefore the staging project for both bindings;
+      # ServiceAccount/<ns>/<name> says otherwise.
+      if [ "$rest" != "${rest#*/}" ]; then sa_ns=${rest%%/*}; sa_name=${rest#*/}
+      else sa_ns=$PROJECT; sa_name=$rest; fi
+      subject="- {kind: ServiceAccount, name: ${sa_name}, namespace: ${sa_ns}}";;
+    *) echo "render.sh: --app-team-subject wants Group/NAME, User/NAME, ServiceAccount/NAME or ServiceAccount/NAMESPACE/NAME" >&2; exit 2;;
   esac
   cat <<EOF
 ---

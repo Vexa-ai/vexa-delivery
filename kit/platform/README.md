@@ -137,8 +137,11 @@ oc adm policy add-role-to-group admin vexa-app-team -n vexa-app
 ```
 
 If you would rather it were in the file, `--app-team-subject Group/vexa-app-team`
-(or `User/...`, or `ServiceAccount/...`) renders the RoleBinding into both
-projects, and `--app-team-role` picks the role.
+(or `User/…`, or `ServiceAccount/…`) renders the RoleBinding into both
+projects, and `--app-team-role` picks the role. It is deliberately **one
+identity in both** — a ServiceAccount resolved per-project would name two
+different accounts and give the team admin on staging and nothing on
+production. Write `ServiceAccount/<namespace>/<name>` if you want it elsewhere.
 
 ## What the app team does afterwards, without you
 

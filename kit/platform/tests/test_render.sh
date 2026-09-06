@@ -288,6 +288,24 @@ set -e
 render --provider kubernetes --project vexa-k8s --out "$TMP/k8s.yaml" >/dev/null
 grep -q "openshift.io/" "$TMP/k8s.yaml" && fail "the kubernetes pack carries OpenShift annotations"
 
+# one app-team identity in BOTH projects, not one per project
+render --provider kubernetes --project vexa-k8s --app-team-subject ServiceAccount/team \
+  --out "$TMP/team.yaml" >/dev/null
+python3 - "$TMP/team.yaml" <<'PYEOF' || exit 1
+import sys, yaml
+binds = [d for d in yaml.safe_load_all(open(sys.argv[1], encoding="utf-8"))
+         if d and d.get("kind") == "RoleBinding" and d["metadata"]["name"] == "vexa-app-team"]
+if len(binds) != 2:
+    print(f"FAIL: expected the app-team binding in both projects, got {len(binds)}", file=sys.stderr)
+    sys.exit(1)
+subjects = {(b["subjects"][0]["name"], b["subjects"][0].get("namespace")) for b in binds}
+if len(subjects) != 1:
+    print(f"FAIL: the two bindings name different identities: {subjects} — the team would hold "
+          f"admin on one project and nothing on the other", file=sys.stderr)
+    sys.exit(1)
+print("  app-team binding OK — one identity, both projects")
+PYEOF
+
 # 7 · lint ---------------------------------------------------------------------
 if command -v kubeconform >/dev/null 2>&1; then
   kubeconform -ignore-missing-schemas -summary "$PACK" \
