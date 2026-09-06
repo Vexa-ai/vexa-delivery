@@ -64,6 +64,15 @@ options
                     PreSync verify gate on (default: off)
   --kubeconfig      kubeconfig path (default: ambient)
   --plain-http      registry is plain HTTP (test rigs only; implies insecure)
+  --argocd MODE     what to do about Argo CD: auto (default) | adopt | install |
+                    skip. auto DETECTS an existing install first: absent ->
+                    install the pin; present at the pinned version -> ADOPT it
+                    and write nothing; present at another version -> REFUSE and
+                    say so, before a single object is applied. adopt takes an
+                    existing install whatever version it is; install always
+                    applies the upstream manifests; skip leaves Argo entirely
+                    alone (you install it, we subscribe to it).
+  --kyverno MODE    the same four modes for Kyverno.
   --skip-preflight  do not run the conformance preflight (NOT recommended)
   --dry-run         render everything, apply nothing
 EOF
@@ -81,6 +90,7 @@ CUSTOMER_VALUES="" VERIFIER_IMAGE=""
 CHART_NAME=vexa RELEASE_NAME=vexa
 STAGING_NS=vexa-staging PROD_NS=vexa-prod PROD_PIN=""
 KUBECONFIG_ARG=() PLAIN_HTTP=false REGISTRY_INSECURE=false SKIP_PREFLIGHT=false DRY_RUN=false
+ARGOCD_MODE=auto KYVERNO_MODE=auto
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -102,6 +112,8 @@ while [ $# -gt 0 ]; do
     --prod-pin) PROD_PIN=$2; shift 2;;
     --kubeconfig) KUBECONFIG_ARG=(--kubeconfig "$2"); shift 2;;
     --plain-http) PLAIN_HTTP=true; shift;;
+    --argocd) ARGOCD_MODE=$2; shift 2;;
+    --kyverno) KYVERNO_MODE=$2; shift 2;;
     --registry-insecure) REGISTRY_INSECURE=true; shift;;
     --skip-preflight) SKIP_PREFLIGHT=true; shift;;
     --dry-run) DRY_RUN=true; shift;;
@@ -111,6 +123,13 @@ done
 if [ -z "$PROVIDER" ] || [ -z "$REGISTRY" ] || [ -z "$CHANNEL" ] || [ -z "$PUBKEY" ]; then
   usage
 fi
+
+for mode_pair in "--argocd:$ARGOCD_MODE" "--kyverno:$KYVERNO_MODE"; do
+  case "${mode_pair#*:}" in
+    auto|adopt|install|skip) ;;
+    *) echo "install.sh: ${mode_pair%%:*} takes auto|adopt|install|skip, not '${mode_pair#*:}'"; exit 2;;
+  esac
+done
 
 if [ -n "$REGISTRY_USER" ] && [ -z "${VEXA_CHANNEL_PASS:-}" ]; then
   echo "install.sh: --registry-user given but VEXA_CHANNEL_PASS is not set."
@@ -135,6 +154,158 @@ apply() {
   if $DRY_RUN; then echo "--- would apply:"; cat; else kc apply -f -; fi
 }
 
+# 0 · ADOPTION PLAN — decided BEFORE a single object is written ----------------
+#
+# The rehearsal that produced this section ran the installer as a namespace-
+# scoped tenant against a cluster that ALREADY had Argo CD v3.5.1 and Kyverno
+# v1.19.0 — exactly the pinned versions. A server-side dry-run measured what
+# the unconditional steps 2 and 3 below would have done: 49 objects
+# `serverside-applied` and 9 `Forbidden`. Among the 49, `argocd-dex-server` and
+# `argocd-application-controller` — re-adding the upstream hard-coded UIDs
+# (dex 1001, redis 999) that the cluster's own SCC then rejects. So a real run
+# HALF-LANDS: it breaks a working Argo, is Forbidden on the cluster-scoped
+# nine, `set -e` stops the script, and the operator is left with a broken Argo
+# and no subscription.
+#
+# Both halves of that are fixed here, and both are refusals rather than
+# repairs, because the only safe thing to do with a component somebody else
+# already owns is to leave it alone and say so:
+#
+#   1. DETECT what is already installed and compare it with the pin. Present at
+#      the pinned version -> ADOPT (write nothing). Present at another version
+#      -> REFUSE, naming both versions. Absent -> install.
+#   2. Before installing, SERVER-SIDE DRY-RUN the upstream manifest. Any
+#      Forbidden means this credential cannot complete the install, so the
+#      install does not start. A refusal that costs nothing is the whole point
+#      of asking first.
+
+# The deployment that identifies each component, and the image whose tag
+# carries its version. Argo is looked for under both its upstream name and the
+# OpenShift GitOps operator's, because on OpenShift the house Argo is the
+# operator's and it is the one that must be adopted rather than duplicated.
+detect_component() {   # $1 = namespace, $2.. = candidate deployment names
+  local ns=$1; shift
+  local d img
+  for d in "$@"; do
+    img=$(kc -n "$ns" get deploy "$d" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+    if [ -n "$img" ]; then
+      case "$img" in
+        *@sha256:*) echo "$d unknown";;         # digest-pinned: no version to read
+        *:*)        echo "$d ${img##*:}";;
+        *)          echo "$d unknown";;
+      esac
+      return 0
+    fi
+  done
+  echo "- absent"
+}
+
+# What auto does with what it found. Prints the chosen action on stdout and the
+# human sentence on stderr, so the caller can capture one without losing the
+# other.
+plan_component() {   # $1 = label  $2 = mode  $3 = pinned version  $4 = found deploy  $5 = found version
+  local label=$1 mode=$2 pin=$3 found_deploy=$4 found=$5
+  case "$mode" in
+    skip)
+      echo >&2 "   $label: --$label skip — not touched, not checked. Yours to install."
+      echo skip; return 0;;
+    install)
+      echo >&2 "   $label: --$label install — applying the pinned upstream manifests${found:+ over the existing $found_deploy $found}."
+      echo install; return 0;;
+  esac
+  if [ "$found" = "absent" ]; then
+    echo >&2 "   $label: not present — installing $pin"
+    echo install; return 0
+  fi
+  if [ "$mode" = "adopt" ]; then
+    if [ "$found" = "$pin" ]; then
+      echo >&2 "   $label: ADOPTING the existing $found_deploy — it is already $pin. Nothing is applied."
+    else
+      echo >&2 "   $label: ADOPTING the existing $found_deploy ($found) though the pin is $pin — versions differ, adopted on your say-so. Nothing is applied."
+    fi
+    echo adopt; return 0
+  fi
+  if [ "$found" = "$pin" ]; then
+    echo >&2 "   $label: ADOPTING the existing $found_deploy — it is already $pin. Nothing is applied."
+    echo adopt; return 0
+  fi
+  echo refuse
+  return 0
+}
+
+refuse_version() {   # $1 = label  $2 = pin  $3 = found deploy  $4 = found version
+  cat >&2 <<EOF
+
+REFUSING — nothing has been applied.
+
+  $1 is already installed in this cluster ($3), and it is not the version this
+  kit pins:
+
+      installed: $4
+      pinned:    $2
+
+  Installing over it would overwrite a component somebody else owns, and on a
+  cluster where this credential is namespace-scoped it would half-land: the
+  namespaced objects written, the cluster-scoped ones Forbidden, and the script
+  stopped in between. So it does not start.
+
+  Three ways forward, and they are yours to choose:
+
+    --$1 adopt     take the installed $4 as it is. The kit writes nothing to it
+                   and subscribes against it. Its behaviour at that version is
+                   not what we pinned; that is the trade.
+    --$1 skip      leave it entirely alone and do not check it either.
+    --$1 install   apply the pinned manifests over it anyway. Read the paragraph
+                   above before you do.
+EOF
+  exit 3
+}
+
+ARGOCD_FOUND=$(detect_component "$ARGOCD_NS" argocd-server openshift-gitops-server)
+KYVERNO_FOUND=$(detect_component "$KYVERNO_NS" kyverno-admission-controller kyverno)
+ARGOCD_DEPLOY=${ARGOCD_FOUND%% *}; ARGOCD_HAVE=${ARGOCD_FOUND##* }
+KYVERNO_DEPLOY=${KYVERNO_FOUND%% *}; KYVERNO_HAVE=${KYVERNO_FOUND##* }
+
+echo "== what is already here (checked before anything is written)"
+ARGOCD_ACTION=$(plan_component argocd "$ARGOCD_MODE" "$ARGOCD_VERSION" "$ARGOCD_DEPLOY" "$ARGOCD_HAVE")
+[ "$ARGOCD_ACTION" = refuse ] && refuse_version argocd "$ARGOCD_VERSION" "$ARGOCD_DEPLOY" "$ARGOCD_HAVE"
+KYVERNO_ACTION=$(plan_component kyverno "$KYVERNO_MODE" "$KYVERNO_VERSION" "$KYVERNO_DEPLOY" "$KYVERNO_HAVE")
+[ "$KYVERNO_ACTION" = refuse ] && refuse_version kyverno "$KYVERNO_VERSION" "$KYVERNO_DEPLOY" "$KYVERNO_HAVE"
+
+# Ask the API server what this credential could actually write, and refuse
+# BEFORE writing any of it. `--dry-run=server` runs the full admission path —
+# RBAC included — so a Forbidden here is the same Forbidden the real apply
+# would hit, minus the 49 objects that would already be on disk by then.
+precheck_apply() {   # $1 = label  $2 = manifest url  $3.. = extra kubectl args
+  local label=$1 url=$2; shift 2
+  local out rc=0
+  out=$(kc apply --server-side --force-conflicts --dry-run=server "$@" -f "$url" 2>&1) || rc=$?
+  local forbidden
+  forbidden=$(printf '%s\n' "$out" | grep -i -c 'forbidden' || true)
+  if [ "$rc" -ne 0 ] || [ "$forbidden" -gt 0 ]; then
+    cat >&2 <<EOF
+
+REFUSING — nothing has been applied.
+
+  A server-side dry-run of the $label install came back with $forbidden
+  Forbidden object(s) (kubectl exit $rc). This credential cannot complete the
+  install, and a partial one is worse than none: the objects it CAN write land,
+  the rest are refused, and the cluster is left with a half-installed component
+  and no subscription. That is the failure this check exists to prevent.
+
+  What the API server said:
+
+$(printf '%s\n' "$out" | grep -i 'forbidden' | sed 's/^/      /' | head -20)
+
+  This is a one-time platform-team ask, not something to work around: have
+  someone with cluster scope install $label, then re-run with
+  \`--$label adopt\` (or \`--$label skip\`) and the rest of this installer is
+  namespace-scoped work your own credential can do.
+EOF
+    exit 3
+  fi
+}
+
 # 1 · preflight ---------------------------------------------------------------
 if ! $SKIP_PREFLIGHT; then
   echo "== preflight (conformance before anything is installed)"
@@ -145,14 +316,21 @@ else
   echo "== preflight SKIPPED by flag"
 fi
 
-# 2 · Argo CD (pinned) --------------------------------------------------------
-echo "== Argo CD ${ARGOCD_VERSION} into namespace ${ARGOCD_NS}"
+# 2 · Argo CD (pinned, or the one already here) -------------------------------
+ARGOCD_URL="https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
+case "$ARGOCD_ACTION" in
+  skip)  echo "== Argo CD: skipped by flag (namespace ${ARGOCD_NS} assumed to hold your own)";;
+  adopt) echo "== Argo CD ${ARGOCD_HAVE}: ADOPTED in namespace ${ARGOCD_NS} — nothing applied to it";;
+  *)     echo "== Argo CD ${ARGOCD_VERSION} into namespace ${ARGOCD_NS}";;
+esac
+if [ "$ARGOCD_ACTION" = install ]; then
 kc create namespace "$ARGOCD_NS" --dry-run=client -o yaml | apply
 if ! $DRY_RUN; then
+  precheck_apply argocd "$ARGOCD_URL" -n "$ARGOCD_NS"
   # --server-side: the ApplicationSet CRD exceeds the 256KB last-applied
   # annotation limit under client-side apply (same failure class the argocd
   # spike hit, finding 6)
-  kc apply --server-side --force-conflicts -n "$ARGOCD_NS" -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml" >/dev/null
+  kc apply --server-side --force-conflicts -n "$ARGOCD_NS" -f "$ARGOCD_URL" >/dev/null
   kc -n "$ARGOCD_NS" rollout status deploy/argocd-repo-server --timeout=300s
   kc -n "$ARGOCD_NS" rollout status deploy/argocd-applicationset-controller --timeout=300s
 
@@ -181,12 +359,44 @@ if ! $DRY_RUN; then
     kc -n "$ARGOCD_NS" rollout restart deploy/argocd-server deploy/argocd-application-controller >/dev/null 2>&1 || true
   echo "   resourceTrackingMethod=annotation (adoption-safe; label tracking cannot write into immutable selectors)"
 fi
+fi
 
-# 3 · Kyverno (pinned) --------------------------------------------------------
-echo "== Kyverno ${KYVERNO_VERSION} into namespace ${KYVERNO_NS}"
-if ! $DRY_RUN; then
-  kc apply --server-side --force-conflicts -f "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/install.yaml" >/dev/null
-  kc -n "$KYVERNO_NS" rollout status deploy/kyverno-admission-controller --timeout=300s
+# An ADOPTED Argo is somebody else's, and the tracking method is a cluster-wide
+# setting that restarts its controller. We READ it and, if it is wrong, say so
+# with the two commands — we do not restart a controller managing Applications
+# we know nothing about.
+if [ "$ARGOCD_ACTION" = adopt ] && ! $DRY_RUN; then
+  TRACKING=$(kc -n "$ARGOCD_NS" get configmap argocd-cm \
+    -o jsonpath='{.data.application\.resourceTrackingMethod}' 2>/dev/null || true)
+  if [ "$TRACKING" = "annotation" ]; then
+    echo "   resourceTrackingMethod=annotation already set on the adopted Argo"
+  else
+    cat <<EOF
+   NOTE the adopted Argo tracks resources by '${TRACKING:-label (the default)}', not by annotation.
+   Label tracking writes app.kubernetes.io/instance into spec.selector, which is IMMUTABLE on a
+   Deployment the chart already rendered — the Application then sits permanently OutOfSync on a
+   resource it cannot fix. This installer does NOT change it: it restarts a controller that is
+   managing Applications it knows nothing about. Run these two yourself, before the first sync:
+     kubectl -n ${ARGOCD_NS} patch configmap argocd-cm --type merge -p '{"data":{"application.resourceTrackingMethod":"annotation"}}'
+     kubectl -n ${ARGOCD_NS} rollout restart deploy/argocd-server statefulset/argocd-application-controller
+EOF
+  fi
+fi
+
+# 3 · Kyverno (pinned, or the one already here) --------------------------------
+KYVERNO_URL="https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/install.yaml"
+case "$KYVERNO_ACTION" in
+  skip)  echo "== Kyverno: skipped by flag. The channel's admission policy still lands in step 4;"
+         echo "   it needs a Kyverno in this cluster to have any effect.";;
+  adopt) echo "== Kyverno ${KYVERNO_HAVE}: ADOPTED in namespace ${KYVERNO_NS} — the install is not re-applied";;
+  *)     echo "== Kyverno ${KYVERNO_VERSION} into namespace ${KYVERNO_NS}";;
+esac
+if [ "$KYVERNO_ACTION" != skip ] && ! $DRY_RUN; then
+  if [ "$KYVERNO_ACTION" = install ]; then
+    precheck_apply kyverno "$KYVERNO_URL"
+    kc apply --server-side --force-conflicts -f "$KYVERNO_URL" >/dev/null
+    kc -n "$KYVERNO_NS" rollout status deploy/kyverno-admission-controller --timeout=300s
+  fi
   if $PLAIN_HTTP; then
     # test rigs only; the upstream manifest carries --allowInsecureRegistry=false,
     # so rewrite the args (a blind append leaves both values in place)

@@ -66,6 +66,15 @@ options
                     PreSync verify gate on (default: off)
   --kubeconfig      kubeconfig path (default: ambient)
   --plain-http      registry is plain HTTP (test rigs only; implies insecure)
+  --argocd MODE     what to do about Argo CD: auto (default) | adopt | install |
+                    skip. auto DETECTS an existing install first: absent ->
+                    install the pin; present at the pinned version -> ADOPT it
+                    and write nothing; present at another version -> REFUSE and
+                    say so, before a single object is applied. adopt takes an
+                    existing install whatever version it is; install always
+                    applies the upstream manifests; skip leaves Argo entirely
+                    alone (you install it, we subscribe to it).
+  --kyverno MODE    the same four modes for Kyverno.
   --skip-preflight  do not run the conformance preflight (NOT recommended)
   --dry-run         render everything, apply nothing
 ```
