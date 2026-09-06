@@ -46,6 +46,25 @@ CLAIMS = "$TMP/claims.count"
 
 class H(BaseHTTPRequestHandler):
     def do_POST(self):
+        # Anything that is not /claim is A DIFFERENT SERVICE answering — the
+        # registry host with no such route, a proxy, a captive portal. None of
+        # them can 403: the claim edge is the only thing that refuses claims,
+        # and the default --claim-edge is https://<registry>/claim, so this is
+        # what a subscriber hits while the edge is not deployed there yet.
+        if self.path == "/portal":
+            payload = b"<html>sign in to continue</html>"
+            self.send_response(200)
+        elif self.path != "/claim":
+            payload = b"not found"
+            self.send_response(404)
+        else:
+            payload = None
+        if payload is not None:
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         n = int(self.headers.get("Content-Length", 0))
         try:
             body = json.loads(self.rfile.read(n))
@@ -186,9 +205,39 @@ echo "$OUT" | grep -qi "pick one" || fail "the refusal does not say to pick one"
 reset_log
 OUT=$(claim --code 222222 --edge "$EDGE" --station pilot --namespace vexa-prod) \
   && fail "a wrong code was accepted"
+RC=$?
 echo "$OUT" | grep -q "refused" || fail "no refusal message"
 echo "$OUT" | grep -q "$NEEDLE" && fail "a refusal leaked the credential"
 grep -q "kind: Secret" "$KUBECTL_LOG" && fail "a refused claim wrote a Secret"
+[ "$RC" -eq 1 ] || fail "a refused code exited $RC, expected 1"
+
+# 5b · NO CLAIM SERVICE AT THIS EDGE IS A DIFFERENT ANSWER, and it was the one
+#      a subscriber would actually have got: --claim-edge defaults to
+#      https://<registry>/claim, the edge is not deployed there, the POST lands
+#      on the registry's 404 — and the kit said "the code may be wrong,
+#      expired, already used". That sends them to ask for a new code, which
+#      rotates the credential and fixes nothing, while the URL stays wrong.
+#      Exit 3, and the message must say the code is untouched.
+for path in /nope /portal; do
+  reset_log
+  OUT=$(claim --code 123456 --edge "http://127.0.0.1:$PORT$path" --station pilot \
+          --namespace vexa-prod) && fail "a non-claim endpoint ($path) was accepted"
+  RC=$?
+  [ "$RC" -eq 3 ] || fail "no service at the edge ($path) exited $RC, expected 3"
+  echo "$OUT" | grep -qi "untouched" \
+    || fail "the message ($path) does not say the code is still good"
+  echo "$OUT" | grep -qi "expired\|already used\|burned" \
+    && fail "the message ($path) still blames the code for a missing service"
+  grep -q "kind: Secret" "$KUBECTL_LOG" && fail "it wrote a Secret ($path)"
+done
+
+# 5c · and nothing listening at all is the same class: exit 3, code untouched.
+#      Port 1 is reserved and nothing binds it.
+OUT=$(claim --code 123456 --edge "http://127.0.0.1:1/claim" --station pilot \
+        --namespace vexa-prod) && fail "an unreachable edge was accepted"
+RC=$?
+[ "$RC" -eq 3 ] || fail "an unreachable edge exited $RC, expected 3"
+echo "$OUT" | grep -qi "untouched" || fail "the unreachable message does not say the code is still good"
 
 # 6 · --dry-run contacts nothing, so a rehearsal cannot spend the code.
 BEFORE=$(wc -l < "$TMP/claims.count")
@@ -237,4 +286,4 @@ OUT=$(VEXA_CHANNEL_PASS=x bash "$KIT/install.sh" --provider lke \
   && fail "install.sh accepted both credential routes at once"
 echo "$OUT" | grep -q "Pass one" || fail "the refusal does not say to pass one"
 
-echo "PASS: kit claim (secret written, value never on stdout, six digits spaced or not, rotate gate, print-once, refusal, dry-run, install.sh --claim-code)"
+echo "PASS: kit claim (secret written, value never on stdout, six digits spaced or not, rotate gate, print-once, code-refused vs no-service-at-this-edge, dry-run, install.sh --claim-code)"

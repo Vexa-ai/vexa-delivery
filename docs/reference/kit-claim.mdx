@@ -45,4 +45,14 @@ the mirror path
 
 other
   --dry-run     print what would happen; contact nothing, write nothing
+
+exit codes
+  0  claimed — the credential is in the cluster (or on your screen, --print-once)
+  1  THE EDGE REFUSED THIS CLAIM. Something answered and said no: the code is
+     wrong, expired, already used, burned by failed attempts, or bound to
+     another station. Ask for a new code
+  2  usage
+  3  NO CLAIM SERVICE ANSWERED AT --edge. Nothing was reached, or something
+     that is not the claim service answered. Your code is untouched and still
+     good — check the URL and your egress, then run this again
 ```
