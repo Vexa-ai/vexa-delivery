@@ -1,0 +1,176 @@
+{{/*
+Every image reference the minutes chart renders, and NOTHING else.
+
+Each `image:` line below is copied character-for-character from Vexa-ai/vexa,
+branch minutes-mcp-viewer @ 33379e2c4 — the file and line it came from is named
+above it. The pod specs around them are stripped to the bone on purpose: probes,
+env, volumes, resources and affinity have no bearing on which bytes a node
+pulls, and reproducing them would make this fixture drift on every unrelated
+chart change while testing nothing extra.
+
+WHAT IS DELIBERATELY ABSENT. The three third-party tiers (postgres, redis,
+pgbouncer), minio and its mc bucket-init Job, and the 0.10-lane dashboard are
+not here: they are pinned by kit/profiles/vexa/node-baseline.yaml, not by
+build_pins, and a station gate reads them from the baseline overlay. This
+fixture is the publisher's own surface — the images a release's candidate map
+is supposed to pin.
+*/}}
+{{- /* deployment-gateway.yaml:33 */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: gateway}
+spec:
+  selector: {matchLabels: {app: gateway}}
+  template:
+    metadata: {labels: {app: gateway}}
+    spec:
+      containers:
+        - name: gateway
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.global.imageTag | default .Values.gateway.image.tag }}"
+---
+{{- /* deployment-admin-api.yaml:33 */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: admin-api}
+spec:
+  selector: {matchLabels: {app: admin-api}}
+  template:
+    metadata: {labels: {app: admin-api}}
+    spec:
+      containers:
+        - name: admin-api
+          image: "{{ .Values.adminApi.image.repository }}:{{ .Values.global.imageTag | default .Values.adminApi.image.tag }}"
+---
+{{- /* deployment-meeting-api.yaml:34 */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: meeting-api}
+spec:
+  selector: {matchLabels: {app: meeting-api}}
+  template:
+    metadata: {labels: {app: meeting-api}}
+    spec:
+      containers:
+        - name: meeting-api
+          image: "{{ .Values.meetingApi.image.repository }}:{{ .Values.global.imageTag | default .Values.meetingApi.image.tag }}"
+---
+{{- /* deployment-agent-api.yaml:44 */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: agent-api}
+spec:
+  selector: {matchLabels: {app: agent-api}}
+  template:
+    metadata: {labels: {app: agent-api}}
+    spec:
+      containers:
+        - name: agent-api
+          image: "{{ .Values.agentApi.image.repository }}:{{ .Values.global.imageTag | default .Values.agentApi.image.tag }}"
+---
+{{- /* deployment-terminal.yaml:33 */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: terminal}
+spec:
+  selector: {matchLabels: {app: terminal}}
+  template:
+    metadata: {labels: {app: terminal}}
+    spec:
+      containers:
+        - name: terminal
+          image: "{{ .Values.terminal.image.repository }}:{{ .Values.global.imageTag | default .Values.terminal.image.tag }}"
+---
+{{- /* job-migrations.yaml:45 — off in the node baseline, rendered here because a
+       customer who turns it on must still get a pinned image. */}}
+apiVersion: batch/v1
+kind: Job
+metadata: {name: migrations}
+spec:
+  template:
+    metadata: {labels: {app: migrations}}
+    spec:
+      containers:
+        - name: migrations
+          image: "{{ default .Values.meetingApi.image.repository .Values.migrations.image.repository }}:{{ .Values.global.imageTag | default (default .Values.meetingApi.image.tag .Values.migrations.image.tag) }}"
+---
+{{- /* deployment-runtime.yaml:37, plus :59-64 — the runtime does not just RUN an
+       image, it SPAWNS three more by name. An unpinned value here is a mutable
+       tag resolved on a customer's node at dispatch time, which is the same
+       defect one level down. */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: runtime}
+spec:
+  selector: {matchLabels: {app: runtime}}
+  template:
+    metadata: {labels: {app: runtime}}
+    spec:
+      containers:
+        - name: runtime
+          image: "{{ .Values.runtime.image.repository }}:{{ .Values.global.imageTag | default .Values.runtime.image.tag }}"
+          env:
+            - name: BROWSER_IMAGE
+              value: {{ include "vexa.botImage" . | quote }}
+            - name: AGENT_IMAGE
+              value: {{ include "vexa.agentImage" . | quote }}
+            - name: AGENT_WORKER_IMAGE
+              value: {{ include "vexa.agentWorkerImage" . | quote }}
+{{- if .Values.flows.enabled }}
+---
+{{- /* flows.yaml:35-133 — flows-worker. The ensure-db initContainer renders only
+       when the flows tables live in a database of their own, which is the
+       default; flows.yaml:50 guards it with this exact condition. */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: flows-worker}
+spec:
+  replicas: {{ .Values.flows.workerReplicas }}
+  selector: {matchLabels: {app: flows-worker}}
+  template:
+    metadata: {labels: {app: flows-worker}}
+    spec:
+      {{- if ne .Values.flows.databaseName .Values.database.name }}
+      initContainers:
+        - name: ensure-db
+          image: {{ include "vexa.flowsImage" . | quote }}
+      {{- end }}
+      containers:
+        - name: flows-worker
+          image: {{ include "vexa.flowsImage" . | quote }}
+---
+{{- /* flows.yaml:208-300 — flows-mailbox */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: flows-mailbox}
+spec:
+  selector: {matchLabels: {app: flows-mailbox}}
+  template:
+    metadata: {labels: {app: flows-mailbox}}
+    spec:
+      {{- if ne .Values.flows.databaseName .Values.database.name }}
+      initContainers:
+        - name: ensure-db
+          image: {{ include "vexa.flowsImage" . | quote }}
+      {{- end }}
+      containers:
+        - name: flows-mailbox
+          image: {{ include "vexa.flowsImage" . | quote }}
+---
+{{- /* flows.yaml:364-451 — flows-api */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: flows-api}
+spec:
+  selector: {matchLabels: {app: flows-api}}
+  template:
+    metadata: {labels: {app: flows-api}}
+    spec:
+      {{- if ne .Values.flows.databaseName .Values.database.name }}
+      initContainers:
+        - name: ensure-db
+          image: {{ include "vexa.flowsImage" . | quote }}
+      {{- end }}
+      containers:
+        - name: flows-api
+          image: {{ include "vexa.flowsImage" . | quote }}
+{{- end }}
