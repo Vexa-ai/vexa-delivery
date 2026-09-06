@@ -198,6 +198,13 @@ ARGOCD_URL="https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}
 KYVERNO_URL="https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/install.yaml"
 
 # --- sizing -------------------------------------------------------------------
+if [ ! -f "$HERE/chart-sizing.env" ]; then
+  echo "render.sh: kit/platform/chart-sizing.env is missing." >&2
+  echo "  It holds the chart's own resource figures — the memory ceiling among them — and" >&2
+  echo "  this script will not invent them. If this is a clone, the file was probably" >&2
+  echo "  swallowed by the repository's \`*.env\` ignore rule; it carries an exception." >&2
+  exit 1
+fi
 # shellcheck disable=SC1091
 source "$HERE/chart-sizing.env"
 SIZING_SOURCE="kit/platform/chart-sizing.env (recorded from $CHART_MAX_CONTAINER_NAME in the Vexa chart)"

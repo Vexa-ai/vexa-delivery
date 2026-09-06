@@ -47,6 +47,18 @@ render() {
     --kyverno-manifest "$FIX/kyverno-install.yaml" "$@"
 }
 
+# 0 · every file the renderer needs is actually COMMITTED ----------------------
+# chart-sizing.env matched the repository's `*.env` ignore rule, `git add -A`
+# skipped it without a word, and the pack failed to render on the next machine
+# that cloned the tree. A test that only reads the working directory cannot see
+# that, so this one asks git.
+if git -C "$PLATFORM" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  for needed in chart-sizing.env render.sh extract-crds.py read-chart-sizing.py; do
+    git -C "$PLATFORM" ls-files --error-unmatch "$needed" >/dev/null 2>&1 \
+      || fail "kit/platform/$needed is not tracked by git — a clone cannot render the pack"
+  done
+fi
+
 # 1 · determinism ---------------------------------------------------------------
 mkdir -p "$TMP/a" "$TMP/b"
 for d in a b; do
