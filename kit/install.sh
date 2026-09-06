@@ -94,6 +94,17 @@ options
                     applies the upstream manifests; skip leaves Argo entirely
                     alone (you install it, we subscribe to it).
   --kyverno MODE    the same four modes for Kyverno.
+  --cluster-scope   who owns the cluster-scoped objects:
+                      installer      (default) this run creates them. Needs
+                                     cluster rights, which is how our own
+                                     cluster went in.
+                      platform-pack  your platform team already applied
+                                     kit/platform's platform-<provider>.yaml.
+                                     This run then does namespace-scoped work
+                                     only: it installs no Argo CD, no Kyverno
+                                     and no ClusterPolicy, and it creates no
+                                     namespace. It CHECKS the pack landed
+                                     first and refuses by name if it did not.
   --skip-preflight  do not run the conformance preflight (NOT recommended)
   --dry-run         render everything, apply nothing
 EOF
@@ -113,6 +124,7 @@ CHART_NAME=vexa RELEASE_NAME=vexa
 STAGING_NS=vexa-staging PROD_NS=vexa-prod PROD_PIN=""
 KUBECONFIG_ARG=() PLAIN_HTTP=false REGISTRY_INSECURE=false SKIP_PREFLIGHT=false DRY_RUN=false
 ARGOCD_MODE=auto KYVERNO_MODE=auto
+CLUSTER_SCOPE=installer
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -137,6 +149,7 @@ while [ $# -gt 0 ]; do
     --prod-ns) PROD_NS=$2; shift 2;;
     --prod-pin) PROD_PIN=$2; shift 2;;
     --kubeconfig) KUBECONFIG_ARG=(--kubeconfig "$2"); shift 2;;
+    --cluster-scope) CLUSTER_SCOPE=$2; shift 2;;
     --plain-http) PLAIN_HTTP=true; shift;;
     --argocd) ARGOCD_MODE=$2; shift 2;;
     --kyverno) KYVERNO_MODE=$2; shift 2;;
@@ -163,6 +176,12 @@ if [ -n "$REGISTRY_USER" ] && [ -n "$CLAIM_CODE" ]; then
   echo "  already have it in VEXA_CHANNEL_PASS."
   exit 2
 fi
+case "$CLUSTER_SCOPE" in
+  installer|platform-pack) ;;
+  *) echo "install.sh: --cluster-scope takes installer or platform-pack, not '$CLUSTER_SCOPE'"; exit 2;;
+esac
+PACK_SCOPE=false; [ "$CLUSTER_SCOPE" = platform-pack ] && PACK_SCOPE=true
+
 if [ -n "$REGISTRY_USER" ] && [ -z "${VEXA_CHANNEL_PASS:-}" ]; then
   echo "install.sh: --registry-user given but VEXA_CHANNEL_PASS is not set."
   echo "  export VEXA_CHANNEL_PASS=... (the password never goes on the command line)"
@@ -178,6 +197,19 @@ echo "== provider profile: $PROVIDER (tested: ${PROFILE_TESTED:-no})"
 
 ARGOCD_NS=${ARGOCD_NAMESPACE:-argocd}
 KYVERNO_NS=${KYVERNO_NAMESPACE:-kyverno}
+
+# --cluster-scope platform-pack IS the namespace-scoped-Argo shape: the app
+# team holds a project, Argo lives in it, and the pack's ClusterRoleBinding
+# binds the application-controller ServiceAccount there by default. Leaving
+# ARGOCD_NS at `argocd` made every pack-mode run die at step 5 on
+#   secrets "vexa-channel-registry" is forbidden ... in the namespace "argocd"
+# — measured on the rig, 2026-09-06. Set ARGOCD_NAMESPACE (or the provider
+# profile's) to override; it still wins, because this only fills a blank.
+if $PACK_SCOPE && [ -z "${ARGOCD_NAMESPACE:-}" ]; then
+  ARGOCD_NS=$STAGING_NS
+  echo "== Argo CD namespace: ${ARGOCD_NS} (the project — this is the namespace-scoped shape)"
+  echo "   export ARGOCD_NAMESPACE=... if your Argo lives elsewhere"
+fi
 
 # ${arr[@]+"${arr[@]}"} — empty-array expansion is "unbound" under set -u on bash 3.2 (macOS
 # default), so a run without --kubeconfig crashed at the first kubectl call
@@ -271,6 +303,156 @@ detect_component() {   # $1 = namespace, $2.. = candidate deployment names
   echo "- absent"
 }
 
+# A namespace is created by this installer under --cluster-scope installer and
+# by the platform pack under --cluster-scope platform-pack. One creator, and
+# the other verifies — never both, because a `create namespace` from a tenant
+# is Forbidden and would stop the script on a namespace that already exists.
+#
+# `quiet` as the second argument routes the create through apply_quiet rather
+# than apply: silent on a REAL run, still RENDERED under --dry-run. That is the
+# distinction apply_quiet exists to hold, and a bare `>/dev/null` on the call
+# would take the render away again.
+ensure_namespace() {   # $1 = namespace  $2 = "quiet" to route through apply_quiet
+  if $PACK_SCOPE; then
+    $DRY_RUN && return 0
+    kc get namespace "$1" >/dev/null 2>&1 && return 0
+    echo "install.sh: namespace '$1' does not exist and --cluster-scope platform-pack says the"
+    echo "  platform pack owns it. Either it was not applied, or --staging-ns/--prod-ns name"
+    echo "  something the pack did not create."
+    exit 3
+  fi
+  if [ "${2:-}" = quiet ]; then
+    kc create namespace "$1" --dry-run=client -o yaml | apply_quiet
+  else
+    kc create namespace "$1" --dry-run=client -o yaml | apply
+  fi
+}
+
+
+# 0 · IS THE PLATFORM PACK ACTUALLY HERE --------------------------------------
+#
+# Under --cluster-scope platform-pack this run installs nothing cluster-scoped,
+# so it must find out FIRST whether the five things the pack carries are
+# present — and refuse before it writes anything if they are not. A run that
+# proceeds without them does not fail: it succeeds, and then the Applications
+# sit Unknown on a cluster cache they cannot load, or every pod is admitted
+# with no signature check at all. Both are worse than a refusal.
+#
+# The check has three outcomes per object, not two, and the third is the one
+# this shape makes unavoidable:
+#
+#   present    read it, it is there.
+#   ABSENT     NotFound. Refuse, naming the pack and the render command.
+#   UNKNOWN    Forbidden. A namespace-scoped credential cannot read a
+#              cluster-scoped object — which is the whole premise of this mode
+#              — so "cannot read it" is NOT "it is missing". Reported and
+#              carried on with, never silently upgraded to either answer.
+#
+# API KINDS are the exception and the reason this works at all: discovery is
+# open to any authenticated user, so whether the CRDs landed is a question a
+# tenant CAN answer. Absent kinds are therefore a hard refusal even here.
+PACK_UNKNOWN=()
+PACK_MISSING=()
+
+pack_kind_present() {   # $1 = fully qualified resource, e.g. applications.argoproj.io
+  kc api-resources --api-group="${1#*.}" -o name 2>/dev/null | grep -qx "$1"
+}
+
+pack_object_present() {   # $1 = kind  $2 = name
+  local out rc=0
+  out=$(kc get "$1" "$2" -o name 2>&1) || rc=$?
+  if [ "$rc" = 0 ]; then return 0; fi
+  case "$out" in
+    *[Ff]orbidden*) PACK_UNKNOWN+=("$1/$2"); return 0;;
+    *) PACK_MISSING+=("$1/$2"); return 1;;
+  esac
+}
+
+# The projects are the exception to the UNKNOWN rule, and the rig proved why on
+# 2026-09-06: `kubectl -n vexa-pack get limitrange` as a tenant scoped to
+# another namespace returns FORBIDDEN, not NotFound — RBAC is evaluated before
+# existence, so a namespace that does not exist and one you may not read are
+# the same answer. Reporting that as UNKNOWN passed a check on two projects
+# that were not there.
+#
+# But a tenant IS supposed to be able to read its own project — holding these
+# two is the entire premise of this mode. So here Forbidden is a STOP, and the
+# message names both readings rather than picking one.
+pack_namespaced_present() {   # $1 = namespace  $2 = kind
+  local out rc=0
+  out=$(kc -n "$1" get "$2" -o name 2>&1) || rc=$?
+  if [ "$rc" = 0 ] && [ -n "$out" ]; then return 0; fi
+  case "$out" in
+    *[Ff]orbidden*)
+      PACK_MISSING+=("$2 in $1 — Forbidden: either the project does not exist, or this credential is not the app team's in it")
+      return 1;;
+    *) PACK_MISSING+=("$2 in $1"); return 1;;
+  esac
+}
+
+check_platform_pack() {
+  echo "== platform pack (--cluster-scope platform-pack): checking it landed before writing anything"
+  for kind in applications.argoproj.io applicationsets.argoproj.io appprojects.argoproj.io \
+              clusterpolicies.kyverno.io; do
+    pack_kind_present "$kind" || PACK_MISSING+=("CRD $kind")
+  done
+  pack_object_present clusterpolicy vexa-require-digest-pinning || true
+  pack_object_present clusterpolicy vexa-verify-channel-signature || true
+  pack_object_present clusterrole vexa-argocd-cluster-cache-reader || true
+  pack_object_present clusterrolebinding vexa-argocd-cluster-cache-reader || true
+  for ns in "$STAGING_NS" "$PROD_NS"; do
+    pack_namespaced_present "$ns" limitrange || true
+    pack_namespaced_present "$ns" resourcequota || true
+    # Namespaced, but still not a tenant's to create: RBAC escalation
+    # prevention refuses a grant wider than the grantor's own. Without it Argo
+    # cannot manage what the chart renders, and the app team is Forbidden on
+    # the ApplicationSet that IS the subscription — the last step of their own
+    # install, measured on the rig 2026-09-06.
+    pack_namespaced_present "$ns" role/vexa-argocd-project-admin || true
+    pack_namespaced_present "$ns" role/vexa-app-team-argo || true
+  done
+
+  if [ ${#PACK_UNKNOWN[@]} -gt 0 ]; then
+    echo "   UNKNOWN (this credential may not read cluster-scoped objects; not a finding):"
+    printf '     %s\n' "${PACK_UNKNOWN[@]}"
+  fi
+  if [ ${#PACK_MISSING[@]} -eq 0 ]; then
+    echo "   the pack is here. Everything from here on is namespace-scoped."
+    return 0
+  fi
+
+  cat >&2 <<EOF
+
+REFUSING — nothing has been applied.
+
+  --cluster-scope platform-pack says your platform team applied the Vexa
+  platform pack, and these objects are not in the cluster:
+
+$(printf '      %s\n' "${PACK_MISSING[@]}")
+
+  This installer will not create them: under this flag it holds no cluster
+  rights, and a run that continued would report success while the subscription
+  could never sync and nothing would verify a signature.
+
+  The pack is one file, and applying it is one act:
+
+      ./kit/platform/render.sh --provider ${PROVIDER} --project ${STAGING_NS} \\
+        --prod-project ${PROD_NS} --channel ${CHANNEL} --channel-pubkey ${PUBKEY}
+
+      # then, by someone with cluster rights, ONCE:
+      kubectl apply --server-side --force-conflicts -f platform-${PROVIDER}.yaml
+
+  What it contains and why each object is there: kit/platform/README.md.
+
+  If you DO hold cluster rights, drop the flag and this installer creates them
+  itself — that is the default.
+EOF
+  exit 3
+}
+
+if $PACK_SCOPE && ! $DRY_RUN; then check_platform_pack; fi
+
+
 # What auto does with what it found. Prints the chosen action on stdout and the
 # human sentence on stderr, so the caller can capture one without losing the
 # other.
@@ -332,17 +514,6 @@ EOF
   exit 3
 }
 
-ARGOCD_FOUND=$(detect_component "$ARGOCD_NS" argocd-server openshift-gitops-server)
-KYVERNO_FOUND=$(detect_component "$KYVERNO_NS" kyverno-admission-controller kyverno)
-ARGOCD_DEPLOY=${ARGOCD_FOUND%% *}; ARGOCD_HAVE=${ARGOCD_FOUND##* }
-KYVERNO_DEPLOY=${KYVERNO_FOUND%% *}; KYVERNO_HAVE=${KYVERNO_FOUND##* }
-
-echo "== what is already here (checked before anything is written)"
-ARGOCD_ACTION=$(plan_component argocd "$ARGOCD_MODE" "$ARGOCD_VERSION" "$ARGOCD_DEPLOY" "$ARGOCD_HAVE")
-[ "$ARGOCD_ACTION" = refuse ] && refuse_version argocd "$ARGOCD_VERSION" "$ARGOCD_DEPLOY" "$ARGOCD_HAVE"
-KYVERNO_ACTION=$(plan_component kyverno "$KYVERNO_MODE" "$KYVERNO_VERSION" "$KYVERNO_DEPLOY" "$KYVERNO_HAVE")
-[ "$KYVERNO_ACTION" = refuse ] && refuse_version kyverno "$KYVERNO_VERSION" "$KYVERNO_DEPLOY" "$KYVERNO_HAVE"
-
 # Ask the API server what this credential could actually write, and refuse
 # BEFORE writing any of it. `--dry-run=server` runs the full admission path —
 # RBAC included — so a Forbidden here is the same Forbidden the real apply
@@ -376,6 +547,28 @@ EOF
     exit 3
   fi
 }
+
+# WHAT THE PLAN IS UNDER --cluster-scope platform-pack: nothing to plan. Argo CD
+# and Kyverno belong to the platform team, this credential cannot read them, and
+# a detection that came back "absent" out of a Forbidden read would plan exactly
+# the install this mode exists not to do. check_platform_pack above has already
+# decided whether they are here, and refused by name if they were not.
+if $PACK_SCOPE; then
+ARGOCD_ACTION=pack;  ARGOCD_DEPLOY=-; ARGOCD_HAVE=unknown
+KYVERNO_ACTION=pack; KYVERNO_DEPLOY=-; KYVERNO_HAVE=unknown
+echo "== Argo CD and Kyverno: the platform pack owns both (--cluster-scope platform-pack)"
+else
+ARGOCD_FOUND=$(detect_component "$ARGOCD_NS" argocd-server openshift-gitops-server)
+KYVERNO_FOUND=$(detect_component "$KYVERNO_NS" kyverno-admission-controller kyverno)
+ARGOCD_DEPLOY=${ARGOCD_FOUND%% *}; ARGOCD_HAVE=${ARGOCD_FOUND##* }
+KYVERNO_DEPLOY=${KYVERNO_FOUND%% *}; KYVERNO_HAVE=${KYVERNO_FOUND##* }
+
+echo "== what is already here (checked before anything is written)"
+ARGOCD_ACTION=$(plan_component argocd "$ARGOCD_MODE" "$ARGOCD_VERSION" "$ARGOCD_DEPLOY" "$ARGOCD_HAVE")
+[ "$ARGOCD_ACTION" = refuse ] && refuse_version argocd "$ARGOCD_VERSION" "$ARGOCD_DEPLOY" "$ARGOCD_HAVE"
+KYVERNO_ACTION=$(plan_component kyverno "$KYVERNO_MODE" "$KYVERNO_VERSION" "$KYVERNO_DEPLOY" "$KYVERNO_HAVE")
+[ "$KYVERNO_ACTION" = refuse ] && refuse_version kyverno "$KYVERNO_VERSION" "$KYVERNO_DEPLOY" "$KYVERNO_HAVE"
+fi
 
 # 0 · claim the credential ----------------------------------------------------
 #
@@ -481,15 +674,17 @@ else
   echo "== preflight SKIPPED by flag"
 fi
 
-# 2 · Argo CD (pinned, or the one already here) -------------------------------
+# 2 · Argo CD (pinned, the one already here, or the platform team’s) -------
 ARGOCD_URL="https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
 case "$ARGOCD_ACTION" in
+  pack)  echo "== Argo CD: the platform pack carries its CRDs; installing Argo itself is yours"
+         echo "   (nothing applied here — this run holds no cluster rights)";;
   skip)  echo "== Argo CD: skipped by flag (namespace ${ARGOCD_NS} assumed to hold your own)";;
   adopt) echo "== Argo CD ${ARGOCD_HAVE}: ADOPTED in namespace ${ARGOCD_NS} — nothing applied to it";;
   *)     echo "== Argo CD ${ARGOCD_VERSION} into namespace ${ARGOCD_NS}";;
 esac
 if [ "$ARGOCD_ACTION" = install ]; then
-kc create namespace "$ARGOCD_NS" --dry-run=client -o yaml | apply
+ensure_namespace "$ARGOCD_NS"
 if ! $DRY_RUN; then
   precheck_apply argocd "$ARGOCD_URL" -n "$ARGOCD_NS"
   # --server-side: the ApplicationSet CRD exceeds the 256KB last-applied
@@ -548,15 +743,37 @@ EOF
   fi
 fi
 
-# 3 · Kyverno (pinned, or the one already here) --------------------------------
+# 3 · Kyverno (pinned, the one already here, or the platform team’s) ------
 KYVERNO_URL="https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/install.yaml"
 case "$KYVERNO_ACTION" in
-  skip)  echo "== Kyverno: skipped by flag. The channel's admission policy still lands in step 4;"
+  pack)
+    echo "== Kyverno: installed by the platform pack (${KYVERNO_VERSION}) — not touched here"
+    # A flag that silently does nothing is worse than a flag that is refused. Each
+    # of these has a KYVERNO-SIDE half that lives in a namespace this run cannot
+    # write, so say which half did not happen and who has to do it.
+    if [ -n "$REGISTRY_CA" ]; then
+      echo "   NOTE --registry-ca does NOT reach Kyverno here. Argo gets the registry through its"
+      echo "        own repo secret below, but Kyverno needs the CA as a trust bundle to FETCH"
+      echo "        SIGNATURES, and its namespace is the platform team's. Without it every image"
+      echo "        is denied with 'no signatures found' — which reads identically to an unsigned"
+      echo "        image. Ask them to mount the CA into kyverno-admission-controller."
+    fi
+    if [ -n "$REGISTRY_USER" ]; then
+      echo "   NOTE Kyverno is not given the channel credential here (same reason). Against a"
+      echo "        channel whose signature paths are anonymous this changes nothing; against"
+      echo "        your own authenticated mirror, signature verification fails closed until"
+      echo "        the platform team wires --imagePullSecrets into the controller."
+    fi
+    if $PLAIN_HTTP; then
+      echo "   NOTE --plain-http does not reach Kyverno's --allowInsecureRegistry here."
+    fi
+    ;;
+  skip)  echo "== Kyverno: skipped by flag. The channel’s admission policy still lands in step 4;"
          echo "   it needs a Kyverno in this cluster to have any effect.";;
   adopt) echo "== Kyverno ${KYVERNO_HAVE}: ADOPTED in namespace ${KYVERNO_NS} — the install is not re-applied";;
   *)     echo "== Kyverno ${KYVERNO_VERSION} into namespace ${KYVERNO_NS}";;
 esac
-if [ "$KYVERNO_ACTION" != skip ] && ! $DRY_RUN; then
+if [ "$KYVERNO_ACTION" != skip ] && [ "$KYVERNO_ACTION" != pack ] && ! $DRY_RUN; then
   if [ "$KYVERNO_ACTION" = install ]; then
     precheck_apply kyverno "$KYVERNO_URL"
     kc apply --server-side --force-conflicts -f "$KYVERNO_URL" >/dev/null
@@ -624,10 +841,19 @@ if [ "$KYVERNO_ACTION" != skip ] && ! $DRY_RUN; then
   fi
 fi
 
+# The subscription render in step 6 reads these two out of the environment, and
+# they used to be exported here, inside the admission-policy step — an implicit
+# dependency that only surfaced when a mode skipped this step and step 6 died on
+# KeyError: 'STAGING_NAMESPACE'. Exported once, above both, where they belong.
+export STAGING_NAMESPACE=$STAGING_NS PROD_NAMESPACE=$PROD_NS
+
 # 4 · admission policy --------------------------------------------------------
+if $PACK_SCOPE; then
+echo "== admission policy: the two ClusterPolicies came with the platform pack, pinning your"
+echo "   channel key. They are cluster-scoped; this run neither writes nor re-renders them."
+else
 echo "== admission policy (digest pinning + channel signature)"
 PUBKEY_INDENTED=$(sed 's/^/                      /' "$PUBKEY")
-export STAGING_NAMESPACE=$STAGING_NS PROD_NAMESPACE=$PROD_NS
 python3 - "$HERE/policy/kyverno-vexa-admission.yaml" <<PYEOF | apply
 import os, sys
 text = open(sys.argv[1]).read()
@@ -642,6 +868,7 @@ else:
     text = "\n".join(l for l in text.splitlines() if "\${SIGNATURE_REPOSITORY}" not in l)
 sys.stdout.write(text)
 PYEOF
+fi
 
 # 5 · registry access for Argo ------------------------------------------------
 echo "== registering channel registry with Argo CD"
@@ -700,7 +927,7 @@ CONTRACT_FILE=${CONTRACT:-$HERE/verify/policy.example.yaml}
 CONTRACT_PROD_FILE=${CONTRACT_PROD:-$CONTRACT_FILE}
 for pair in "vexa-contract-staging:$CONTRACT_FILE:$STAGING_NS" "vexa-contract-prod:$CONTRACT_PROD_FILE:$PROD_NS"; do
   cmname=${pair%%:*}; rest=${pair#*:}; file=${rest%%:*}; ns=${rest##*:}
-  kc create namespace "$ns" --dry-run=client -o yaml | apply_quiet
+  ensure_namespace "$ns" quiet
   python3 - "$file" <<PYEOF2 > /tmp/vexa-contract.json
 import json, sys, yaml
 print(json.dumps(yaml.safe_load(open(sys.argv[1])) or {}))
@@ -776,7 +1003,7 @@ KUBELET_PULL_SECRET=vexa-channel-pull
 if [ -n "$REGISTRY_USER" ]; then
   echo "== image-pull credential for the kubelet, in each workload namespace"
   for ns in "$STAGING_NS" "$PROD_NS"; do
-    kc create namespace "$ns" --dry-run=client -o yaml | apply_quiet
+    ensure_namespace "$ns" quiet
     kc -n "$ns" create secret docker-registry "$KUBELET_PULL_SECRET" \
       --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" \
       --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply_quiet

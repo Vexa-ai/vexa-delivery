@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# FIXTURE — the shape of a Vexa chart values.yaml, with numbers chosen so the
+# arithmetic is checkable by hand rather than copied from the real chart:
+#
+#   limits.memory   256 + 3072 + 1024        = 4352Mi, max 3Gi at big
+#   requests.memory 128 +  512 +  256        =  896Mi
+#   limits.cpu      100 + 2000 +  500        = 2600m
+#   requests.cpu     50 +  200 +  100        =  350m
+#   spawned         bot 2 cores / 3000Mi, worker 0.25 cores / 500Mi
+#
+# read-chart-sizing.py must reproduce exactly those, including finding the max
+# in a container that is NOT first and NOT last, and reading the spawned
+# classes, which carry ONE value per dimension (request == limit).
+small:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits:   {cpu: 100m, memory: 256Mi}
+big:
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits:   {cpu: 2000m, memory: 3Gi}
+middling:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits:   {cpu: 500m, memory: 1Gi}
+runtime:
+  workloadResources:
+    meetingBot:
+      cpu: 2
+      memoryMb: 3000
+    agentWorker:
+      cpu: 0.25
+      memoryMb: 500

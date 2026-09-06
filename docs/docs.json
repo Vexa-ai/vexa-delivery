@@ -69,6 +69,7 @@
                   "reference/kit-bootstrap",
                   "reference/kit-install",
                   "reference/kit-claim",
+                  "reference/kit-platform-render",
                   "reference/kit-self-update"
                 ]
               }

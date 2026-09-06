@@ -7,6 +7,11 @@ __pycache__/
 # Without this exception `*.env` silently ate every kit/providers/*/profile.env,
 # and install.sh exits "unknown provider '<name>'" on a fresh clone.
 !kit/providers/*/profile.env
+# Same class, and it recurred on 2026-09-06: the platform pack's recorded chart
+# figures are KEY=value lines render.sh sources, so they were named `.env` —
+# and `git add -A` skipped the file WITHOUT SAYING SO. The commit looked
+# complete; the pack then failed to render on the next machine that cloned it.
+!kit/platform/chart-sizing.env
 *.key
 *.pem
 cosign.key

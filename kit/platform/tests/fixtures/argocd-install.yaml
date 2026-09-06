@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+# FIXTURE — a stand-in for the pinned Argo CD install.yaml, not a copy of it.
+#
+# The real manifest is 1.9MB, of which the three CRDs are 1.8MB of OpenAPI
+# schema. Committing that would put an upstream vendor's bytes in this
+# repository and make every diff unreadable, so this fixture keeps only the
+# SHAPE the extractor has to get right:
+#
+#   * three CustomResourceDefinition documents whose names end .argoproj.io
+#     (these must survive),
+#   * documents of other kinds interleaved with them (these must not),
+#   * a CustomResourceDefinition from ANOTHER group (must not),
+#   * a nested `kind:` inside a schema, indented, which a naive grep would
+#     match and a document splitter must not.
+#
+# The real manifests are fetched by render.sh at its pinned URLs; that path is
+# exercised on a cluster, not here.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: applications.argoproj.io
+spec:
+  group: argoproj.io
+  names: {kind: Application, listKind: ApplicationList, plural: applications, singular: application}
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # a nested `kind` key: indented, therefore not a document kind
+                kind:
+                  type: string
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: applicationsets.argoproj.io
+spec:
+  group: argoproj.io
+  names: {kind: ApplicationSet, listKind: ApplicationSetList, plural: applicationsets, singular: applicationset}
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema: {type: object}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: appprojects.argoproj.io
+spec:
+  group: argoproj.io
+  names: {kind: AppProject, listKind: AppProjectList, plural: appprojects, singular: appproject}
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema: {type: object}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names: {kind: Widget, listKind: WidgetList, plural: widgets, singular: widget}
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema: {type: object}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argocd-application-controller
+  namespace: argocd

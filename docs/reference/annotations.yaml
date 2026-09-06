@@ -247,6 +247,15 @@ kit-claim: >-
   only be configured by pasting a password into a form: it prints, and warns
   that the code is spent and the value now exists only where you put it.
 
+kit-platform-render: >-
+  Reach for this when the team installing Vexa holds a project and somebody
+  else holds the cluster. It renders every cluster-scoped object the kit needs
+  — Argo's CRDs, Kyverno and the two ClusterPolicies, the read ClusterRole the
+  application-controller cannot sync without, the projects with their memory
+  ceiling and quota — into one file a platform team applies once. You do not
+  need it when the install itself runs with cluster rights, which is the
+  default.
+
 kit-self-update: >-
   Move an already-bootstrapped kit tree to a newer kit version, checked
   against the key recorded in the tree at bootstrap. `--check` reports what an

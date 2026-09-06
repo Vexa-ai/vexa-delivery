@@ -4,7 +4,7 @@
 # release crank, it reads the operator's own environment, and `DRY_RUN=1` is the
 # form of it that touches nothing.
 
-.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-verify test-edge test-gates validate-goldens docs-reference check-docs check-private-tokens lint
+.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-platform test-verify test-edge test-gates validate-goldens docs-reference check-docs check-private-tokens lint
 
 # RUNBOOK § 1 as one command: fetch -> build -> sign-images -> push.
 #
@@ -26,7 +26,7 @@ publish:
 	 SIGNING_RECEIPT='$(SIGNING_RECEIPT)' WORK='$(WORK)' DRY_RUN='$(DRY_RUN)' \
 	 sh publisher/publish.sh
 
-test: test-publisher test-preflight test-smoke test-validate test-report test-kit test-verify test-edge test-gates validate-goldens check-docs check-private-tokens
+test: test-publisher test-preflight test-smoke test-validate test-report test-kit test-platform test-verify test-edge test-gates validate-goldens check-docs check-private-tokens
 
 test-publisher:
 	python3 -m unittest discover -s publisher/tests -v
@@ -89,6 +89,16 @@ test-edge:
 	@found=0; for d in edge/*/tests; do [ -d "$$d" ] || continue; found=1; \
 	  python3 -m unittest discover -s "$$d" -v || exit 1; done; \
 	 [ "$$found" = 1 ] || echo "edge/*/tests not present yet; skipped"
+
+# The platform pack, offline: render.sh against fixture manifests (determinism,
+# the object set, the ceiling read from the chart, and the two ClusterPolicies
+# diffed against what install.sh renders), then install.sh --cluster-scope
+# platform-pack against a stub kubectl. The rendered pack is also linted when
+# kubeconform is on the machine; a server-side apply on a real cluster is a
+# receipt, not a unit test, so it is not here.
+test-platform:
+	bash kit/platform/tests/test_render.sh
+	bash kit/platform/tests/test_install_cluster_scope.sh
 
 # The in-cluster verifier's evidence model, against fixture entries with stub
 # oras/cosign. Offline: no registry, no cluster, no signature.
