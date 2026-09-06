@@ -34,7 +34,7 @@ it is actually built — is [`docs/evidence-model.mdx`](../docs/evidence-model.m
   comes from digest pinning, not from hosting** — a digest resolves to the same bytes at any
   registry, and the signature is over the entry, not over the transport.
   `images/` is therefore the **air-gap option**, taken by subscriber channels that need one-host
-  egress (oenb-class). It is not required of a channel, not asserted by `mirrored_to`, and — for
+  egress (pilot-class). It is not required of a channel, not asserted by `mirrored_to`, and — for
   the `vexa-internal` estate, which reaches Docker Hub — not pulled from: that estate's images stay
   at their public repositories, pinned by digest. A contract for such a channel **must not demand
   mirroring**, and "image not in the channel" is not a finding there.

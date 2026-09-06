@@ -4,7 +4,7 @@
 # release crank, it reads the operator's own environment, and `DRY_RUN=1` is the
 # form of it that touches nothing.
 
-.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-verify validate-goldens docs-reference check-docs lint
+.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-verify test-gates validate-goldens docs-reference check-docs check-private-tokens lint
 
 # RUNBOOK § 1 as one command: fetch -> build -> sign-images -> push.
 #
@@ -26,7 +26,7 @@ publish:
 	 SIGNING_RECEIPT='$(SIGNING_RECEIPT)' WORK='$(WORK)' DRY_RUN='$(DRY_RUN)' \
 	 sh publisher/publish.sh
 
-test: test-publisher test-preflight test-smoke test-validate test-report test-kit test-verify validate-goldens check-docs
+test: test-publisher test-preflight test-smoke test-validate test-report test-kit test-verify test-gates validate-goldens check-docs check-private-tokens
 
 test-publisher:
 	python3 -m unittest discover -s publisher/tests -v
@@ -69,6 +69,12 @@ test-verify:
 	bash kit/verify/tests/test_values_proven.sh
 	bash kit/verify/tests/test_station_verdict.sh
 
+# The repository-wide gates' own tests: that the private-token gate catches a
+# planted token, and that its refusal never reproduces the token text. Fixture
+# tokens only — the real list is digests (gates/README.md).
+test-gates:
+	python3 -m unittest discover -s gates/tests -v
+
 # Channel-entry goldens live one level down, per release: spec/goldens/<release>/entry.json.
 # Find them; refuse to pass on an empty set (a bare glob silently matched nothing).
 validate-goldens:
@@ -80,7 +86,7 @@ validate-goldens:
 # 0 — the local lint disagreed with CI for as long as that line existed. Test for
 # the tool, then run it as its own command so its exit status is the target's.
 lint:
-	python3 -m compileall -q publisher kit spec
+	python3 -m compileall -q publisher kit spec gates
 	@if ! command -v shellcheck >/dev/null; then \
 	  echo "lint: shellcheck is not installed (brew install shellcheck / apt-get install shellcheck)"; exit 1; \
 	fi
@@ -102,3 +108,12 @@ docs-reference:
 check-docs:
 	python3 docs/gen-cli-reference.py --check
 	python3 docs/check-docs.py
+
+# Some names are private by contract and this repository is public. The gate
+# hashes every word and identifier in the tracked tree against the digests in
+# gates/private-tokens.sha256 and refuses a hit with file:line and nothing else
+# — the token is never in the repository, never in a commit message, and never
+# in CI output. `--diff origin/main` is the fast form; the default is the whole
+# tree, which is the honest answer. See gates/README.md.
+check-private-tokens:
+	python3 gates/check-private-tokens.py

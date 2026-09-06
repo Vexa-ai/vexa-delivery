@@ -4,7 +4,7 @@ description: "One contract per channel, tightened only where one channel derives
 ---
 
 **A contract belongs to a channel.** Not to a release train, and not to a station. `vexa-internal`
-has one contract; a subscriber shape such as `oenb-stable` has one; and a station — staging, prod, a
+has one contract; a subscriber shape such as `pilot-stable` has one; and a station — staging, prod, a
 subscriber's estate — is a place where that channel's contract is **enforced**, never a thing that
 owns a contract of its own. Founder correction, 2026-08-29, recorded on
 [#12](https://github.com/Vexa-ai/vexa-delivery/issues/12).
@@ -16,9 +16,9 @@ documents to keep in step — the copy problem this whole page exists to delete.
 written instead as the proof column of one filled instance per train.
 
 ```
-  vexa-internal  ──────────▶  oenb-stable
-        │                          │
-        └────────  extends  ───────┘
+  vexa-internal  ──────────▶  pilot-stable
+        │                           │
+        └────────  extends  ────────┘
       a derived channel may ADD rows, RAISE enforcement, SHORTEN freshness
       it may never drop a row, and never loosen one
 
@@ -145,11 +145,11 @@ one file:
   "carriage": { "require_publication_mode": "candidate", "max_entry_age_days": 30 } }
 ```
 
-**The `oenb-stable` contract** — a different channel, extending it: raises one, adds one:
+**The `pilot-stable` contract** — a different channel, extending it: raises one, adds one:
 
 ```json
-{ "contract_id": "oenb-stable-2026-09",
-  "channel": "oenb-stable",
+{ "contract_id": "pilot-stable-2026-09",
+  "channel": "pilot-stable",
   "extends": "vexa-internal-2026-09",
   "required_values": [
     { "value_id": "V-join", "enforcement": "required", "freshness_days": 3 },
@@ -157,22 +157,22 @@ one file:
   ] }
 ```
 
-**The compiled effective `oenb-stable` contract** — what that channel's charts mount and its verdicts
+**The compiled effective `pilot-stable` contract** — what that channel's charts mount and its verdicts
 pin, at every station on it:
 
 ```json
-{ "contract_id": "oenb-stable-2026-09",
-  "compiled_from": ["vexa-internal-2026-09", "oenb-stable-2026-09"],
+{ "contract_id": "pilot-stable-2026-09",
+  "compiled_from": ["vexa-internal-2026-09", "pilot-stable-2026-09"],
   "required_values": [
     { "value_id": "V-ready", "claim": "Every platform deployment reaches ready.",
       "rank": "autonomous", "validation": {"kind": "station-check"},
       "enforcement": "required", "freshness_days": 7, "from": "vexa-internal-2026-09" },
     { "value_id": "V-join",  "claim": "A bot joins a live meeting and segments arrive over websocket.",
       "rank": "autonomous", "validation": {"kind": "station-smoke"},
-      "enforcement": "required", "freshness_days": 3, "from": "oenb-stable-2026-09" },
+      "enforcement": "required", "freshness_days": 3, "from": "pilot-stable-2026-09" },
     { "value_id": "V-api",   "claim": "The documented API surface responds as documented.",
       "rank": "autonomous", "validation": {"kind": "set-test", "subject": "digest-set"},
-      "enforcement": "advisory", "freshness_days": 14, "from": "oenb-stable-2026-09" }
+      "enforcement": "advisory", "freshness_days": 14, "from": "pilot-stable-2026-09" }
   ],
   "carriage": { "require_publication_mode": "candidate", "max_entry_age_days": 30 },
   "sha256": "<of these bytes>" }
@@ -182,7 +182,7 @@ pin, at every station on it:
 the only two moves a derived channel gets: enforcement up, freshness down. Nothing in the chain
 mentions a station, because no station owns any of it.
 
-Every train that runs on `oenb-stable` fills in that same compiled document — the demand does not
+Every train that runs on `pilot-stable` fills in that same compiled document — the demand does not
 move between trains, and the proof column is what varies per set. A filled instance against the
 contract that actually exists today is below.
 

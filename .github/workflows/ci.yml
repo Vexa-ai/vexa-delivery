@@ -35,3 +35,14 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - name: make lint
         run: make lint
+  # This repository is public; some names are private by contract. Its own job
+  # so the refusal is a named check rather than a line inside another one, and
+  # so it still reports when `make test` fails earlier for an unrelated reason.
+  # It needs nothing installed: the gate is stdlib, reads only the tracked tree,
+  # and prints file:line without the token (gates/README.md).
+  private-tokens:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: make check-private-tokens
+        run: make check-private-tokens
