@@ -674,15 +674,40 @@ VERIFY_ENABLED=false; [ -n "$VERIFIER_IMAGE" ] && VERIFY_ENABLED=true
 # It is created unconditionally with --registry-user, NOT gated on the
 # verifier being enabled. The two credentials answer to different consumers
 # and one is not a substitute for the other.
+#
+# AND IT IS CALLED `vexa-channel-pull`, NOT `vexa-channel-registry` (2026-09-06).
+# It carried the same name as the Argo REPOSITORY Secret above, and the two are
+# different objects of different types — Opaque against
+# kubernetes.io/dockerconfigjson. They never collided only because ARGOCD_NS
+# defaults to `argocd` and this one lives in the workload namespace. On ONE
+# PROJECT — the shape the openshift profile exists for — they are one object:
+# the second create failed with
+#
+#     type: Invalid value: "kubernetes.io/dockerconfigjson": field is immutable
+#
+# and all nine ServiceAccounts were left pointing their imagePullSecrets at an
+# Opaque Argo secret the kubelet cannot use. That is precisely the
+# ImagePullBackOff the comment above was written to prevent, reintroduced by a
+# namespace choice. A name that is only unique because of a default is not
+# unique.
+#
+# CARRYING OVER AN EXISTING INSTALL: nothing to do by hand. The ServiceAccount
+# patch below is a merge patch on a LIST, so it REPLACES the whole
+# imagePullSecrets array — every account stops referring to the old name on the
+# next run of this installer or of self-update.sh. The old Secret is then
+# unreferenced and can be deleted at leisure; the migration note in
+# kit/README.md gives the one command and says how to tell the two objects apart
+# before you delete either.
 # --------------------------------------------------------------------------
+KUBELET_PULL_SECRET=vexa-channel-pull
 if [ -n "$REGISTRY_USER" ]; then
   echo "== image-pull credential for the kubelet, in each workload namespace"
   for ns in "$STAGING_NS" "$PROD_NS"; do
     kc create namespace "$ns" --dry-run=client -o yaml | apply_quiet
-    kc -n "$ns" create secret docker-registry vexa-channel-registry \
+    kc -n "$ns" create secret docker-registry "$KUBELET_PULL_SECRET" \
       --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" \
       --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply_quiet
-    echo "   $ns: vexa-channel-registry"
+    echo "   $ns: $KUBELET_PULL_SECRET"
 
     # AND ATTACH IT TO THE SERVICE ACCOUNTS, which is not belt-and-braces.
     #
@@ -700,9 +725,13 @@ if [ -n "$REGISTRY_USER" ]; then
     #
     # It runs on every install because ServiceAccounts appear as the estate
     # syncs, not before it — so it is also re-run by self-update.
+    #
+    # A merge patch REPLACES a list, which is what carries an existing install
+    # over: an account still pointing at the old `vexa-channel-registry` name
+    # stops doing so here, without anyone having to find it first.
     for sa in $(kc -n "$ns" get serviceaccounts -o name 2>/dev/null); do
       kc -n "$ns" patch "$sa" --type merge \
-        -p '{"imagePullSecrets":[{"name":"vexa-channel-registry"}]}' >/dev/null 2>&1 || true
+        -p "{\"imagePullSecrets\":[{\"name\":\"$KUBELET_PULL_SECRET\"}]}" >/dev/null 2>&1 || true
     done
   done
 fi

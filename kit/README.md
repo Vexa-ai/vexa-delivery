@@ -70,6 +70,45 @@ nothing: an unsigned or wrong-key artifact is refused with nothing written to di
 | Providers | [`providers/*/profile.env`](providers/) | `PROFILE_TESTED` says honestly which profiles were exercised end-to-end by `install.sh` (today: lke). [`providers/openshift/`](providers/openshift/) is one rung below that — rehearsed against recorded constraints, asserted offline in [`preflight/tests/test_openshift_profile.py`](preflight/tests/test_openshift_profile.py), never live-installed; its README states the deltas and the open `HOME` finding |
 | Node profile | [`profiles/vexa/`](profiles/vexa/) | `node-baseline.yaml` = delivered toggles (image digests are baked per release by the publisher, never here); `customer-values.example.yaml` = the file you edit and keep |
 
+## The two registry Secrets, and the rename that separated them
+
+`install.sh` creates two Secrets that both concern the channel registry, and
+they answer to different consumers. They used to share a name.
+
+| Secret | Namespace | Type | Read by |
+|---|---|---|---|
+| `vexa-channel-registry` | `ARGOCD_NAMESPACE` (default `argocd`) | `Opaque`, labelled `argocd.argoproj.io/secret-type: repository` | Argo's repo-server, to fetch entries and charts |
+| `vexa-channel-pull` | each workload namespace | `kubernetes.io/dockerconfigjson` | the **kubelet**, to pull images, via `spec.imagePullSecrets` |
+
+Until 2026-09-06 the second was also called `vexa-channel-registry`. The two
+never collided *only because the namespaces differ by default*. On a
+single-project tenant — the shape [`providers/openshift/`](providers/openshift/)
+exists for — they are one object, the second create fails with `type: Invalid
+value: "kubernetes.io/dockerconfigjson": field is immutable`, and every
+ServiceAccount is left pointing its `imagePullSecrets` at an `Opaque` secret the
+kubelet cannot use. `ImagePullBackOff`, on a sync Argo reports as fully
+Succeeded. A name that is unique only because of a default is not unique.
+
+**Carrying an existing install over: re-run the installer (or
+`self-update.sh`), then delete one Secret.** The ServiceAccount patch is a merge
+patch on a list, so it replaces `imagePullSecrets` wholesale — every account
+moves to the new name on the next run, with nothing to find by hand. That
+leaves the old pull Secret unreferenced:
+
+```bash
+# in each workload namespace: confirm nothing still points at the old name,
+kubectl -n vexa-staging get sa -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.imagePullSecrets[*].name}{"\n"}{end}'
+# check you are looking at the KUBELET's secret and not Argo's repository one
+kubectl -n vexa-staging get secret vexa-channel-registry -o jsonpath='{.type}'   # kubernetes.io/dockerconfigjson
+# then, and only then:
+kubectl -n vexa-staging delete secret vexa-channel-registry
+```
+
+If that `type` comes back `Opaque`, you are on a single-namespace tenant and
+that object is **Argo's repository Secret** — deleting it stops the
+subscription syncing. Leave it; the new `vexa-channel-pull` sits beside it,
+which is the whole point of the rename.
+
 Proven end-to-end on 2026-08-21 against throwaway LKE clusters — install, pull, verify, admit,
 deny-unsigned, deny-mutable-tag, the prod gate, and every preflight failure class
 ([kit receipt](../docs/receipts/2026-08-21-m2-throwaway-test.md)); then the full Vexa stack

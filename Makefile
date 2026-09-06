@@ -64,6 +64,7 @@ test-kit:
 	bash kit/tests/test_install_adopt.sh
 	bash kit/tests/test_install_manifests.sh
 	bash kit/tests/test_install_dry_run_secrets.sh
+	bash kit/tests/test_install_object_names.sh
 
 # The in-cluster verifier's evidence model, against fixture entries with stub
 # oras/cosign. Offline: no registry, no cluster, no signature.
