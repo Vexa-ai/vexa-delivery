@@ -57,8 +57,11 @@ case "$*" in
     [ "${PACK_NAMESPACES:-present}" = present ] || { echo 'Error from server (NotFound)' >&2; exit 1; }
     echo "namespace/$3"; exit 0;;
   *"get limitrange"*|*"get resourcequota"*)
-    [ "${PACK_NAMESPACES:-present}" = present ] || { echo 'Error from server (NotFound): namespaces "x" not found' >&2; exit 1; }
-    echo "object/vexa"; exit 0;;
+    case "${PACK_NAMESPACES:-present}" in
+      present) echo "object/vexa"; exit 0;;
+      forbidden) echo 'Error from server (Forbidden): limitranges is forbidden: User "t" cannot list resource "limitranges" in the namespace "vexa-app"' >&2; exit 1;;
+      *) echo 'Error from server (NotFound): namespaces "vexa-app" not found' >&2; exit 1;;
+    esac;;
   *namespace*) echo "kind: Namespace";;
 esac
 exit 0
@@ -112,6 +115,18 @@ OUT=$(PACK_NAMESPACES=missing run); RC=$?
 set -e
 [ "$RC" = 3 ] || fail "a missing project exited $RC, expected 3"
 echo "$OUT" | grep -q "vexa-app" || fail "the refusal does not name the missing project"
+
+# 4b · Forbidden ON THE PROJECT is a stop, not an UNKNOWN --------------------
+# Measured on a live tenant: a namespace that does not exist and one you may
+# not read give the same Forbidden, because RBAC is evaluated before existence.
+# Treating that as UNKNOWN passed a check on two projects that were not there.
+: > "$TMP/kubectl.log"
+set +e
+OUT=$(PACK_NAMESPACES=forbidden run); RC=$?
+set -e
+[ "$RC" = 3 ] || fail "Forbidden on the project's own LimitRange exited $RC, expected 3"
+echo "$OUT" | grep -q "does not exist, or this credential is not the app team's" \
+  || fail "the refusal does not say which of the two readings it could not distinguish"
 
 # 5 · the default is unchanged -------------------------------------------------
 : > "$TMP/kubectl.log"

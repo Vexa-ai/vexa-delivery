@@ -198,6 +198,19 @@ echo "== provider profile: $PROVIDER (tested: ${PROFILE_TESTED:-no})"
 ARGOCD_NS=${ARGOCD_NAMESPACE:-argocd}
 KYVERNO_NS=${KYVERNO_NAMESPACE:-kyverno}
 
+# --cluster-scope platform-pack IS the namespace-scoped-Argo shape: the app
+# team holds a project, Argo lives in it, and the pack's ClusterRoleBinding
+# binds the application-controller ServiceAccount there by default. Leaving
+# ARGOCD_NS at `argocd` made every pack-mode run die at step 5 on
+#   secrets "vexa-channel-registry" is forbidden ... in the namespace "argocd"
+# — measured on the rig, 2026-09-06. Set ARGOCD_NAMESPACE (or the provider
+# profile's) to override; it still wins, because this only fills a blank.
+if $PACK_SCOPE && [ -z "${ARGOCD_NAMESPACE:-}" ]; then
+  ARGOCD_NS=$STAGING_NS
+  echo "== Argo CD namespace: ${ARGOCD_NS} (the project — this is the namespace-scoped shape)"
+  echo "   export ARGOCD_NAMESPACE=... if your Argo lives elsewhere"
+fi
+
 # ${arr[@]+"${arr[@]}"} — empty-array expansion is "unbound" under set -u on bash 3.2 (macOS
 # default), so a run without --kubeconfig crashed at the first kubectl call
 kc() { kubectl ${KUBECONFIG_ARG[@]+"${KUBECONFIG_ARG[@]}"} "$@"; }
@@ -355,12 +368,24 @@ pack_object_present() {   # $1 = kind  $2 = name
   esac
 }
 
+# The projects are the exception to the UNKNOWN rule, and the rig proved why on
+# 2026-09-06: `kubectl -n vexa-pack get limitrange` as a tenant scoped to
+# another namespace returns FORBIDDEN, not NotFound — RBAC is evaluated before
+# existence, so a namespace that does not exist and one you may not read are
+# the same answer. Reporting that as UNKNOWN passed a check on two projects
+# that were not there.
+#
+# But a tenant IS supposed to be able to read its own project — holding these
+# two is the entire premise of this mode. So here Forbidden is a STOP, and the
+# message names both readings rather than picking one.
 pack_namespaced_present() {   # $1 = namespace  $2 = kind
   local out rc=0
   out=$(kc -n "$1" get "$2" -o name 2>&1) || rc=$?
   if [ "$rc" = 0 ] && [ -n "$out" ]; then return 0; fi
   case "$out" in
-    *[Ff]orbidden*) PACK_UNKNOWN+=("$2 in $1"); return 0;;
+    *[Ff]orbidden*)
+      PACK_MISSING+=("$2 in $1 — Forbidden: either the project does not exist, or this credential is not the app team's in it")
+      return 1;;
     *) PACK_MISSING+=("$2 in $1"); return 1;;
   esac
 }
