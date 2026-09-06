@@ -172,7 +172,11 @@ claim_main() {
     esac
   done
 
-  [ -n "$CODE" ] && [ -n "$EDGE" ] && [ -n "$STATION" ] || claim_usage
+  # `A && B && C || usage` reads as if-then-else and is not: shellcheck SC2015
+  # flags it, and the local shellcheck was new enough to stay quiet while CI's
+  # was not — the lint disagreed with CI for as long as that line existed, which
+  # is the same shape as the note above the `lint` target in the Makefile.
+  if [ -z "$CODE" ] || [ -z "$EDGE" ] || [ -z "$STATION" ]; then claim_usage; fi
   if $PRINT_ONCE && [ -n "$NAMESPACE" ]; then
     echo "claim: --print-once and --namespace are different deliveries of the same" >&2
     echo "  single-use code; pick one. The code is spent by whichever runs first." >&2

@@ -329,7 +329,13 @@ def park_preflight(args: argparse.Namespace, account: str) -> dict:
     missing recipients file afterwards would leave the subscriber locked out
     with nothing parked and nothing printed — a self-inflicted outage caused by
     a typo in a path. Everything that can be checked without minting is checked
-    here, including one round-trip through `age`.
+    here, including one round trip through `age`.
+
+    ORDER: every refusal this function can reach on its own comes first, and the
+    `age` round trip — the one check that spawns a process and needs a binary —
+    comes last. Not a preference: with the probe earlier, a bad ledger path or a
+    missing `--edge` was reported as "the `age` binary is not on PATH" on any
+    host without it, which is every CI runner. Two tests caught exactly that.
     """
     import vexa_stations  # PyYAML; only this path needs it
 
@@ -357,10 +363,7 @@ def park_preflight(args: argparse.Namespace, account: str) -> dict:
         args.edge_recipient, "CHANNEL_CLAIM_EDGE_RECIPIENT",
         "the edge's age recipients file",
     )
-    # Encrypt a throwaway now. A recipients file that is present but malformed
-    # fails here, on a value nobody needs, instead of after the rotation.
-    vexa_claim.age_encrypt(recipients, "park-preflight")
-    return {
+    context = {
         "station": vexa_claim.validate_station(args.station or account),
         "recipients": recipients,
         "edge": env_or_flag(args.edge, "CHANNEL_CLAIM_EDGE", "the claim endpoint URL"),
@@ -369,6 +372,11 @@ def park_preflight(args: argparse.Namespace, account: str) -> dict:
         "root": ledger_call(vexa_stations, vexa_stations.resolve_root, args.ledger),
         "channel": args.channel,
     }
+    # LAST, and it is the expensive one: encrypt a throwaway to prove the key
+    # works. A recipients file that is present but malformed fails here, on a
+    # value nobody needs, instead of after the rotation.
+    vexa_claim.age_encrypt(recipients, "park-preflight")
+    return context
 
 
 def ledger_call(module, func, *args, **kwargs):
