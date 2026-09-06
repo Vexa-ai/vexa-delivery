@@ -1,12 +1,12 @@
 ---
 title: "How it works"
-description: "We publish, your cluster pulls and checks, it rolls out or back, a receipt returns."
+description: "We publish, your cluster pulls and checks, a bad release is refused before it syncs, a receipt returns."
 ---
 
 1. **We publish** a release to a channel, with its validation evidence.
 2. **Your cluster pulls it.** Argo CD syncs; Kyverno verifies the signatures with cosign at admission, and — when you install with [`--verifier-image`](install#step-3-install), which is what turns that gate on — the PreSync verifier checks the entry against your contract before the sync. That is what makes the update safe to roll.
-3. **The cluster rolls it out, or rolls it back.**
-4. **A receipt goes back to the channel**, so we know how it went.
+3. **A release that does not pass is refused before it syncs**, rather than rolled back after. Going back is one command and it is yours: production follows a pin you move, and moving it to the previous version is [Roll back](operations#roll-back). Nothing here reverts a release on its own — staging's `selfHeal` reverts hand-drift, not a bad release, and production has no automated sync at all.
+4. **A receipt goes back to the channel** when you send it, so we know how it went.
 
 <img src="/images/delivery-loop.svg" alt="Vexa publishes and gates a release into the channel; your cluster pulls it, admits it, deploys to staging, a human smokes it, you promote to production, and a station report returns to the channel" style={{width:"100%",maxWidth:"1070px"}} />
 

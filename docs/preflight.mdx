@@ -3,22 +3,32 @@ title: "Preflight"
 description: "Know before first sync whether your cluster will run what the channel delivers."
 ---
 
-It fails closed, so a conflict with your taints, quotas or admission profile surfaces now instead of during your first sync. Run it again when the environment changes — new nodes, a new quota or LimitRange, a changed admission profile, a Kubernetes upgrade. Releases need no preflight: that is what the channel is for.
+It fails closed on every check it can run, so a conflict with your taints, quotas or admission profile surfaces now instead of during your first sync. Run it again when the environment changes — new nodes, a new quota or LimitRange, a changed admission profile, a Kubernetes upgrade. Releases need no preflight: that is what the channel is for.
+
+**Give it `--manifests`.** Without it there are no delivered workloads to check and P2/P3 see only the bot profile — the reason a 4Gi postgres limit cleared a 2560Mi ceiling on 2026-09-06 and was refused at admission after a green install. [`install.sh`](install#step-3-install) renders the chart itself; run standalone, hand it a render.
 
 ```bash
 python3 kit/preflight/vexa_preflight.py --namespace vexa-staging \
   [--manifests <rendered-manifests>] [--live-probes --registry-host <host>]
 ```
 
-Each check prints `PASS`, `WARN` or `FAIL` with a remedy line. Non-zero exit if anything failed; `--json` emits the same report machine-readably.
+Each check prints `PASS`, `WARN`, `FAIL` or `NOT EVALUATED` with a remedy line; `--json` emits the same report machine-readably.
+
+| Exit | What it means |
+|---|---|
+| `0` | everything that ran passed, and everything ran |
+| `1` | at least one `FAIL` — this is the fails-closed case, and it stops an install |
+| `4` | nothing failed **and** at least one check was `NOT EVALUATED` |
+
+**Exit 4 is the third answer, and it is not a verdict on your cluster.** A namespace-scoped account cannot list nodes or StorageClasses; reporting that as `PASS` claims something was verified and reporting it as `FAIL` claims a defect nobody observed. So those checks say `NOT EVALUATED`, name the read that was refused, and get their own exit code — sharing `0` with a clean run is how "four of these were never looked at" used to read as "your cluster is fine". Turn them into answers with the snapshot handoff below. `install.sh` names them and continues.
 
 - **P1 · Taints and tolerations** — workloads that cannot schedule sit Pending forever. Covers the **dynamically spawned bot pods**, which appear in no manifest.
 - **P2 · Resources vs LimitRange** — a LimitRange silently defaults undeclared containers to 64Mi; verifies the delivered declarations fit your min/max.
 - **P3 · ResourceQuota headroom** — quota that cannot fit the declared totals refuses pods at the margin.
 - **P4 · Pod security admission** — OpenShift SCC `restricted-v2` **rejects** explicit UIDs outside the namespace range; PodSecurity `restricted` needs `runAsNonRoot`, seccomp, capability drops. Names the workload that would be refused.
-- **P5 · NetworkPolicy reachability** — default-deny egress with no DNS allowance, or no route to the registry. Static, or proven with `--live-probes`.
+- **P5 · NetworkPolicy reachability** — default-deny egress with no DNS allowance, or no route to the registry. Static by default, which cannot prove a route; the live probe needs `--live-probes --registry-host`.
 - **P6 · Shared-memory sizing** — the bot's memory-backed `/dev/shm` counts against its memory limit; checks your LimitRange max and node capacity hold it.
-- **P7 · Image pull** — pulls a release image **by digest** with this namespace's secrets; warm node caches hide broken credentials until the first new release.
+- **P7 · Image pull** *(opt-in)* — pulls a release image **by digest** with this namespace's secrets; warm node caches hide broken credentials until the first new release. It creates a pod and needs the namespace's image-pull Secret, which the install writes, so it runs only with `--live-probes --pull-test-image <ref>` and belongs **after** the install rather than before it.
 - **P8 · Storage** — a default StorageClass exists if the delivered set carries volume claims.
 - **P9 · Version floor** — Kubernetes is at or above the tested floor.
 
@@ -30,6 +40,6 @@ Live-probe pods are themselves PodSecurity `restricted` compliant, so preflight 
 python3 kit/preflight/vexa_preflight.py --namespace vexa-staging --dump-snapshot cluster.json
 ```
 
-Preflight answers *will it run here*, never *did it work here*. A cluster can pass all nine checks and still fail to capture a meeting — that is [the smoke test's job](install#step-4-smoke-with-a-human-in-a-real-meeting), and it needs a human. `vexa_validate.py` runs both in order and packages the receipts together.
+Preflight answers *will it run here*, never *did it work here*. A cluster can pass every check and still fail to capture a meeting — that is [the smoke test's job](install#step-4-smoke-with-a-human-in-a-real-meeting), and it needs a human. `vexa_validate.py` runs both in order and packages the receipts together.
 
 Next: [Install](install) · [Operations](operations)
