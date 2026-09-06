@@ -236,6 +236,17 @@ kit-install: >-
   Application only when you set `--prod-pin`, because moving that pin is the
   operator's gate and not ours to pre-press.
 
+kit-claim: >-
+  Turn the short code someone read to you on a call into your channel credential,
+  written straight into a Secret in your cluster. Reach for it when you are
+  adding the credential to a cluster that is already installed, or re-adding one
+  after a rotation; a first install takes the same code through
+  `install.sh --claim-code` instead. The value never appears on your screen, so
+  there is nothing to paste, nothing in your shell history and nothing to shred
+  afterwards. `--print-once` is the exception, for the registry mirror that can
+  only be configured by pasting a password into a form: it prints, and warns
+  that the code is spent and the value now exists only where you put it.
+
 kit-self-update: >-
   Move an already-bootstrapped kit tree to a newer kit version, checked
   against the key recorded in the tree at bootstrap. `--check` reports what an

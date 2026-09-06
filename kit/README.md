@@ -13,8 +13,16 @@ Bring your own cluster, run this command:
   --channel acme-stable \
   --channel-pubkey channel.pub \
   --customer-values my-values.yaml \
+  --claim-code <the code read to you on the call> \
   [--registry-ca corporate-ca.pem] [--prod-pin 0.12.24]
 ```
+
+`--claim-code` is how the channel credential reaches the cluster: a short
+single-use code, spoken on a call, exchanged for the credential over TLS and
+written to a Secret. Nobody types the credential and nobody sees it. (Already
+installed, or adding it later? [`claim.sh`](claim.sh) does the same exchange on
+its own. Holding the credential already? `--registry-user` with
+`VEXA_CHANNEL_PASS` is unchanged.)
 
 What it does, in order: **conformance preflight** (refuses on FAIL) → pinned **Argo CD** → pinned
 **Kyverno** → **admission policy** (digest pinning + channel-signature verification, customer-owned)
@@ -63,6 +71,7 @@ nothing: an unsigned or wrong-key artifact is refused with nothing written to di
 
 | Piece | File | Note |
 |---|---|---|
+| Claim | [`claim.sh`](claim.sh) | turn the short single-use code read to you on a call into the `vexa-station-credential` Secret; the value never reaches your terminal. `install.sh --claim-code` sources this file, so a first install takes the code directly |
 | Validate | [`validate/vexa_validate.py`](validate/vexa_validate.py) | one command: preflight → (optional install) → smoke → `station-report.yaml`, the one secret-free file you read and send back |
 | Preflight | [`preflight/vexa_preflight.py`](preflight/vexa_preflight.py) | P1–P9, each anchored to an observed incident; air-gapped `--snapshot` mode; probe pods are PSA-restricted-compliant |
 | Subscription | [`argocd/applicationset.yaml`](argocd/applicationset.yaml) | ServerSideApply always; volumeClaimTemplates ignoreDifferences |
