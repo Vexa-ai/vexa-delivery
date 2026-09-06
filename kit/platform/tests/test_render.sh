@@ -131,6 +131,14 @@ for role in by_kind.get("ClusterRole", []):
 projects = [d for d in by_kind.get("Namespace", []) if d["metadata"]["name"].startswith("vexa-app")]
 if sorted(d["metadata"]["name"] for d in projects) != ["vexa-app", "vexa-app-prod"]:
     problems.append("the two projects are not both in the pack")
+# 4b · the two namespaced Roles a tenant cannot create for itself
+for role in ("vexa-argocd-project-admin", "vexa-app-team-argo"):
+    where = sorted(d["metadata"]["namespace"] for d in by_kind.get("Role", [])
+                   if d["metadata"]["name"] == role)
+    if where != ["vexa-app", "vexa-app-prod"]:
+        problems.append(f"Role {role} is in {where}, expected both projects — RBAC escalation "
+                        f"prevention stops the tenant creating it, so it is the pack's job")
+
 for ns in projects:
     labels = ns["metadata"].get("labels") or {}
     for key in ("pod-security.kubernetes.io/enforce",

@@ -56,7 +56,7 @@ case "$*" in
   "get namespace"*)
     [ "${PACK_NAMESPACES:-present}" = present ] || { echo 'Error from server (NotFound)' >&2; exit 1; }
     echo "namespace/$3"; exit 0;;
-  *"get limitrange"*|*"get resourcequota"*)
+  *"get limitrange"*|*"get resourcequota"*|*"get role/"*)
     case "${PACK_NAMESPACES:-present}" in
       present) echo "object/vexa"; exit 0;;
       forbidden) echo 'Error from server (Forbidden): limitranges is forbidden: User "t" cannot list resource "limitranges" in the namespace "vexa-app"' >&2; exit 1;;

@@ -406,6 +406,72 @@ metadata:
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ${APP_TEAM_ROLE}}
 subjects:
 ${subject}
+---
+# ...and the same identity on argoproj.io, which \`admin\` does not carry. The
+# subscription IS an ApplicationSet, so without this the app team is Forbidden
+# on the last step of their own install — measured on the rig, 2026-09-06.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vexa-app-team-argo
+  namespace: $1
+  annotations:
+    vexa.ai/platform-pack: "$CHANNEL"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: vexa-app-team-argo}
+subjects:
+${subject}
+EOF
+}
+
+# Two namespaced Roles a TENANT cannot create for itself: RBAC escalation
+# prevention refuses a grant wider than the grantor's own, so both are the
+# platform team's act even though neither leaves the project.
+project_roles() {   # $1 = namespace
+  cat <<EOF
+---
+# Argo CD manages whatever the delivered chart renders — Deployments, PVCs,
+# Services, Jobs, CRs it has never heard of — so its controller needs the full
+# verb set INSIDE this project and nothing outside it. Paired with the
+# read-only cluster ClusterRole above: read everywhere, write only here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vexa-argocd-project-admin
+  namespace: $1
+  annotations:
+    vexa.ai/platform-pack: "$CHANNEL"
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vexa-argocd-project-admin
+  namespace: $1
+  annotations:
+    vexa.ai/platform-pack: "$CHANNEL"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: vexa-argocd-project-admin}
+subjects:
+  - {kind: ServiceAccount, name: ${ARGO_SA}, namespace: ${ARGO_NS}}
+---
+# The app team's grant on Argo's own objects. \`admin\` (and OpenShift's project
+# admin) covers no custom resource, so this is what lets them create the
+# subscription and read its status. Bound below only when you name a subject;
+# otherwise bind it yourself:
+#   oc adm policy add-role-to-group vexa-app-team-argo <group> -n $1
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vexa-app-team-argo
+  namespace: $1
+  annotations:
+    vexa.ai/platform-pack: "$CHANNEL"
+rules:
+  - apiGroups: [argoproj.io]
+    resources: ["*"]
+    verbs: ["*"]
 EOF
 }
 
@@ -488,8 +554,12 @@ spec:
     requests.cpu: "${Q_REQ_CPU}"
     pods: "${Q_PODS}"
     persistentvolumeclaims: "${Q_PVC}"
-$(app_team_binding "$1")
 EOF
+  # Called, not substituted: `$(...)` strips the trailing newline, so the next
+  # document's `---` lands on the last key of this one and the file stops being
+  # YAML halfway down.
+  project_roles "$1"
+  app_team_binding "$1"
 }
 
 # --- write it ----------------------------------------------------------------

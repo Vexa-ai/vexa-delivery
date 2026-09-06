@@ -403,6 +403,13 @@ check_platform_pack() {
   for ns in "$STAGING_NS" "$PROD_NS"; do
     pack_namespaced_present "$ns" limitrange || true
     pack_namespaced_present "$ns" resourcequota || true
+    # Namespaced, but still not a tenant's to create: RBAC escalation
+    # prevention refuses a grant wider than the grantor's own. Without it Argo
+    # cannot manage what the chart renders, and the app team is Forbidden on
+    # the ApplicationSet that IS the subscription — the last step of their own
+    # install, measured on the rig 2026-09-06.
+    pack_namespaced_present "$ns" role/vexa-argocd-project-admin || true
+    pack_namespaced_present "$ns" role/vexa-app-team-argo || true
   done
 
   if [ ${#PACK_UNKNOWN[@]} -gt 0 ]; then
@@ -739,7 +746,28 @@ fi
 # 3 · Kyverno (pinned, the one already here, or the platform team’s) ------
 KYVERNO_URL="https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/install.yaml"
 case "$KYVERNO_ACTION" in
-  pack)  echo "== Kyverno: installed by the platform pack (${KYVERNO_VERSION}) — not touched here";;
+  pack)
+    echo "== Kyverno: installed by the platform pack (${KYVERNO_VERSION}) — not touched here"
+    # A flag that silently does nothing is worse than a flag that is refused. Each
+    # of these has a KYVERNO-SIDE half that lives in a namespace this run cannot
+    # write, so say which half did not happen and who has to do it.
+    if [ -n "$REGISTRY_CA" ]; then
+      echo "   NOTE --registry-ca does NOT reach Kyverno here. Argo gets the registry through its"
+      echo "        own repo secret below, but Kyverno needs the CA as a trust bundle to FETCH"
+      echo "        SIGNATURES, and its namespace is the platform team's. Without it every image"
+      echo "        is denied with 'no signatures found' — which reads identically to an unsigned"
+      echo "        image. Ask them to mount the CA into kyverno-admission-controller."
+    fi
+    if [ -n "$REGISTRY_USER" ]; then
+      echo "   NOTE Kyverno is not given the channel credential here (same reason). Against a"
+      echo "        channel whose signature paths are anonymous this changes nothing; against"
+      echo "        your own authenticated mirror, signature verification fails closed until"
+      echo "        the platform team wires --imagePullSecrets into the controller."
+    fi
+    if $PLAIN_HTTP; then
+      echo "   NOTE --plain-http does not reach Kyverno's --allowInsecureRegistry here."
+    fi
+    ;;
   skip)  echo "== Kyverno: skipped by flag. The channel’s admission policy still lands in step 4;"
          echo "   it needs a Kyverno in this cluster to have any effect.";;
   adopt) echo "== Kyverno ${KYVERNO_HAVE}: ADOPTED in namespace ${KYVERNO_NS} — the install is not re-applied";;
