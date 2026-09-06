@@ -27,6 +27,12 @@ required
 options
   --customer-values customer-local values file injected into the subscription
                     (default: profiles/vexa/customer-values.example.yaml)
+  --manifests       rendered manifests of the delivered set, handed to the
+                    preflight so P2/P3 check EVERY workload's declared
+                    resources against your LimitRange and quota — not just the
+                    synthetic bot profile. Without it the installer renders the
+                    chart itself with 'helm template'; if that is not possible
+                    it says so and the preflight checks the bot alone.
   --staging-ns      namespace the staging Application deploys into
                     (default vexa-staging)
   --prod-ns         namespace the production Application deploys into
@@ -80,7 +86,7 @@ EOF
 }
 
 PROVIDER="" REGISTRY="" CHANNEL="" PUBKEY="" SIG_REPO="" REGISTRY_CA="" REGISTRY_USER=""
-CUSTOMER_VALUES="" VERIFIER_IMAGE=""
+CUSTOMER_VALUES="" VERIFIER_IMAGE="" MANIFESTS=""
 # The chart the subscription installs and the Helm release name it installs
 # under. Both were hardcoded to "vexa". ADOPTION MAKES THAT FATAL: taking
 # ownership of an existing release means matching the name that release
@@ -104,6 +110,7 @@ while [ $# -gt 0 ]; do
     --chart-name) CHART_NAME=$2; shift 2;;
     --release-name) RELEASE_NAME=$2; shift 2;;
     --customer-values) CUSTOMER_VALUES=$2; shift 2;;
+    --manifests) MANIFESTS=$2; shift 2;;
     --contract) CONTRACT=$2; shift 2;;
     --contract-prod) CONTRACT_PROD=$2; shift 2;;
     --verifier-image) VERIFIER_IMAGE=$2; shift 2;;
@@ -307,10 +314,56 @@ EOF
 }
 
 # 1 · preflight ---------------------------------------------------------------
+#
+# THE PREFLIGHT MUST BE GIVEN THE DELIVERED SET. Until the bbb rehearsal this
+# call passed --namespace and nothing else, so `objects = []` and P2/P3
+# evaluated ONLY the synthetic bot profile — never the chart. P2's own anchor is
+# vexa#1005, "a customer LimitRange squeezed undeclared bots to 64Mi"; the same
+# class then happened at sync time, to postgres, because the check ran against
+# nothing: the chart's own postgres asks for a 4Gi limit and the project's
+# LimitRange ceiling was 2560Mi, sized for the bot's /dev/shm. Admission refused
+# it, after the install, with the preflight green.
+CV_FILE=${CUSTOMER_VALUES:-$HERE/profiles/vexa/customer-values.example.yaml}
 if ! $SKIP_PREFLIGHT; then
   echo "== preflight (conformance before anything is installed)"
-  python3 "$HERE/preflight/vexa_preflight.py" \
-    --namespace "$STAGING_NS" ${KUBECONFIG_ARG[@]+"${KUBECONFIG_ARG[@]}"} \
+  PF_MANIFESTS="$MANIFESTS"
+  if [ -z "$PF_MANIFESTS" ]; then
+    # Render the chart ourselves. Anonymously and with whatever OCI credential
+    # `helm registry login` already left on this machine — the password is NOT
+    # put on helm's argv, where it would land in the process list and the shell
+    # history of the same run that refuses to print it.
+    RENDER_DIR=$(mktemp -d); RENDER="$RENDER_DIR/rendered.yaml"
+    HELM_EXTRA=()
+    $PLAIN_HTTP && HELM_EXTRA+=(--plain-http)
+    $REGISTRY_INSECURE && HELM_EXTRA+=(--insecure-skip-tls-verify)
+    if command -v helm >/dev/null 2>&1 && \
+       helm template "$RELEASE_NAME" "oci://${REGISTRY}/vexa/channel/${CHANNEL}/charts/${CHART_NAME}" \
+         --namespace "$STAGING_NS" --values "$CV_FILE" \
+         ${HELM_EXTRA[@]+"${HELM_EXTRA[@]}"} > "$RENDER" 2>"$RENDER_DIR/err"; then
+      PF_MANIFESTS="$RENDER"
+      echo "   rendered the delivered chart for the preflight: $PF_MANIFESTS"
+    else
+      cat <<EOF
+   WARNING the delivered chart was NOT rendered, so the preflight below checks
+           only the dynamic bot profile. P2 (LimitRange) and P3 (quota) will not
+           see a single workload the channel actually delivers — which is how a
+           4Gi postgres limit got past a 2560Mi ceiling in the 2026-09-06
+           rehearsal and was refused at admission instead.
+           Reason: $( command -v helm >/dev/null 2>&1 && head -1 "$RENDER_DIR/err" 2>/dev/null || echo "helm is not on PATH" )
+           Fix it either way, and re-run:
+             helm registry login ${REGISTRY}          # then re-run this installer
+             # or render it yourself and hand it over:
+             helm template ${RELEASE_NAME} oci://${REGISTRY}/vexa/channel/${CHANNEL}/charts/${CHART_NAME} \\
+               --values ${CV_FILE} > rendered.yaml
+             $0 ... --manifests rendered.yaml
+EOF
+    fi
+  fi
+  PF_ARGS=(--namespace "$STAGING_NS")
+  [ -n "$PF_MANIFESTS" ] && PF_ARGS+=(--manifests "$PF_MANIFESTS")
+  PF_ARGS+=(${KUBECONFIG_ARG[@]+"${KUBECONFIG_ARG[@]}"})
+  echo "   vexa_preflight.py ${PF_ARGS[*]}"
+  python3 "$HERE/preflight/vexa_preflight.py" "${PF_ARGS[@]}" \
     || { echo "preflight FAILED — fix the findings (or rerun with --skip-preflight to proceed anyway, on your own head)"; exit 1; }
 else
   echo "== preflight SKIPPED by flag"
@@ -550,7 +603,6 @@ rm -f /tmp/vexa-contract.json
 
 # 6 · the subscription --------------------------------------------------------
 echo "== channel subscription (ApplicationSet: staging follows 'current'; prod follows YOUR pin)"
-CV_FILE=${CUSTOMER_VALUES:-$HERE/profiles/vexa/customer-values.example.yaml}
 echo "   customer values: $CV_FILE"
 VERIFY_ENABLED=false; [ -n "$VERIFIER_IMAGE" ] && VERIFY_ENABLED=true
 

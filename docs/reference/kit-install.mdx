@@ -29,6 +29,12 @@ required
 options
   --customer-values customer-local values file injected into the subscription
                     (default: profiles/vexa/customer-values.example.yaml)
+  --manifests       rendered manifests of the delivered set, handed to the
+                    preflight so P2/P3 check EVERY workload's declared
+                    resources against your LimitRange and quota — not just the
+                    synthetic bot profile. Without it the installer renders the
+                    chart itself with 'helm template'; if that is not possible
+                    it says so and the preflight checks the bot alone.
   --staging-ns      namespace the staging Application deploys into
                     (default vexa-staging)
   --prod-ns         namespace the production Application deploys into
