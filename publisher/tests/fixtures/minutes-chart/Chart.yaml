@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vexa
+description: The image-bearing surface of the minutes chart, for publisher pin tests.
+type: application
+version: 0.12.27
+appVersion: "0.12.27"

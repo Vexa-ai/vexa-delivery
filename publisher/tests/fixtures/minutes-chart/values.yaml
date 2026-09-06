@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+# The image-bearing values of the minutes chart, as committed on Vexa-ai/vexa
+# branch minutes-mcp-viewer @ 33379e2c4, deploy/helm/charts/vexa/values.yaml.
+# Extracted, not paraphrased — every default below is the upstream default.
+#
+# These are the values the publisher's pins are merged OVER, so what they are
+# BEFORE the merge is the whole point: each one is a mutable tag, and a chart
+# packaged without pins ships exactly these.
+global:
+  imageTag: ""              # When set, overrides every service image tag (build-once promotion).
+
+database:
+  name: vexa               # flows.databaseName differs from this, so ensure-db renders
+
+gateway:
+  image: {repository: vexaai/v012-gateway, tag: v012}
+adminApi:
+  image: {repository: vexaai/v012-admin-api, tag: v012}
+meetingApi:
+  image: {repository: vexaai/v012-meeting-api, tag: v012}
+agentApi:
+  image: {repository: vexaai/v012-agent-api, tag: v012}
+terminal:
+  image: {repository: vexaai/v012-terminal, tag: v012}
+runtime:
+  image: {repository: vexaai/v012-runtime, tag: v012}
+  browserImage: ""          # empty → follows global.imageTag (fallback vexaai/vexa-bot:v012)
+  agentImage: vexaai/v012-agent-api:v012
+  agentWorkerImage: vexaai/v012-agent-worker:v012
+migrations:
+  image: {repository: "", tag: ""}    # empty → follows meetingApi
+
+# ── Vexa Minutes flows tier (off by default; the channel publisher pins the image digest) ──
+flows:
+  enabled: false
+  # Structured {repository, tag}, exactly like every other v0.12 component. It was a FLAT STRING
+  # until 2026-09-03, and that made the flows tier the one component a customer channel entry
+  # could not pin: deep_merge of {"image": {"tag": ...}} over a string REPLACES it, dropping the
+  # repository with no error at all.
+  image:
+    repository: vexaai/v012-flows
+    tag: v012
+  workerReplicas: 2
+  databaseName: "flows"
