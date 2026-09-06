@@ -56,6 +56,25 @@ channel lane — one Harbor registry endpoint holding our read-only subscriber
 token plus a proxy-cache project. The public lane (`vexaai` on Docker Hub)
 needs nothing.
 
+**Three more, found by attempting the verbs as the tenant** on the 2026-09-06
+rehearsal ([receipt](../receipts/2026-09-06-bbb-rehearsal-install.md)). Each is
+cluster-scoped, so a project holder cannot self-serve it, and each is a hard
+stop rather than a degradation — worth naming before this reaches their
+platform team, because they will hit all three:
+
+| Ask | Why the tenant cannot | What happens without it |
+|---|---|---|
+| Install the **Argo CRDs** (`applications`, `applicationsets`, `appprojects`) | `namespace-install.yaml` ships no CRDs and CRDs are cluster-scoped: `customresourcedefinitions … is forbidden … at the cluster scope` | no Argo at all — the subscription has nothing to be |
+| Bind a cluster-scoped **read** ClusterRole to the Argo application-controller | RBAC objects are cluster-scoped | a namespace-scoped Argo **never syncs**: its cluster cache fails to load and every Application sits `Unknown` on `volumeattachments.storage.k8s.io is forbidden`. `resource.inclusions`/`resource.exclusions` do **not** gate that load |
+| Install **Kyverno** and the two `ClusterPolicy` objects `install.sh` renders | `clusterpolicies.kyverno.io … is forbidden … at the cluster scope` | no admission gate; the in-project verify gate is then the only enforcement point |
+
+And one correction to the LimitRange row above: the ceiling must be **≥ the
+largest container limit in the delivered chart**, not merely ≥2560Mi. The
+recorded 2560Mi is sized for the bot's memory-backed `/dev/shm`; the chart's
+own postgres asks a 4Gi limit and is refused at admission
+(`maximum memory usage per Container is 2560Mi, but limit is 4Gi`). A project
+admin is read-only on quota and limits, so this is theirs to set.
+
 ## How we reproduce the environment for validation
 
 Two rigs plus the standing station:
