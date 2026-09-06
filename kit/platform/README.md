@@ -41,7 +41,19 @@ writes, and a plain `apply -f` fails on it.
 same command again.** The two policies at the foot of the file need Kyverno's
 own CRD, which arrives earlier in the same file, and `kubectl` does not wait
 for a CRD to be established before it continues. Every object here is
-idempotent, so a second run is free.
+idempotent, so a second run is free. (Stated from how `kubectl apply` works,
+not from a measurement: the cluster this pack was proven on already had
+Kyverno, so the race never fired there.)
+
+**On Kubernetes older than 1.31, four Kyverno CRDs flap on every apply.**
+`validatingpolicies`, `mutatingpolicies` and their two `namespaced*` siblings
+declare `selectableFields`, which needs the `CustomResourceFieldSelectors`
+feature gate; a 1.30 API server prunes the field, the next apply writes it
+back, and `metadata.generation` climbs by one each time without ever
+converging. Nothing breaks — the CRDs serve normally, and the field only
+enables field-selector queries — but a team watching for drift will see those
+four move, and they should know why before they chase it. Measured on
+Kubernetes v1.30.0, 2026-09-06.
 
 The file is large — around 7.7MB — because 7.6MB of it is upstream Argo CD and
 Kyverno, verbatim. Ours is the last few hundred lines.
