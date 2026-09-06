@@ -896,20 +896,20 @@ built its image or run it. Design and deploy note:
 [edge/claim/README.md](edge/claim/README.md).*
 
 The credential is minted as always, then **sealed to the edge's own key** and
-parked under an eight-character code with a fifteen-minute life. The code is
-read on a call; their cluster exchanges it for the credential and writes the
-Secret. Nobody on their side ever sees the value, and it exists in no mail, chat,
-ticket or document.
+parked under a **six-digit code** with a fifteen-minute life. The code is read
+on a call; their cluster exchanges it for the credential and writes the Secret.
+Nobody on their side ever sees the value, and it exists in no mail, chat, ticket
+or document.
 
 ```bash
 # on the call, with them at a terminal
 python3 publisher/vexa_subscriber.py add <account> --park \
   --channel <channel> --station <station>
 #   stdout line 1: <account>:<password>   -> vault it, as always
-#   stdout line 2: ABCD-EFGH              -> read this aloud
+#   stdout line 2: 123 456                -> say these six digits out loud
 
 # they run, and nothing is printed but the receipt
-./kit/claim.sh --code ABCD-EFGH --edge https://<channel host>/claim \
+./kit/claim.sh --code 123456 --edge https://<channel host>/claim \
   --station <station> --namespace <their prod namespace>
 
 # afterwards, close the return leg
@@ -924,6 +924,16 @@ Site values (`$CHANNEL_CLAIM_EDGE`, `$CHANNEL_CLAIM_EDGE_RECIPIENT`,
 in the ledger at `channels/<channel>/stations/<station>/credential-events.yaml`
 — station, when, by whom, code hash, expiry, and every attempt the edge saw.
 Never the value.
+
+**Six digits is one of a million, and the counting is what makes that enough.**
+Five failed attempts burn the park, from all sources together: 5 in 1,000,000,
+once. The edge adds ten attempts per minute per source with a fifteen-minute
+cooling period after that — one address gets one window inside a code's life —
+and twenty requests per minute per park across every source, so extra addresses
+buy no extra guesses. The ledger's `code_sha256` is **salted** per park, because
+an unsalted digest of six digits is a millisecond search and the ledger outlives
+the park by years; the salt stays in the park file on the edge and dies with it.
+Arithmetic in full: [edge/claim/README.md](edge/claim/README.md).
 
 **Rotation is the same act.** `add` rotates, so re-parking a station is how a
 rotation is delivered: new password, new code, same account, one command. There

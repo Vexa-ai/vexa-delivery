@@ -21,7 +21,8 @@ usage: claim.sh --code <code> --edge <url> --station <name> \
                 [--namespace <ns>] [--rotate] [--print-once]
 
 required
-  --code        the claim code, as read to you (case and dashes do not matter)
+  --code        the six digits read to you on the call. Written 123 456 and
+                typed either way: --code 123456, or --code '123 456' in quotes
   --edge        the channel's claim endpoint, e.g. https://channel.example/claim
   --station     your station name, from your onboarding pack
 

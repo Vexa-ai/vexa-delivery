@@ -14,9 +14,10 @@ Deployment(s) that consume it.
 
 ``--park`` changes the DELIVERY leg and nothing else. The mint is the same mint
 and the rotation is the same rotation; stdout still carries the credential once
-so the operator can vault it. What it adds is a second line — an eight-character
-claim code, read aloud on a call — against which the subscriber's own cluster
-fetches the credential from the channel edge and writes it into a Secret. The
+so the operator can vault it. What it adds is a second line — a six-digit claim
+code, printed ``123 456`` and read aloud on a call — against which the
+subscriber's own cluster fetches the credential from the channel edge and
+writes it into a Secret. The
 credential never travels in mail, chat, a ticket or a document, and nobody on
 their side ever sees it. See ``onboarding/credential-delivery.md`` and
 ``edge/claim/README.md``.
@@ -428,13 +429,14 @@ def park_credential(ctx: dict, args: argparse.Namespace, *, account: str,
         f"#   ledger    {out['path']} ({out['commit'] or 'no change'})",
         f"#   expires   {record['expires_at']} ({args.ttl // 60} minutes), "
         f"{record['max_attempts']} attempts, one redemption",
-        "# read the second line below on the call; they run:",
-        f"#   ./kit/claim.sh --code <code> --edge {ctx['edge']} "
+        "# read the six digits on the second line below out on the call; they run:",
+        f"#   ./kit/claim.sh --code <the six digits> --edge {ctx['edge']} "
         f"--station {ctx['station']} --namespace <their prod namespace>",
     ):
         print(line, file=sys.stderr)
-    # Line 2 of stdout. Line 1 is the credential, unchanged; the code's alphabet
-    # holds no ':' so the two lines can never be read as one another.
+    # Line 2 of stdout, grouped `123 456` for reading aloud. Line 1 is the
+    # credential, unchanged; the code is digits and a space, so the two lines
+    # can never be read as one another.
     print(vexa_claim.format_code(code))
 
 
@@ -533,9 +535,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("name", help="account name, e.g. 'pilot'")
     park = p_add.add_argument_group(
         "claim-code delivery (--park)",
-        "Seal the minted credential to the edge's key and park it under an "
-        f"{vexa_claim.CODE_LENGTH}-character code you read on a call. Line 1 of "
-        "stdout is still the credential, to vault; line 2 is the code.",
+        "Seal the minted credential to the edge's key and park it under a "
+        f"{vexa_claim.CODE_LENGTH}-digit code you read on a call. Line 1 of "
+        "stdout is still the credential, to vault; line 2 is the six digits, "
+        "grouped in threes for reading aloud.",
     )
     park.add_argument("--park", action="store_true",
                       help="park the credential for claiming at the channel edge")

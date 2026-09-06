@@ -144,9 +144,9 @@ vexa-subscriber add: >-
   Mint a credential for an account — the same verb rotates an existing one.
   Onboarding a new subscriber and rotating a compromised one are the same act
   against the registry, and the delivery leg is where they differ. `--park`
-  seals the new value to the channel edge's key and parks it under an
-  eight-character code you read aloud on a call, so nobody on their side ever
-  sees the credential and it exists in no mail, chat, ticket or document.
+  seals the new value to the channel edge's key and parks it under a six-digit
+  code you read aloud on a call, so nobody on their side ever sees the
+  credential and it exists in no mail, chat, ticket or document.
   Without `--park` you are back to the age-encrypted handoff, which is the
   right route only when the recipient already holds a key you have confirmed.
 

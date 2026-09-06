@@ -4,14 +4,18 @@
 # cluster, without the credential ever being visible to a person.
 #
 # Your channel credential is minted by Vexa, sealed to the channel edge's key,
-# and parked under an eight-character code with a fifteen-minute life. This
-# script presents the code, receives the credential over TLS, and writes it into
+# and parked under a six-digit code with a fifteen-minute life. This script
+# presents the code, receives the credential over TLS, and writes it into
 # `vexa-station-credential` (keys `username`/`password`) in the namespace you
 # name. THE VALUE NEVER REACHES YOUR TERMINAL, your shell history, your
 # scrollback, or a file. The receipt is the station name and the Secret name.
 #
-#   ./kit/claim.sh --code ABCD-EFGH --edge https://channel.example/claim \
+#   ./kit/claim.sh --code 123456 --edge https://channel.example/claim \
 #                  --station acme --namespace vexa-prod
+#
+# The code is read to you as `123 456`. Type it with the space or without —
+# quote it if you keep the space, since your shell would otherwise hand this
+# script two arguments where it expects one.
 #
 # The code is single-use and dies on first success. Five wrong attempts burn it
 # and it expires on its own; either way the fix is the same — ask for a new one,
@@ -35,7 +39,8 @@ usage: claim.sh --code <code> --edge <url> --station <name> \
                 [--namespace <ns>] [--rotate] [--print-once]
 
 required
-  --code        the claim code, as read to you (case and dashes do not matter)
+  --code        the six digits read to you on the call. Written 123 456 and
+                typed either way: --code 123456, or --code '123 456' in quotes
   --edge        the channel's claim endpoint, e.g. https://channel.example/claim
   --station     your station name, from your onboarding pack
 

@@ -5,7 +5,7 @@ customer-visible):
 
 1. **Credential** — pull-only registry token scoped to your channel. It does not
    travel in this pack: it reaches your cluster through your own vendor-credential
-   intake, or through a short single-use code read on a call
+   intake, or through a six-digit single-use code read on a call
    ([how](credential-delivery.md)).
 2. **`channel.pub`** — the verification key your admission policy pins.
 3. **Docs** — the published customer docs (install → preflight → verify →

@@ -16,17 +16,25 @@ WHAT IS SECRET, AND WHAT PROTECTS IT
                    so the ciphertext is inert everywhere it travels: in the
                    spool, in a backup, in transit, in this file's tests.
   the claim code   protected by TTL, one redemption, five failed attempts, and
-                   rate limiting at the service. NOT by `code_sha256`.
+                   rate limiting at the service. NOT by its digest.
 
-`code_sha256` is a VERIFIER, not a password hash, and calling it one would be
-the mistake worth naming here. An 8-character code from a 31-character alphabet
-carries ~39.6 bits; a plain SHA-256 of it falls to an offline search in minutes.
-That is acceptable because the only place the hash exists is (a) the spool,
-beside the age identity that opens the ciphertext outright, and (b) the ledger,
-where the code it commits to is dead within fifteen minutes. There is no
-threat model in which recovering the code from the hash is the cheap path. The
-online guess is the attack the design actually answers, and it answers it by
-counting.
+A SIX-DIGIT CODE IS ONE OF A MILLION, AND THE COUNTING IS WHAT MAKES THAT SAFE.
+Five failed attempts burn the park, so an online guesser gets five tries at
+1,000,000: one in 200,000, once, before the park is dead and we have to place a
+new one. The service adds a per-source limit and a per-park limit on top so that
+renting more addresses buys no more guesses (`claim_edge.py`, and the arithmetic
+in README.md). Digits are the point: the code is read down a phone line, in
+whatever language the two people share, and `B`/`V`/`P` do not survive that.
+
+THE DIGEST IS SALTED, AND AT SIX DIGITS THAT IS NOT OPTIONAL. `code_sha256` is
+taken over `code_salt` and the code; the salt lives in the park file, which is
+0600 on the edge host and deleted the moment the park goes terminal. A bare
+SHA-256 of six digits is a million-candidate search — milliseconds — and the
+digest is copied into the stations ledger, which is a git repository read by
+more people, for longer, than the spool ever is. Unsalted, that row WOULD be the
+code for as long as the park is live. Salted, it is what it is meant to be: a
+commitment that binds an attempt to the park `add --park` wrote, and nothing an
+offline reader can invert.
 
 THE PARK IS PER STATION, AND THAT IS WHY THE BURN COUNTER MEANS ANYTHING.
 
@@ -66,19 +74,25 @@ import tempfile
 
 SCHEMA_VERSION = 1
 
-# NO 0/O, NO 1/l/I — and both members of every confusable pair are gone, not
-# just one. Keeping `O` and dropping `0` would mean a listener who hears "oh"
-# has a fifty-fifty guess; with neither in the alphabet the sound never occurs,
-# so there is nothing to guess and nothing to normalise on input. `L` goes for
-# the same reason against `1` and `I`. 31 characters, 8 of them: ~39.6 bits.
-CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
-CODE_LENGTH = 8
+# DIGITS, because the code is said out loud on a call and digits are the one
+# alphabet that survives a phone line in any language: no B/V/P confusion, no
+# spelling alphabet to agree on first, no case to lose, and every listener
+# already knows how to write them down. Six of ten: 1,000,000 codes. The
+# confusable-character question that shapes an alphanumeric alphabet does not
+# arise — there is nothing here to confuse with anything.
+CODE_ALPHABET = "0123456789"
+CODE_LENGTH = 6
 
 # Fifteen minutes: long enough to finish the sentence "run this now while we are
 # both on the call", short enough that a code overheard in a recording is dead
 # before anyone transcribes it. The window is the point — a code with a generous
 # TTL is a password with extra steps.
 TTL_SECONDS = 15 * 60
+
+# Five is the cap that makes a million enough. It is not a usability number: it
+# is the numerator of the guesser's odds, 5/1,000,000, and every attempt from
+# every source counts against the same park, so a distributed caller does not
+# get a fresh five by changing address.
 MAX_ATTEMPTS = 5
 
 STATION_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
@@ -106,6 +120,10 @@ REFUSAL_BURNED = "burned"
 REFUSAL_SPENT = "spent"
 REFUSAL_MALFORMED = "malformed"
 REFUSAL_RATE_LIMITED = "rate-limited"
+# One source over its limit vs. many sources converging on one station. Both are
+# `403` on the wire; in the ledger they are different events, and the second is
+# the one that says somebody brought more than one address.
+REFUSAL_PARK_RATE_LIMITED = "park-rate-limited"
 
 
 class ClaimError(Exception):
@@ -145,38 +163,50 @@ def generate_code(length: int = CODE_LENGTH) -> str:
 
 
 def normalise_code(raw: str) -> str:
-    """Uppercase, drop the separators a human types, then refuse anything else.
+    """Drop the separators a human types, then refuse anything else.
 
-    Spaces and hyphens come back because we PRINT the code grouped (`ABCD-EFGH`)
-    and somebody will paste it that way. Nothing else is repaired: a character
+    Spaces and hyphens come back because we PRINT the code grouped (`123 456`)
+    and somebody will type it back with the space, or with a dash, or with
+    neither. All three are the same code. Nothing else is repaired: a character
     outside the alphabet is not a near-miss to be guessed at, it is a code this
     system never issued.
     """
     if not isinstance(raw, str):
         raise ClaimError("claim code must be a string")
-    text = re.sub(r"[\s\-]", "", raw).upper()
+    text = re.sub(r"[\s\-]", "", raw)
     if len(text) != CODE_LENGTH or not set(text) <= set(CODE_ALPHABET):
-        raise ClaimError(
-            f"claim code must be {CODE_LENGTH} characters from {CODE_ALPHABET}"
-        )
+        raise ClaimError(f"claim code must be {CODE_LENGTH} digits")
     return text
 
 
 def format_code(code: str) -> str:
-    """`ABCD-EFGH` — the shape a person reads aloud without losing their place."""
+    """`123 456` — the shape a person reads aloud without losing their place.
+
+    A space, not a dash: it is spoken, and "one two three, four five six" is
+    what the space means. A dash invites somebody to type one, which is why
+    `normalise_code` accepts that too.
+    """
     half = len(code) // 2
-    return f"{code[:half]}-{code[half:]}"
+    return f"{code[:half]} {code[half:]}"
 
 
-def code_sha256(code: str) -> str:
-    return hashlib.sha256(normalise_code(code).encode()).hexdigest()
+def new_salt() -> str:
+    """Per-park, 128 bits. It lives in the park file and nowhere else."""
+    return secrets.token_hex(16)
 
 
-def codes_match(code: str, digest: str) -> bool:
+def code_sha256(salt: str, code: str) -> str:
+    """The verifier. SALTED — see the module docstring: a bare digest of six
+    digits is a million-candidate search, and this value is copied into a git
+    ledger that outlives the park by years."""
+    return hashlib.sha256(f"{salt}:{normalise_code(code)}".encode()).hexdigest()
+
+
+def codes_match(salt: str, code: str, digest: str) -> bool:
     """Constant-time. The comparison is over hex digests, so an early-exit
-    memcmp would leak a prefix of the hash — which is one offline search away
-    from leaking a prefix of the code."""
-    return hmac.compare_digest(code_sha256(code), digest)
+    memcmp would leak a prefix of the digest — and a prefix of the digest, for a
+    caller who also holds the salt, is a prefix of the code."""
+    return hmac.compare_digest(code_sha256(salt, code), digest)
 
 
 def validate_station(name: str) -> str:
@@ -294,12 +324,17 @@ def build_park(
             "park whose payload may be plaintext"
         )
     when = now or utcnow()
+    salt = new_salt()
     return {
         "schema_version": SCHEMA_VERSION,
         "park_id": secrets.token_hex(8),
         "station": validate_station(station),
         "account": account,
-        "code_sha256": code_sha256(code),
+        # The salt stays HERE. `new_state` and `vexa_stations.park_event` copy
+        # the digest and not the salt, which is what keeps the ledger row from
+        # being the code.
+        "code_salt": salt,
+        "code_sha256": code_sha256(salt, code),
         "parked_at": stamp(when),
         "expires_at": stamp(when + datetime.timedelta(seconds=ttl_seconds)),
         "ttl_seconds": ttl_seconds,
@@ -428,8 +463,19 @@ def redeem(
         terminate(spool, state, EXPIRED, "ttl elapsed", now)
         raise ClaimRefused(REFUSAL_EXPIRED)
 
+    salt = park.get("code_salt")
+    if not salt:
+        # A park with no salt cannot be verified against, and guessing that it
+        # is an unsalted digest would be inventing a scheme. OUR problem, so it
+        # takes the 503 path and leaves the park alone rather than burning a
+        # code the caller may well have got right.
+        raise ClaimError(
+            f"park for station {station!r} carries no code_salt — it was written "
+            "by an incompatible publisher; park again, which rotates"
+        )
+
     try:
-        matched = codes_match(code, park["code_sha256"])
+        matched = codes_match(salt, code, park["code_sha256"])
     except ClaimError:
         # A code outside the alphabet, of the wrong length, or not a string at
         # all CANNOT match, so it takes the same branch as a wrong one. It used

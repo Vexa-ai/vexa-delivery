@@ -24,10 +24,10 @@ audited that decision, and does not want ours. Using theirs costs us nothing and
 skips every question below.
 
 **2 · A claim code, on a call.** The default when they have no intake. We mint,
-seal the value to the channel edge's key, and park it under an eight-character
-code with a fifteen-minute life. We read the code aloud; their cluster exchanges
-it for the credential and writes the Secret. **Nobody on their side ever sees the
-value.**
+seal the value to the channel edge's key, and park it under a **six-digit code**
+with a fifteen-minute life. We read the six digits aloud; their cluster exchanges
+them for the credential and writes the Secret. **Nobody on their side ever sees
+the value.**
 
 **3 · Encrypted to a key they already hold — only if they ask.** Not offered
 first: it puts the value in a file somebody keeps, and it needs a key-identity
@@ -65,8 +65,11 @@ Two lines on stdout. Line 1 is `<account>:<password>` — vault it, as always.
 Line 2 is the code, and it is the only thing you say out loud:
 
 ```
-ABCD-EFGH
+123 456
 ```
+
+Six digits, grouped in threes for reading. They type them with the space or
+without; both are the same code.
 
 They run one of these — the first if they are installing now, the second if the
 cluster is already installed or they are taking a rotation:
@@ -74,9 +77,9 @@ cluster is already installed or they are taking a rotation:
 ```bash
 ./kit/install.sh --provider <provider> --registry <registry> \
   --channel <channel> --channel-pubkey channel.pub \
-  --claim-code ABCD-EFGH --station <station>
+  --claim-code 123456 --station <station>
 
-./kit/claim.sh --code ABCD-EFGH --edge https://<channel host>/claim \
+./kit/claim.sh --code 123456 --edge https://<channel host>/claim \
   --station <station> --namespace <their prod namespace>
 ```
 
@@ -86,6 +89,13 @@ value is in the cluster and nowhere else.
 **Read the code, do not send it.** A code in a chat message is a password in a
 chat message, one step removed: short-lived, but for those fifteen minutes it
 *is* the credential to anyone who can read that channel.
+
+**Six digits is safe because it is counted, not because it is long.** Five wrong
+attempts burn the park — 5 in 1,000,000, once — and the edge allows ten attempts
+a minute from any one source before shutting that source out for fifteen
+minutes, plus twenty a minute per station from everyone together. If a code is
+burned or expires, you park again, which rotates. The arithmetic is in
+[`edge/claim/README.md`](../edge/claim/README.md).
 
 **Park during the call, not before it.** The clock starts at `--park`. A code
 parked "to save time" while you wait for someone to join spends its life on the

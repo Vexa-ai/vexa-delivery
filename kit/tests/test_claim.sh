@@ -51,7 +51,11 @@ class H(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n))
         except Exception:
             body = {}
-        ok = (str(body.get("code", "")).replace("-", "").upper() == "ABCDEFGH"
+        # The real edge normalises spaces and dashes away before it compares, so
+        # the fixture does too: otherwise the kit could ship a code shape the
+        # edge accepts and this test would not notice, or the reverse.
+        typed = str(body.get("code", ""))
+        ok = ("".join(ch for ch in typed if ch not in " -") == "123456"
               and body.get("station") == "pilot")
         if ok:
             with open(CLAIMS, "a") as fh:
@@ -115,7 +119,7 @@ reset_log() { : > "$KUBECTL_LOG"; }
 
 # 1 · the normal path: the Secret is written and the value never surfaces.
 reset_log
-OUT=$(claim --code abcd-efgh --edge "$EDGE" --station pilot --namespace vexa-prod) \
+OUT=$(claim --code 123456 --edge "$EDGE" --station pilot --namespace vexa-prod) \
   || fail "claim.sh refused a valid code"
 echo "$OUT" | grep -q "$NEEDLE" && fail "THE CREDENTIAL REACHED STDOUT/STDERR"
 echo "$OUT" | grep -q "claimed: station pilot" || fail "no receipt line"
@@ -132,10 +136,20 @@ grep -q "password: $NEEDLE_B64" "$KUBECTL_LOG" \
 grep "^ARGV:" "$KUBECTL_LOG" | grep -q "$NEEDLE_B64" \
   && fail "the credential appeared in kubectl's ARGUMENTS"
 
+# 1b · the code is READ as `123 456`, so the space has to survive being typed.
+#      Quoted, it is one argument and reaches the edge as `123 456`; the edge
+#      normalises it away. Somebody will type it that way on the first call.
+reset_log
+OUT=$(claim --code "123 456" --edge "$EDGE" --station pilot --namespace vexa-prod) \
+  || fail "claim.sh refused the code in the shape it is read aloud"
+echo "$OUT" | grep -q "$NEEDLE" && fail "THE CREDENTIAL REACHED STDOUT/STDERR (spaced code)"
+grep -q "password: $NEEDLE_B64" "$KUBECTL_LOG" \
+  || fail "the spaced code wrote no credential"
+
 # 2 · an existing Secret is a refusal, and --rotate is the way through.
 touch "$SECRET_EXISTS"
 reset_log
-OUT=$(claim --code abcd-efgh --edge "$EDGE" --station pilot --namespace vexa-prod) \
+OUT=$(claim --code 123456 --edge "$EDGE" --station pilot --namespace vexa-prod) \
   && fail "claim.sh overwrote an existing Secret without --rotate"
 echo "$OUT" | grep -q -- "--rotate" || fail "the refusal does not name the way through"
 grep -q "kind: Secret" "$KUBECTL_LOG" && fail "it wrote a Secret while refusing"
@@ -143,12 +157,12 @@ grep -q "kind: Secret" "$KUBECTL_LOG" && fail "it wrote a Secret while refusing"
 # claiming, and a spent-then-refused code costs a rotation for nothing.
 BEFORE=$(wc -l < "$TMP/claims.count")
 reset_log
-claim --code abcd-efgh --edge "$EDGE" --station pilot --namespace vexa-prod >/dev/null 2>&1 || true
+claim --code 123456 --edge "$EDGE" --station pilot --namespace vexa-prod >/dev/null 2>&1 || true
 [ "$(wc -l < "$TMP/claims.count")" -eq "$BEFORE" ] \
   || fail "the refused run spent the claim code anyway"
 
 reset_log
-OUT=$(claim --code abcd-efgh --edge "$EDGE" --station pilot --namespace vexa-prod --rotate) \
+OUT=$(claim --code 123456 --edge "$EDGE" --station pilot --namespace vexa-prod --rotate) \
   || fail "--rotate did not proceed over an existing Secret"
 echo "$OUT" | grep -q "$NEEDLE" && fail "THE CREDENTIAL REACHED STDOUT/STDERR (--rotate)"
 grep -q "password: $NEEDLE_B64" "$KUBECTL_LOG" || fail "--rotate wrote no credential"
@@ -156,7 +170,7 @@ rm -f "$SECRET_EXISTS"
 
 # 3 · --print-once: the ONE path that prints, and it warns first.
 reset_log
-OUT=$(claim --code abcd-efgh --edge "$EDGE" --station pilot --print-once) \
+OUT=$(claim --code 123456 --edge "$EDGE" --station pilot --print-once) \
   || fail "--print-once failed"
 echo "$OUT" | grep -q "pilot:$NEEDLE" || fail "--print-once printed no credential"
 echo "$OUT" | grep -qi "WARNING" || fail "--print-once printed no warning line"
@@ -164,13 +178,13 @@ echo "$OUT" | grep -qi "spent" || fail "the warning does not say the code is spe
 grep -q "kind: Secret" "$KUBECTL_LOG" && fail "--print-once also wrote a Secret"
 
 # 4 · --print-once and --namespace are one code, two deliveries: refuse.
-OUT=$(claim --code abcd-efgh --edge "$EDGE" --station pilot --print-once \
+OUT=$(claim --code 123456 --edge "$EDGE" --station pilot --print-once \
         --namespace vexa-prod) && fail "--print-once with --namespace was accepted"
 echo "$OUT" | grep -qi "pick one" || fail "the refusal does not say to pick one"
 
 # 5 · a wrong code: non-zero, generic, and it names no reason it cannot know.
 reset_log
-OUT=$(claim --code 22222222 --edge "$EDGE" --station pilot --namespace vexa-prod) \
+OUT=$(claim --code 222222 --edge "$EDGE" --station pilot --namespace vexa-prod) \
   && fail "a wrong code was accepted"
 echo "$OUT" | grep -q "refused" || fail "no refusal message"
 echo "$OUT" | grep -q "$NEEDLE" && fail "a refusal leaked the credential"
@@ -179,7 +193,7 @@ grep -q "kind: Secret" "$KUBECTL_LOG" && fail "a refused claim wrote a Secret"
 # 6 · --dry-run contacts nothing, so a rehearsal cannot spend the code.
 BEFORE=$(wc -l < "$TMP/claims.count")
 reset_log
-OUT=$(claim --code abcd-efgh --edge "$EDGE" --station pilot --namespace vexa-prod --dry-run) \
+OUT=$(claim --code 123456 --edge "$EDGE" --station pilot --namespace vexa-prod --dry-run) \
   || fail "--dry-run failed"
 echo "$OUT" | grep -q "dry run" || fail "--dry-run said nothing about being one"
 [ "$(wc -l < "$TMP/claims.count")" -eq "$BEFORE" ] || fail "--dry-run SPENT the code"
@@ -191,7 +205,7 @@ reset_log
 echo "test-key-placeholder" > "$TMP/channel.pub"
 OUT=$(bash "$KIT/install.sh" --provider lke --registry reg.example:5000 \
         --channel pilot --channel-pubkey "$TMP/channel.pub" --skip-preflight \
-        --claim-code ABCD-EFGH --claim-edge "$EDGE" --station pilot 2>&1) \
+        --claim-code 123456 --claim-edge "$EDGE" --station pilot 2>&1) \
   || fail "install.sh --claim-code failed"
 echo "$OUT" | grep -q "$NEEDLE" && fail "install.sh PRINTED THE CREDENTIAL"
 echo "$OUT" | grep -q "the code is now spent" || fail "install.sh did not report the claim"
@@ -210,7 +224,7 @@ BEFORE=$(wc -l < "$TMP/claims.count")
 reset_log
 OUT=$(bash "$KIT/install.sh" --provider lke --registry reg.example:5000 \
         --channel pilot --channel-pubkey "$TMP/channel.pub" --skip-preflight \
-        --dry-run --claim-code ABCD-EFGH --claim-edge "$EDGE" --station pilot 2>&1) \
+        --dry-run --claim-code 123456 --claim-edge "$EDGE" --station pilot 2>&1) \
   || fail "install.sh --claim-code --dry-run failed"
 [ "$(wc -l < "$TMP/claims.count")" -eq "$BEFORE" ] \
   || fail "install.sh --dry-run SPENT the claim code"
@@ -219,8 +233,8 @@ echo "$OUT" | grep -q "NOT spent" || fail "the dry run did not say the code was 
 # 9 · --registry-user and --claim-code are the same credential twice: refuse.
 OUT=$(VEXA_CHANNEL_PASS=x bash "$KIT/install.sh" --provider lke \
         --registry reg.example:5000 --channel pilot --channel-pubkey "$TMP/channel.pub" \
-        --skip-preflight --dry-run --registry-user pilot --claim-code ABCD-EFGH 2>&1) \
+        --skip-preflight --dry-run --registry-user pilot --claim-code 123456 2>&1) \
   && fail "install.sh accepted both credential routes at once"
 echo "$OUT" | grep -q "Pass one" || fail "the refusal does not say to pass one"
 
-echo "PASS: kit claim (secret written, value never on stdout, rotate gate, print-once, refusal, dry-run, install.sh --claim-code)"
+echo "PASS: kit claim (secret written, value never on stdout, six digits spaced or not, rotate gate, print-once, refusal, dry-run, install.sh --claim-code)"

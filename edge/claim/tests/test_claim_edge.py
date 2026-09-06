@@ -39,8 +39,11 @@ class FixtureConfig(ce.Config):
     the limiter, the forwarded-for policy — is the production object."""
 
     def __init__(self, spool, **kw):
+        # Both limits raised out of the way, so a test that is about something
+        # else never trips one by accident. The limits get their own tests.
         kw.setdefault("rate_limit", 100)
         kw.setdefault("rate_window", 60)
+        kw.setdefault("park_rate_limit", 100)
         kw.setdefault("trust_forwarded_for", False)
         super().__init__(str(spool), "/dev/null", **kw)
 
@@ -97,8 +100,8 @@ class EdgeCase(unittest.TestCase):
             self.assertEqual(json.loads(resp.read()), {"ok": True})
 
     def test_only_claim_accepts_a_post(self):
-        self.park("ABCD2345")
-        status, _ = self.post({"code": "ABCD2345", "station": "pilot"}, path="/claims")
+        self.park("123456")
+        status, _ = self.post({"code": "123456", "station": "pilot"}, path="/claims")
         self.assertEqual(status, 404)
         # ...and the park is untouched: a wrong path is not an attempt.
         self.assertTrue(vc.park_path(self.spool, "pilot").exists())
@@ -106,12 +109,12 @@ class EdgeCase(unittest.TestCase):
     # ----------------------------------------------------------------- claims
 
     def test_a_valid_claim_returns_the_credential_once(self):
-        self.park("ABCD2345")
-        status, body = self.post({"code": "abcd-2345", "station": "pilot"})
+        self.park("123456")
+        status, body = self.post({"code": "123 456", "station": "pilot"})
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body),
                          {"station": "pilot", **CREDENTIAL})
-        status, body = self.post({"code": "ABCD2345", "station": "pilot"})
+        status, body = self.post({"code": "123456", "station": "pilot"})
         self.assertEqual(status, 403)
         self.assertNotIn(NEEDLE.encode(), body)
 
@@ -120,16 +123,16 @@ class EdgeCase(unittest.TestCase):
         # "expired" tells a guesser the station exists and a code was recently
         # live; a distinguishable "wrong code" turns the burn counter into a
         # progress bar.
-        self.park("ABCD2345", station="pilot")
-        self.park("MNPQ6789", station="expired",
+        self.park("123456", station="pilot")
+        self.park("654321", station="expired",
                   now=vc.utcnow() - datetime.timedelta(hours=1))
         responses = [
-            self.post({"code": "22222222", "station": "pilot"}),       # wrong code
-            self.post({"code": "MNPQ6789", "station": "expired"}),     # expired
-            self.post({"code": "ABCD2345", "station": "absent"}),      # never parked
-            self.post({"code": "ABCD2345", "station": "../etc"}),      # bad station
+            self.post({"code": "222222", "station": "pilot"}),       # wrong code
+            self.post({"code": "654321", "station": "expired"}),     # expired
+            self.post({"code": "123456", "station": "absent"}),      # never parked
+            self.post({"code": "123456", "station": "../etc"}),      # bad station
             self.post({"code": "!!!", "station": "pilot"}),            # bad code
-            self.post({"code": 12345678, "station": "pilot"}),         # code not a string
+            self.post({"code": 123456, "station": "pilot"}),         # code not a string
             self.post(b"{not json"),                                   # malformed
             self.post({"station": "pilot"}),                           # no code
         ]
@@ -142,29 +145,29 @@ class EdgeCase(unittest.TestCase):
         # A park sealed to a rotated key is our misconfiguration. Answering 403
         # would tell the subscriber they got the code wrong and send them to
         # ask for another one, which would not help.
-        self.park("ABCD2345")
+        self.park("123456")
 
         def broken(_armor):
             raise vc.ClaimError("no identity matched this file")
 
         self.config.decrypt = broken
-        status, body = self.post({"code": "ABCD2345", "station": "pilot"})
+        status, body = self.post({"code": "123456", "station": "pilot"})
         self.assertEqual(status, 503)
         self.assertNotIn(NEEDLE.encode(), body)
         # The park survives OUR mistake; the code is not spent.
         self.assertTrue(vc.park_path(self.spool, "pilot").exists())
 
     def test_five_wrong_attempts_burn_it_over_http(self):
-        self.park("ABCD2345")
+        self.park("123456")
         for _ in range(5):
-            self.assertEqual(self.post({"code": "22222222", "station": "pilot"})[0], 403)
-        self.assertEqual(self.post({"code": "ABCD2345", "station": "pilot"})[0], 403)
+            self.assertEqual(self.post({"code": "222222", "station": "pilot"})[0], 403)
+        self.assertEqual(self.post({"code": "123456", "station": "pilot"})[0], 403)
         outcomes = [a["outcome"] for a in self.attempts()]
         self.assertEqual(outcomes.count(vc.REFUSAL_WRONG_CODE), 4)
         self.assertIn(vc.REFUSAL_BURNED, outcomes)
 
     def test_an_oversized_body_is_refused_without_being_read(self):
-        self.park("ABCD2345")
+        self.park("123456")
         status, body = self.post(b"x" * (ce.MAX_BODY + 1))
         self.assertEqual(status, 403)
         self.assertEqual(body, ce.REFUSED_BODY)
@@ -174,10 +177,10 @@ class EdgeCase(unittest.TestCase):
 
     def test_the_rate_limiter_fires_per_source(self):
         self.config.limiter = ce.RateLimiter(limit=3, window=60)
-        self.park("ABCD2345")
+        self.park("123456")
         for _ in range(3):
-            self.post({"code": "22222222", "station": "pilot"})
-        self.post({"code": "ABCD2345", "station": "pilot"})
+            self.post({"code": "222222", "station": "pilot"})
+        self.post({"code": "123456", "station": "pilot"})
         outcomes = [a["outcome"] for a in self.attempts()]
         self.assertIn(vc.REFUSAL_RATE_LIMITED, outcomes)
         # Rate limiting is not an attempt against the park: it never reached the
@@ -194,14 +197,93 @@ class EdgeCase(unittest.TestCase):
         # ...and the window slides.
         self.assertTrue(limiter.allow("a", now=100))
 
+    def test_the_shipped_numbers_are_the_ones_the_arithmetic_assumes(self):
+        # README § The cryptography does the sum with these three. If they move,
+        # that paragraph is wrong and this test is where you find out.
+        self.assertEqual(ce.RATE_LIMIT, 10)
+        self.assertEqual(ce.RATE_WINDOW, 60)
+        self.assertEqual(ce.RATE_COOLDOWN, vc.TTL_SECONDS)
+        self.assertEqual(ce.PARK_RATE_LIMIT, 20)
+
+    def test_a_source_over_the_limit_is_cooled_off_for_a_whole_code_life(self):
+        # The cooling period is what makes the limit bite. Without it a source
+        # resumes at ten a minute the instant the window slides; with it, one
+        # address gets ONE window inside a code's fifteen minutes.
+        limiter = ce.RateLimiter(limit=ce.RATE_LIMIT, window=ce.RATE_WINDOW,
+                                 cooldown=ce.RATE_COOLDOWN)
+        for n in range(ce.RATE_LIMIT):
+            self.assertTrue(limiter.allow("a", now=n))
+        self.assertFalse(limiter.allow("a", now=11))
+        # The window has long since slid; the cooling period has not.
+        self.assertFalse(limiter.allow("a", now=ce.RATE_WINDOW + 30))
+        self.assertFalse(limiter.allow("a", now=ce.RATE_COOLDOWN))
+        # A code parked at t=0 is dead before this source is heard again.
+        self.assertTrue(limiter.allow("a", now=ce.RATE_COOLDOWN + 11))
+        # ...and it comes back with a full budget, not one request.
+        self.assertTrue(limiter.allow("a", now=ce.RATE_COOLDOWN + 12))
+        # Refused requests do not extend it: a stuck client would otherwise be
+        # blocked forever by a rule nobody wrote down.
+        other = ce.RateLimiter(limit=1, window=60, cooldown=100)
+        self.assertTrue(other.allow("b", now=0))
+        for t in range(1, 100):
+            self.assertFalse(other.allow("b", now=t))
+        self.assertTrue(other.allow("b", now=101))
+
+    def test_a_limiter_does_not_grow_without_bound(self):
+        # The per-park limiter is keyed on the STATION NAME, which comes from
+        # the request body, so a caller can mint as many keys as it can send
+        # requests. The sweep must drop keys by their last hit — dropping only
+        # empty deques would drop nothing, because a deque is pruned when its
+        # own key is next used and these keys are never used again.
+        limiter = ce.RateLimiter(limit=5, window=60)
+        for n in range(ce.MAX_TRACKED + 50):
+            limiter.allow(f"station-{n}", now=0)
+        # Inside one window they are all live, and the limiter is entitled to
+        # hold them: what bounds this is the request rate, which the per-source
+        # limit in front of it caps.
+        self.assertEqual(len(limiter.hits), ce.MAX_TRACKED + 50)
+        # One request a window later trips the sweep, and everything that went
+        # quiet goes with it. No explicit call: the automatic path is the one
+        # that has to work.
+        limiter.allow("later", now=1000)
+        self.assertEqual(list(limiter.hits), ["later"])
+
+    def test_the_park_limit_counts_every_source_together(self):
+        # The per-source limit is per source, so a caller with a hundred
+        # addresses would otherwise buy a hundred budgets against one station.
+        # This is the cap that makes extra addresses worth nothing.
+        self.config.trust_forwarded_for = True
+        self.config.park_limiter = ce.RateLimiter(limit=2, window=60)
+        self.park("123456")
+        for i in range(5):
+            self.assertEqual(
+                self.post({"code": "222222", "station": "pilot"},
+                          headers={"X-Forwarded-For": f"198.51.100.{i}"})[0], 403)
+        outcomes = [a["outcome"] for a in self.attempts()]
+        self.assertEqual(outcomes.count(vc.REFUSAL_WRONG_CODE), 2)
+        self.assertEqual(outcomes.count(vc.REFUSAL_PARK_RATE_LIMITED), 3)
+        # Five distinct addresses, and the park has spent two of its five
+        # attempts. It is still live.
+        self.assertTrue(vc.park_path(self.spool, "pilot").exists())
+
+    def test_one_station_over_the_park_limit_does_not_block_another(self):
+        self.config.park_limiter = ce.RateLimiter(limit=1, window=60)
+        self.park("123456", station="pilot")
+        self.park("654321", station="second")
+        self.post({"code": "222222", "station": "pilot"})
+        self.assertEqual(self.post({"code": "222222", "station": "pilot"})[0], 403)
+        status, body = self.post({"code": "654321", "station": "second"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["station"], "second")
+
     def test_forwarded_for_is_ignored_unless_configured(self):
         # OFF by default, and that default is the safe one: reached directly,
         # the header is whatever the caller typed, so trusting it would hand
         # every guesser a fresh rate-limit bucket per request.
         self.config.limiter = ce.RateLimiter(limit=2, window=60)
-        self.park("ABCD2345")
+        self.park("123456")
         for i in range(4):
-            self.post({"code": "22222222", "station": "pilot"},
+            self.post({"code": "222222", "station": "pilot"},
                       headers={"X-Forwarded-For": f"198.51.100.{i}"})
         self.assertIn(vc.REFUSAL_RATE_LIMITED,
                       [a["outcome"] for a in self.attempts()])
@@ -209,17 +291,17 @@ class EdgeCase(unittest.TestCase):
 
     def test_forwarded_for_is_used_when_configured(self):
         self.config.trust_forwarded_for = True
-        self.park("ABCD2345")
-        self.post({"code": "22222222", "station": "pilot"},
+        self.park("123456")
+        self.post({"code": "222222", "station": "pilot"},
                   headers={"X-Forwarded-For": "198.51.100.9, 10.0.0.1"})
         self.assertEqual(self.attempts()[0]["source"], "198.51.100.9")
 
     # ------------------------------------------------------------------- logs
 
     def test_the_log_carries_the_outcome_the_source_and_no_secret(self):
-        record = self.park("ABCD2345")
-        self.post({"code": "22222222", "station": "pilot"})
-        self.post({"code": "ABCD2345", "station": "pilot"})
+        record = self.park("123456")
+        self.post({"code": "222222", "station": "pilot"})
+        self.post({"code": "123456", "station": "pilot"})
         events = self.attempts()
         self.assertEqual([e["outcome"] for e in events],
                          [vc.REFUSAL_WRONG_CODE, "claimed"])
@@ -234,8 +316,8 @@ class EdgeCase(unittest.TestCase):
 
         raw = vc.attempts_path(self.spool).read_text()
         self.assertNotIn(NEEDLE, raw)
-        self.assertNotIn("ABCD2345", raw)
-        self.assertNotIn("22222222", raw)
+        self.assertNotIn("123456", raw)
+        self.assertNotIn("222222", raw)
         self.assertNotIn("BEGIN AGE", raw)
 
     def test_an_unparseable_body_is_logged_unattributed(self):
@@ -254,10 +336,27 @@ class EdgeCase(unittest.TestCase):
             ce.Config.from_env({"CLAIM_IDENTITY": "/tmp/k"})
         config = ce.Config.from_env(
             {"CLAIM_SPOOL": str(self.spool), "CLAIM_IDENTITY": "/tmp/k",
-             "CLAIM_RATE_LIMIT": "7", "CLAIM_RATE_WINDOW": "30"})
+             "CLAIM_RATE_LIMIT": "7", "CLAIM_RATE_WINDOW": "30",
+             "CLAIM_RATE_COOLDOWN": "120", "CLAIM_PARK_RATE_LIMIT": "9"})
         self.assertEqual(config.limiter.limit, 7)
         self.assertEqual(config.limiter.window, 30)
+        self.assertEqual(config.limiter.cooldown, 120)
+        self.assertEqual(config.park_limiter.limit, 9)
         self.assertFalse(config.trust_forwarded_for)
+
+    def test_the_defaults_are_the_shipped_numbers(self):
+        # An operator who sets neither variable gets the limits the README
+        # states, not whatever the class happened to default to.
+        config = ce.Config.from_env(
+            {"CLAIM_SPOOL": str(self.spool), "CLAIM_IDENTITY": "/tmp/k"})
+        self.assertEqual(config.limiter.limit, ce.RATE_LIMIT)
+        self.assertEqual(config.limiter.window, ce.RATE_WINDOW)
+        self.assertEqual(config.limiter.cooldown, ce.RATE_COOLDOWN)
+        self.assertEqual(config.park_limiter.limit, ce.PARK_RATE_LIMIT)
+        # The per-park limiter has NO cooling period: locking a station out for
+        # fifteen minutes is a denial of the delivery, and the park already has
+        # a stricter cap of its own in the five-attempt burn.
+        self.assertEqual(config.park_limiter.cooldown, 0)
 
     def test_a_group_readable_identity_refuses_to_start(self):
         identity = self.spool / "edge.key"

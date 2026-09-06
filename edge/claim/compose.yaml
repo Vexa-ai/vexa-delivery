@@ -31,8 +31,14 @@ services:
       CLAIM_LISTEN: 0.0.0.0:8088
       CLAIM_SPOOL: /spool
       CLAIM_IDENTITY: /identity/claim-edge.key
-      CLAIM_RATE_LIMIT: "20"
+      # Ten attempts a minute per source, then fifteen minutes off — a code's
+      # whole life, so one address gets one window against one code. Twenty a
+      # minute per station across all sources, so extra addresses buy nothing.
+      # README.md § The cryptography carries the arithmetic.
+      CLAIM_RATE_LIMIT: "10"
       CLAIM_RATE_WINDOW: "60"
+      CLAIM_RATE_COOLDOWN: "900"
+      CLAIM_PARK_RATE_LIMIT: "20"
       # 1 only because Caddy is in front and sets X-Forwarded-For. Reached
       # directly, that header is whatever the caller typed.
       CLAIM_TRUST_FORWARDED_FOR: "1"

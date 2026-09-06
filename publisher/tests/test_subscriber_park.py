@@ -216,16 +216,35 @@ class ParkEndToEnd(unittest.TestCase):
 
     def test_the_code_is_printed_and_the_ledger_only_commits_to_its_hash(self):
         code = self.park_and_read_code()
-        self.assertRegex(code, r"^[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}$")
+        # Six digits, grouped for reading aloud: `123 456`.
+        self.assertRegex(code, r"^[0-9]{3} [0-9]{3}$")
         record = json.loads(vc.park_path(self.spool, "pilot").read_text())
-        self.assertEqual(record["code_sha256"], vc.code_sha256(code))
+        self.assertEqual(record["code_sha256"],
+                         vc.code_sha256(record["code_salt"], code))
         # The code itself appears in neither durable artefact.
-        self.assertNotIn(code.replace("-", ""),
+        ledger_text = (vst.station_dir(self.ledger, "pilot-stable", "pilot")
+                       / "credential-events.yaml").read_text()
+        self.assertNotIn(code.replace(" ", ""),
                          vc.park_path(self.spool, "pilot").read_text())
-        self.assertNotIn(
-            code.replace("-", ""),
-            (vst.station_dir(self.ledger, "pilot-stable", "pilot")
-             / "credential-events.yaml").read_text())
+        self.assertNotIn(code.replace(" ", ""), ledger_text)
+
+    def test_the_ledger_gets_the_digest_and_never_the_salt(self):
+        # Six digits behind a bare SHA-256 is a million-candidate search, and
+        # the ledger is a git repository that outlives the park. Without the
+        # salt the row commits to a code nobody can recover; with it, the row
+        # WOULD BE the code. `park_event` is an allowlist, and `check_event`
+        # refuses `code_salt` outright — two independent stops.
+        self.park_and_read_code()
+        record = json.loads(vc.park_path(self.spool, "pilot").read_text())
+        path = (vst.station_dir(self.ledger, "pilot-stable", "pilot")
+                / "credential-events.yaml")
+        self.assertNotIn(record["code_salt"], path.read_text())
+        event = vst.load_yaml(path)["events"][0]
+        self.assertNotIn("code_salt", event)
+        self.assertEqual(event["code_sha256"], record["code_sha256"])
+        with self.assertRaises(vst.LedgerError):
+            vst.check_event({"event": "park", "ts": record["parked_at"],
+                             "code_salt": record["code_salt"]})
 
     def test_the_parked_credential_survives_a_full_round_trip(self):
         # Park here, redeem with the state machine the edge runs. The two halves

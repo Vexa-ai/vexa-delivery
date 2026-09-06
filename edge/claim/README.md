@@ -9,12 +9,13 @@ is founder-owned; [§ Deploy](#deploy) is the note for whoever does it.
 
 | | |
 |---|---|
-| Endpoint | `POST /claim` · `{"code": "ABCD-EFGH", "station": "pilot"}` |
+| Endpoint | `POST /claim` · `{"code": "123 456", "station": "pilot"}` |
 | Success | `200` · `{"station", "username", "password"}` — once, then the park is gone |
 | Every refusal | `403` · `{"error": "refused"}` — one body, one status, no variants |
 | Health | `GET /healthz` · `{"ok": true}` |
-| Code | 8 characters of `23456789ABCDEFGHJKMNPQRSTUVWXYZ` (~39.6 bits) |
+| Code | **six digits** `0-9`, printed `123 456`, typed with the space or without |
 | Window | 15 minutes · one redemption · five failed attempts burn the park |
+| Rate limit | 10 attempts per minute per source, then 15 minutes off · 20 per minute per park from everyone |
 | At rest | `age`-encrypted to a key whose private half exists only on this host |
 
 ## The shape
@@ -35,7 +36,7 @@ on:
 
 | File | Written by | Holds |
 |---|---|---|
-| `<station>.park.json` | the publisher | the ciphertext; never edited, only deleted |
+| `<station>.park.json` | the publisher | the ciphertext and the code's salt; never edited, only deleted |
 | `<station>.<park_id>.state.json` | the edge | attempts, terminal state |
 | `attempts.ndjson` | the edge | every attempt: station, outcome, source, time |
 
@@ -53,24 +54,48 @@ publisher encrypts and cannot decrypt what it just wrote, which is what makes
 the park inert everywhere it travels: on the publisher's disk, in `scp`, in the
 spool, in a backup of the spool.
 
-**The code is a lookup key plus rate limiting over TLS. It is not a key.** It
-selects a park and is compared against `code_sha256`; it derives nothing and
-decrypts nothing.
+**The code is a lookup key plus counting and rate limiting over TLS. It is not a
+key.** It selects a park and is compared against `code_sha256`; it derives
+nothing and decrypts nothing.
 
-`code_sha256` is therefore a **verifier, not a password hash**, and calling it
-one would be the mistake worth naming. Eight characters of a 31-character
-alphabet is ~39.6 bits, which falls to an offline search in minutes. That is
-acceptable for exactly two reasons and no others:
+**Six digits is one of 1,000,000, and the counting is what makes that enough.**
+The whole security argument is one paragraph of arithmetic:
 
-- in the spool, the hash sits beside the age identity that opens the ciphertext
-  outright — anyone who can read one can read the other, so recovering the code
-  is never the cheap path;
-- in the ledger, the code it commits to is dead within fifteen minutes.
+- **5 tries per park.** Five failed attempts burn it, from all sources
+  together — so an online guesser's odds are **5 in 1,000,000, or 1 in 200,000**,
+  once, after which the park is dead and the credential has to be re-parked (and
+  re-parking rotates, and shows up in the ledger as a second park nobody asked
+  for).
+- **10 attempts per minute per source, then 15 minutes off.** The cooling period
+  is a code's entire life, so **one address gets one window against one code**.
+  Ignoring the burn entirely, that rate would take a single source **over two and
+  a half years** to walk 1,000,000 once; the burn stops it in the first minute.
+- **20 requests per minute per park, from everyone.** The per-source limit is per
+  source, so this is what makes extra addresses worth nothing: a caller with a
+  hundred of them does not get a hundred budgets against one station.
+- **~139,000 parks for a coin flip.** At 5 in 1,000,000 per park, an attacker
+  needs `ln 2 / (5×10⁻⁶)` ≈ 139,000 separate parks for an even chance at one
+  credential. Each park is a phone call we made, and each is live for fifteen
+  minutes.
 
-What the design does defend is the **online** guess, and it defends it by
-counting: five failures against a station's live park burn it, and the per-source
-rate limit stops a caller sweeping stations or a broken client spending a
-subscriber's five attempts in a retry loop.
+Digits, not letters, because the code is **said out loud** — down a phone line,
+often between two people who do not share a first language. `B`/`V`/`P` do not
+survive that; `1`/`2`/`3` do, and there is no spelling alphabet to agree on
+first. That is why the alphabet is not a confusable-safe alphanumeric one: the
+question does not arise.
+
+`code_sha256` is a **verifier, not a password hash**, and at six digits it is
+**salted**, which is not decoration. A bare SHA-256 of six digits is a
+million-candidate search — milliseconds — and this value is copied into the
+stations ledger, a git repository read by more people, for longer, than the
+spool ever is. Unsalted, that row *would be* the code for as long as the park is
+live. The salt (`code_salt`, 128 bits, per park) lives only in the park file:
+0600, on the edge host, deleted the moment the park goes terminal. What survives
+in the ledger is a commitment that binds an attempt to the park `add --park`
+wrote, and nothing an offline reader can invert.
+
+What the design defends, then, is the **online** guess, and it defends it by
+counting. The rate limits exist so that the counting cannot be walked around.
 
 **Nothing is composed here.** Both ends shell out to `age` — the same binary the
 operator already uses for the encrypt-to-key handoff. There is no hand-rolled
@@ -86,11 +111,15 @@ a code was recently live, and a distinguishable *wrong code* turns the burn
 counter into a progress bar. The distinction is kept for **us**, in
 `attempts.ndjson` and the ledger, where it is the whole diagnostic value.
 
-Two ordering rules are load-bearing:
+Three ordering rules are load-bearing:
 
 - **Expiry is checked before the code.** A caller arriving late with the *right*
   code retires the park as `expired` rather than spending an attempt on a code
   that was correct.
+- **Both rate limits are checked before the state machine.** A request the
+  limiter refuses never reaches the park, so it must not cost the subscriber one
+  of their five attempts — otherwise anyone could burn a station's code by being
+  noisy rather than by guessing.
 - **Decryption happens before the park is retired.** A decryption failure is our
   misconfiguration — the wrong identity file, a park sealed to a rotated key —
   and burning the subscriber's only code over our own mistake would make them
@@ -104,9 +133,11 @@ ciphertext it cannot open.
 
 **What it would add, honestly:** each guess would require a full protocol round
 against a live peer with no offline verifier anywhere, so the five-attempt burn
-would stop being the only thing standing between a leaked spool and a code; the
-rendezvous could be run by someone we do not trust; and a park already at rest
-would not be openable by a later compromise of this host.
+would stop being the only thing standing between a leaked spool and a code —
+which at six digits is a millisecond search, because the salt leaks with the
+spool that holds it. The rendezvous could also be run by someone we do not
+trust, and a park already at rest would not be openable by a later compromise of
+this host.
 
 **Why the first version does not need it:** the edge is already inside the trust
 boundary. It is our host, on the same machine as the registry's `htpasswd` and
@@ -186,8 +217,10 @@ python3 publisher/vexa_stations.py record-credential \
 | `CLAIM_SPOOL` | — | required; the park directory, must be writable |
 | `CLAIM_IDENTITY` | — | required; the age identity, refused unless mode `600` |
 | `CLAIM_LISTEN` | `127.0.0.1:8088` | TLS is Caddy's, upstream of this process |
-| `CLAIM_RATE_LIMIT` | `20` | attempts per source per window |
+| `CLAIM_RATE_LIMIT` | `10` | attempts per source per window |
 | `CLAIM_RATE_WINDOW` | `60` | seconds |
+| `CLAIM_RATE_COOLDOWN` | `900` | seconds a source is refused after tripping the limit — one code's whole life |
+| `CLAIM_PARK_RATE_LIMIT` | `20` | requests per park per window, across every source |
 | `CLAIM_TRUST_FORWARDED_FOR` | off | `1` **only** behind a proxy that sets it |
 
 ## Limits, stated

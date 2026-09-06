@@ -475,8 +475,12 @@ def record_pin(root: pathlib.Path, *, channel: str, station: str, position: str,
 # a heuristic that tried to recognise a credential by looking at values would
 # pass the first password that happened to look like a hostname, and the cost
 # of being wrong here is a secret in git history, which is not removable.
+# `code_salt` is on the list for the same reason as `password`, one step
+# removed: `code_sha256` is a digest of that salt and a six-digit code, so a row
+# carrying both is a code anyone can recover in milliseconds. The salt belongs
+# to the park file on the edge and dies with it.
 FORBIDDEN_EVENT_KEYS = {"password", "pass", "secret", "credential", "ciphertext",
-                        "code", "claim_code", "token", "htpasswd"}
+                        "code", "claim_code", "code_salt", "token", "htpasswd"}
 
 CREDENTIAL_EVENT_KINDS = {"park", "claim"}
 

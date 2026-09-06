@@ -44,13 +44,15 @@ options
                     gate.
   --signature-repository  OCI repo where cosign signatures live (default:
                     alongside each image)
-  --claim-code CODE claim the channel credential with the short single-use code
-                    read to you on a call, INSTEAD of --registry-user plus
-                    VEXA_CHANNEL_PASS. It is fetched from the channel edge over
-                    TLS, used for every registry secret this script writes, and
-                    also written to the station credential Secret in --prod-ns.
-                    It never appears on your screen, in your shell history or in
-                    a file. The code is single-use and lives ~15 minutes.
+  --claim-code CODE claim the channel credential with the six digits read to you
+                    on a call, INSTEAD of --registry-user plus VEXA_CHANNEL_PASS.
+                    Written 123 456 and typed either way: 123456, or '123 456'
+                    in quotes. The credential is fetched from the channel edge
+                    over TLS, used for every registry secret this script writes,
+                    and also written to the station credential Secret in
+                    --prod-ns. It never appears on your screen, in your shell
+                    history or in a file. The code is single-use and lives ~15
+                    minutes.
   --claim-edge URL  claim endpoint (default https://<registry>/claim — the claim
                     service is behind the same edge as the registry, so it is
                     the host you already allowed through your firewall)

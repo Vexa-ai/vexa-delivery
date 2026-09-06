@@ -40,7 +40,7 @@ options:
 
 ## `add`
 
-Mint a credential for an account — the same verb rotates an existing one. Onboarding a new subscriber and rotating a compromised one are the same act against the registry, and the delivery leg is where they differ. `--park` seals the new value to the channel edge's key and parks it under an eight-character code you read aloud on a call, so nobody on their side ever sees the credential and it exists in no mail, chat, ticket or document. Without `--park` you are back to the age-encrypted handoff, which is the right route only when the recipient already holds a key you have confirmed.
+Mint a credential for an account — the same verb rotates an existing one. Onboarding a new subscriber and rotating a compromised one are the same act against the registry, and the delivery leg is where they differ. `--park` seals the new value to the channel edge's key and parks it under a six-digit code you read aloud on a call, so nobody on their side ever sees the credential and it exists in no mail, chat, ticket or document. Without `--park` you are back to the age-encrypted handoff, which is the right route only when the recipient already holds a key you have confirmed.
 
 ```text
 usage: vexa_subscriber add [-h] [--park] [--channel CHANNEL] [--station STATION] [--edge EDGE]
@@ -56,8 +56,9 @@ options:
   -h, --help            show this help message and exit
 
 claim-code delivery (--park):
-  Seal the minted credential to the edge's key and park it under an 8-character code you read on
-  a call. Line 1 of stdout is still the credential, to vault; line 2 is the code.
+  Seal the minted credential to the edge's key and park it under a 6-digit code you read on a
+  call. Line 1 of stdout is still the credential, to vault; line 2 is the six digits, grouped in
+  threes for reading aloud.
 
   --park                park the credential for claiming at the channel edge
   --channel CHANNEL     channel the station belongs to (required with --park; the ledger path)

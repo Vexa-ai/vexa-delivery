@@ -29,7 +29,7 @@ location. Generate it, deliver it, do not commit it.
     bash kit/install.sh --provider <provider> \
         --registry <registry> --channel <channel-name> \
         --channel-pubkey channel.pub --customer-values customer-values.yaml \
-        --claim-code <the code read on the call> --station <station> \
+        --claim-code <the six digits read on the call> --station <station> \
         --signature-repository <registry>/vexa/channel/<channel-name>/signatures \
         --verifier-image <verifier image ref>
     python3 kit/smoke/vexa_smoke.py --namespace <namespace> \
