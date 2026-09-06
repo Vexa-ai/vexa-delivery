@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The channel page, as it joins the channel host's existing stack. NOT APPLIED
+# by the change that added this file — see README.md § Deploy. The live edge is
+# founder-owned.
+#
+# A SEPARATE compose project, for the same reason edge/claim is one: merging it
+# into the registry's compose file would put this service's restarts on the
+# registry's blast radius, and `docker compose up -d --force-recreate` is
+# already how `vexa_subscriber.py` rotates credentials (RUNBOOK § 5.4) — a
+# recreate that also bounced the registry every time somebody added an account
+# would be a new way to take the channel down during onboarding.
+#
+#     docker compose -f edge/page/compose.yaml up -d
+
+name: vexa-page-edge
+
+services:
+  page-edge:
+    image: ${PAGE_EDGE_IMAGE:?set PAGE_EDGE_IMAGE to the built, digest-pinned ref}
+    restart: unless-stopped
+    # LOOPBACK ONLY. Caddy reverse-proxies /vexa/channel/* to this port and owns
+    # TLS, exactly as it owns the registry's.
+    ports:
+      - "127.0.0.1:8089:8089"
+    environment:
+      PAGE_LISTEN: 0.0.0.0:8089
+      # THE EDGE'S OWN ORIGIN, not the registry's port. Reading back through
+      # Caddy is what puts this service under the same anonymous/subscriber
+      # split as a subscriber's own pull (RUNBOOK § 5.2) instead of giving it a
+      # private door to the registry with a rule of its own.
+      PAGE_UPSTREAM: ${CHANNEL_EDGE_URL:?set CHANNEL_EDGE_URL}
+      # Set only if the edge's public name does not resolve to this host from
+      # inside it; then PAGE_UPSTREAM dials the address and this names the vhost.
+      PAGE_UPSTREAM_HOST: ${CHANNEL_EDGE_HOST:-}
+      # One minute. Long enough that a reload is free, short enough that a
+      # publication a subscriber was told about is visible while they are still
+      # looking at the page.
+      PAGE_CACHE_TTL: "60"
+      PAGE_TIMEOUT: "5"
+    # Nothing is mounted: no spool, no identity, no htpasswd, no credential of
+    # any kind. If a volume ever appears here, something about the design
+    # changed and this comment is the place to argue it.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

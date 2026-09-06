@@ -794,6 +794,7 @@ all-or-nothing — so the split is enforced at the Caddy edge:
 |---|---|
 | Signature reads: `GET\|HEAD ^/v2/.+/signatures/(manifests\|blobs\|referrers)/[^/]+$` | **anonymous** — a stock zero-credential Kyverno must verify without a secret |
 | `/v2/`, `tags/list`, `_catalog`, everything else | subscriber credential — **enumeration stays behind credentials** |
+| Channel page: `GET\|HEAD ^/vexa/channel/[a-z0-9][a-z0-9-]{1,62}/?$` → `edge/page` | **both, and no `basic_auth` in Caddy** — the service reads `/v2/` back through this same edge with the CALLER's credential, so this table governs it; anonymous is answered with one line and a link, **never a 404** |
 | Mutating verbs | publisher credential only |
 
 `referrers` is included so the modern cosign layout works the day we move to
@@ -803,6 +804,17 @@ withdrawn. Two 404s look like policy failures and are not: an anonymous
 manifest GET with no `Accept` header returns `MANIFEST_UNKNOWN` (content
 negotiation), and an anonymous GET of a signature that does not exist is a 404
 — which is how "unsigned" reaches Kyverno.
+
+**The channel page row is new and NOT DEPLOYED.** *Rung: packaged 2026-09-06 in
+[`edge/page/`](edge/page/README.md), which carries the deploy note; the live edge
+is founder-owned and nobody has built this image.* It exists because the address
+in the handover — `channel.vexa.ai/vexa/channel/<name>` — is a registry
+reference, and a browser opening it read `404 page not found`: the first thing
+the taker saw of the delivery. The service holds **no credential of its own**;
+it presents the caller's `Authorization` upstream and renders what came back, so
+the split above decides who sees a channel and this route can never show a
+subscriber more than `oras` would. An anonymous request makes no upstream call
+at all.
 
 **When images later mirror INTO the channel, the pull path must NOT become
 anonymous.** It needs kubelet `imagePullSecrets` on every pod that pulls a

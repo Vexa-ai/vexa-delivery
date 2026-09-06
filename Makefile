@@ -72,13 +72,23 @@ test-kit:
 	bash kit/tests/test_install_object_names.sh
 	bash kit/tests/test_claim.sh
 
-# The claim edge: the park format, the claim state machine (park · claim · burn ·
-# expiry · attempt limit) and the service itself over a real loopback socket. No
-# keypair — `decrypt` is injected — so the transitions that decide who gets a
-# credential are proved in CI, where `age` is not installed. The one real age
-# round trip skips without the binary, the way bcrypt hashing already does.
+# Every service under edge/, each against its own fixtures. One target rather
+# than one per service: they are the same kind of thing — a small stdlib process
+# behind the founder-owned Caddy — and a per-service target would be a line
+# somebody has to remember to add. The loop refuses on the first failure; a
+# bare `for` swallows exit status, which is the same defect the `lint` comment
+# below records.
+#
+# edge/claim is the reason there is anything to discover: the park format, the
+# claim state machine (park · claim · burn · expiry · attempt limit) and the
+# service itself over a real loopback socket. No keypair — `decrypt` is injected
+# — so the transitions that decide who gets a credential are proved in CI, where
+# `age` is not installed. The one real age round trip skips without the binary,
+# the way bcrypt hashing already does. edge/page joins it under the same rule.
 test-edge:
-	@if [ -d edge/claim/tests ]; then python3 -m unittest discover -s edge/claim/tests -v; else echo "edge/claim/tests not present yet; skipped"; fi
+	@found=0; for d in edge/*/tests; do [ -d "$$d" ] || continue; found=1; \
+	  python3 -m unittest discover -s "$$d" -v || exit 1; done; \
+	 [ "$$found" = 1 ] || echo "edge/*/tests not present yet; skipped"
 
 # The in-cluster verifier's evidence model, against fixture entries with stub
 # oras/cosign. Offline: no registry, no cluster, no signature.
