@@ -157,8 +157,47 @@ KYVERNO_NS=${KYVERNO_NAMESPACE:-kyverno}
 # ${arr[@]+"${arr[@]}"} — empty-array expansion is "unbound" under set -u on bash 3.2 (macOS
 # default), so a run without --kubeconfig crashed at the first kubectl call
 kc() { kubectl ${KUBECONFIG_ARG[@]+"${KUBECONFIG_ARG[@]}"} "$@"; }
+# THE DRY RUN MUST NOT PRINT A CREDENTIAL, and on 2026-09-06 it printed the
+# registry password in cleartext inside the rendered Argo repository Secret. The
+# Harbor robot credential that render burned was rotated the same hour. A render
+# an operator cannot save, paste into a ticket, or leave in scrollback is not a
+# review artifact, so redaction is not a courtesy here — it is what makes
+# --dry-run usable for the thing it exists for.
+#
+# The SHAPE survives and only the value goes: a reviewer needs to see that a
+# repository Secret carrying a username exists, never what the password is. The
+# channel PUBLIC key is deliberately not touched — it is public, and whether the
+# right key landed is exactly what a reviewer is checking.
+redact_secrets() {
+  VEXA_REDACT_PASS="${VEXA_CHANNEL_PASS:-}" python3 -c '
+import base64, os, re, sys
+text = sys.stdin.read()
+pw = os.environ.get("VEXA_REDACT_PASS") or ""
+if pw:
+    # the literal, and the two encodings kubectl puts it through on the way
+    # into a dockerconfigjson Secret
+    for form in (pw, base64.b64encode(pw.encode()).decode()):
+        text = text.replace(form, "REDACTED")
+# ...and the carriers, replaced wholesale rather than searched inside: a base64
+# blob that DECODES to a credential is a credential.
+text = re.sub(r"(?mi)^(\s*(?:\.dockerconfigjson|password|token|auth)\s*:\s*)\S.*$",
+              r"\1REDACTED", text)
+sys.stdout.write(text)
+'
+}
+
 apply() {
-  if $DRY_RUN; then echo "--- would apply:"; cat; else kc apply -f -; fi
+  if $DRY_RUN; then echo "--- would apply:"; redact_secrets; else kc apply -f -; fi
+}
+
+# `apply >/dev/null` silences the one-line confirmation a REAL apply prints.
+# Under --dry-run it silenced the RENDER: the rehearsal's dry run emitted 0
+# ConfigMaps and 2 Secrets where a real run writes 2 contract ConfigMaps, 2
+# pubkey Secrets, 2 kubelet pull Secrets and 2 repo Secrets. Six objects a
+# reviewing subscriber never saw, in the command whose whole promise is "render
+# everything, apply nothing".
+apply_quiet() {
+  if $DRY_RUN; then apply; else apply >/dev/null; fi
 }
 
 # 0 · ADOPTION PLAN — decided BEFORE a single object is written ----------------
@@ -588,15 +627,15 @@ CONTRACT_FILE=${CONTRACT:-$HERE/verify/policy.example.yaml}
 CONTRACT_PROD_FILE=${CONTRACT_PROD:-$CONTRACT_FILE}
 for pair in "vexa-contract-staging:$CONTRACT_FILE:$STAGING_NS" "vexa-contract-prod:$CONTRACT_PROD_FILE:$PROD_NS"; do
   cmname=${pair%%:*}; rest=${pair#*:}; file=${rest%%:*}; ns=${rest##*:}
-  kc create namespace "$ns" --dry-run=client -o yaml | apply >/dev/null
+  kc create namespace "$ns" --dry-run=client -o yaml | apply_quiet
   python3 - "$file" <<PYEOF2 > /tmp/vexa-contract.json
 import json, sys, yaml
 print(json.dumps(yaml.safe_load(open(sys.argv[1])) or {}))
 PYEOF2
   kc -n "$ns" create configmap "$cmname" --from-file=contract.json=/tmp/vexa-contract.json \
-    --dry-run=client -o yaml | apply >/dev/null
+    --dry-run=client -o yaml | apply_quiet
   kc -n "$ns" create secret generic vexa-channel-pubkey --from-file=channel.pub="$PUBKEY" \
-    --dry-run=client -o yaml | apply >/dev/null
+    --dry-run=client -o yaml | apply_quiet
   echo "   $ns: $cmname ($(basename "$file")) + channel key"
 done
 rm -f /tmp/vexa-contract.json
@@ -639,10 +678,10 @@ VERIFY_ENABLED=false; [ -n "$VERIFIER_IMAGE" ] && VERIFY_ENABLED=true
 if [ -n "$REGISTRY_USER" ]; then
   echo "== image-pull credential for the kubelet, in each workload namespace"
   for ns in "$STAGING_NS" "$PROD_NS"; do
-    kc create namespace "$ns" --dry-run=client -o yaml | apply >/dev/null
+    kc create namespace "$ns" --dry-run=client -o yaml | apply_quiet
     kc -n "$ns" create secret docker-registry vexa-channel-registry \
       --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" \
-      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply >/dev/null
+      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply_quiet
     echo "   $ns: vexa-channel-registry"
 
     # AND ATTACH IT TO THE SERVICE ACCOUNTS, which is not belt-and-braces.
@@ -676,7 +715,7 @@ if [ -n "$REGISTRY_USER" ] && $VERIFY_ENABLED; then
   for ns in "$STAGING_NS" "$PROD_NS"; do
     kc -n "$ns" create secret docker-registry "$VERIFY_REGISTRY_SECRET" \
       --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" \
-      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply >/dev/null
+      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply_quiet
   done
 fi
 VERIFY_INSECURE=false
