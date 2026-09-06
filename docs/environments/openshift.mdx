@@ -28,6 +28,25 @@ description: "What an OpenShift project must provide — including shared cluste
 | A registry path to the channel: your **Harbor/Artifactory pull-through proxy**, or direct pull | one proxy endpoint + project if the channel is private; nothing at all on the public lane |
 | `restricted-v2` SCC — the default | the stack runs under it stock: no SCC changes, no fixed UIDs, no privileged anything |
 
+## One-time platform-team asks — one file, applied once
+
+**You are meant to deliver a generic environment, a transcription endpoint, a mailbox and the ports below. The machinery installs itself.** When the install runs once with cluster rights, `kit/install.sh` creates everything it needs — that is how our own cluster went in, and there is no separate ask at all.
+
+Where the app team holds a project and a separate department runs the cluster, six objects are cluster-scoped by construction and a tenant is refused on each. Every one was measured on 2026-09-06 by attempting the verb, not assumed:
+
+| The object | What happens without it |
+|---|---|
+| The three **Argo CD CRDs** | Argo's `namespace-install.yaml` ships no CRDs, so there is no Argo at all |
+| **Kyverno** and the two `ClusterPolicy` objects | no admission gate; the in-project verify gate becomes the only enforcement point |
+| A cluster-scoped **read ClusterRole** for the Argo application-controller | a namespace-scoped Argo **never syncs** — every Application sits `Unknown` on `volumeattachments … is forbidden`, and `resource.inclusions`/`exclusions` do not gate that load |
+| The **projects**, with SCC annotations and PSA labels | namespaces are cluster-scoped |
+| A **LimitRange ceiling ≥ the largest container limit in the chart** | postgres asks 4Gi; against a ceiling sized for the bot's 2Gi `/dev/shm` it is refused at admission, after a green install |
+| A **ResourceQuota** covering the delivered set plus the pods the runtime spawns at meeting time | the install succeeds and the meeting fails |
+
+**They arrive as one file.** `kit/platform/render.sh --provider openshift --project <name> --channel <name> --channel-pubkey channel.pub` renders `platform-openshift.yaml`; your platform team applies it once with `oc apply --server-side --force-conflicts -f platform-openshift.yaml`. The Argo CD and Kyverno halves are the pinned upstream manifests verbatim; the memory ceiling is read from the chart rather than chosen. `kit/platform/README.md` explains every object and is written for the platform engineer, not for us.
+
+After that the app team runs `kit/install.sh --cluster-scope platform-pack`, which creates no namespace and installs nothing cluster-scoped — and refuses, naming the pack, if the pack is not there. From then on they subscribe, upgrade, smoke-test and report inside their own two projects.
+
 ## How the install works here
 
 There is no setup script on a no-CLI platform — the script's work arrives as **one merge into your GitOps config repo**: an Argo Application carrying the station bundle reference, your contract, and the channel public key. Your Argo does the rest. Your staging tier then follows releases automatically and your production pin moves only when your approver moves it, recorded with the contract identity where your audit can read it.

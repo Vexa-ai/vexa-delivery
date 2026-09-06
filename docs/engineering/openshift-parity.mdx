@@ -49,6 +49,16 @@ One merge into their config repo — the same motion as every deploy they make:
    reports cluster-level facts as UNKNOWN rather than guessing — a tenant
    never pretends to see the substrate.
 
+**Every cluster-scoped ask below is one file now.** `kit/platform/render.sh`
+renders the Argo CRDs, Kyverno and the two ClusterPolicies, the read
+ClusterRole the controller needs, and the projects with their LimitRange and
+ResourceQuota into a single `platform-<provider>.yaml` a platform team applies
+once — after which `kit/install.sh --cluster-scope platform-pack` does
+namespace-scoped work only, and refuses by name if the pack is not there.
+`kit/platform/README.md` is the page written for the platform engineer. This
+matters for the same reason the list exists: an ask expressed as five
+sentences is five tickets, and one file is one.
+
 One-time platform-team asks (their bucket, pre-authorized as "special
 configuration later"): namespace + runtime RBAC + LimitRange + ResourceQuota
 (already requested by the customer's own engineer), and — only for the private

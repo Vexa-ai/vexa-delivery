@@ -19,6 +19,19 @@ Your channel's onboarding mail carries what step 3 needs: the channel **name** (
 
 [Preflight](preflight) checks four of those five rows in step 2 and fails closed, so you find out now rather than at first sync: the version floor (P9), the default StorageClass (P8), the route to the channel registry and a real pull by digest (P5, P7), and whether the delivered set fits your nodes, quotas and pod-security (P1, P2, P3, P4, P6). **The LoadBalancer/ingress row is yours** — no preflight check reads it, because how you expose the gateway is your cluster's business.
 
+## What you open outbound
+
+Four destinations, and nothing needs to reach *in*. Everything below is egress from the namespaces Vexa runs in; the subscription pulls, verification is offline, and no inbound rule exists for us.
+
+| Destination | Ports | Who talks to it | Why |
+|---|---|---|---|
+| **Your channel host** — `channel.vexa.ai`, or the registry you mirror it into | TCP **443** | Argo CD's repo-server, Kyverno, the kubelet, the verify gate | entries, charts, signatures and images. The one host an [air-gapped estate mirrors](channel), after which this is the only outbound row that stays. |
+| **The meeting platforms you use** — Google Meet, Microsoft Teams, Zoom | TCP **443**, and **UDP** for WebRTC media | the meeting bot only | the bot is a browser joining a meeting. Where UDP egress is closed the platforms relay media over TCP 443 through their own TURN servers — their path, not ours, and not something we have measured here. |
+| **Your transcription and model endpoints** | whatever they listen on | the runtime and the agent tier | on a shared estate these usually live in a **separate project**, so this is a cross-project firewall or NetworkPolicy allowance rather than internet egress |
+| **Your mailbox**, if you run the flows tier | IMAP **993** and SMTP **465** (or **587** with STARTTLS); **443** for Microsoft Graph | the flows tier only | the mailbox is that tier's front door: people invite the address to a meeting. Leave the tier off and this row does not exist. |
+
+Cluster-internal DNS must resolve, which is worth stating because a default-deny NetworkPolicy with no DNS allowance is the commonest way an install sits doing nothing — P5 checks for exactly that.
+
 ## Step 1 — Get the kit
 
 ```bash

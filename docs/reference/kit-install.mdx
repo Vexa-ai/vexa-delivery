@@ -96,6 +96,17 @@ options
                     applies the upstream manifests; skip leaves Argo entirely
                     alone (you install it, we subscribe to it).
   --kyverno MODE    the same four modes for Kyverno.
+  --cluster-scope   who owns the cluster-scoped objects:
+                      installer      (default) this run creates them. Needs
+                                     cluster rights, which is how our own
+                                     cluster went in.
+                      platform-pack  your platform team already applied
+                                     kit/platform's platform-<provider>.yaml.
+                                     This run then does namespace-scoped work
+                                     only: it installs no Argo CD, no Kyverno
+                                     and no ClusterPolicy, and it creates no
+                                     namespace. It CHECKS the pack landed
+                                     first and refuses by name if it did not.
   --skip-preflight  do not run the conformance preflight (NOT recommended)
   --dry-run         render everything, apply nothing
 ```
