@@ -38,6 +38,12 @@ Checks
                           PVCs
   P9 kubernetes version   sanity floor
 
+EIGHT of those nine run by default: P1-P6, P8, P9. The two LIVE probes are
+opt-in because they create a pod in your cluster — the live half of P5 needs
+--live-probes --registry-host, and P7 needs --live-probes --pull-test-image.
+P7 also needs the namespace's image-pull Secret to exist already, which an
+install writes; run it AFTER the install, not as the before-anything check.
+
 Modes
   live (default)          reads the cluster via kubectl; --live-probes adds
                           the in-cluster probe pods (P5 live, P7)
@@ -48,7 +54,13 @@ Workloads under test come from --manifests (rendered YAML; converted via
 `kubectl create --dry-run=client -o json`, so kubectl is the only dependency)
 plus the built-in dynamic-bot profile (bots are spawned per meeting and never
 appear in a chart render; sizes are the measured production values,
-overridable). Exit 0 = no FAIL; 1 = at least one FAIL; 2 = usage error.
+overridable).
+
+Exit codes
+  0  every check that ran passed (warnings included), and every check ran
+  1  at least one FAIL — this is the fails-closed case
+  2  usage error
+  4  nothing failed AND at least one check was NOT EVALUATED (see below)
 
 A READ THIS CREDENTIAL IS REFUSED IS NOT A FINDING. Every cluster-scoped read
 is wrapped, and a check whose input could not be read reports UNKNOWN, naming
@@ -56,6 +68,13 @@ the read and the refusal — never a traceback, never a PASS, never a FAIL. A
 namespace-scoped tenant cannot list nodes; saying so is the honest answer, and
 `--dump-snapshot` as an admin then `--snapshot` as the tenant is the way to
 turn an UNKNOWN into an answer.
+
+WHICH IS WHY UNKNOWN HAS ITS OWN EXIT CODE. It used to share 0 with a clean
+run, so a caller — a script, a CI job, `install.sh` — could not tell "your
+cluster is fine" from "four of these were never looked at", and the second one
+read as the first. 4 is not a failure and does not mean stop; it means the
+answer is incomplete and says which parts. Callers that must not proceed on an
+incomplete answer now have something to test.
 """
 import argparse
 import json
@@ -985,7 +1004,14 @@ def main(argv=None):
                                            args.kubeconfig, args.context, args.pull_timeout))
 
     print(render(checks, as_json=args.json))
-    return 1 if any(c.status == "FAIL" for c in checks) else 0
+    if any(c.status == "FAIL" for c in checks):
+        return 1
+    # Not a failure, not a clean pass. See "Exit codes" at the top of this file:
+    # sharing 0 with a clean run made an unevaluated check invisible to every
+    # caller, which is the half of "fails closed" that was not true.
+    if any(c.status == "UNKNOWN" for c in checks):
+        return 4
+    return 0
 
 
 if __name__ == "__main__":
