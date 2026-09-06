@@ -263,10 +263,16 @@ apply() {
 # nothing appears in a process listing) -> pipe -> python's stdin -> base64 in
 # the manifest. It is never an argument to anything and never touches disk.
 #
-# The object is byte-for-byte what kubectl would have built: the same `auths`
-# map, the same three keys, `email` omitted when empty exactly as kubectl omits
-# it. Under --dry-run `redact_secrets` replaces the whole .dockerconfigjson
-# line, because a base64 blob that decodes to a credential is a credential.
+# The object is the one kubectl would have built: the same `auths` map, the same
+# three keys in the same order, `email` omitted when empty exactly as kubectl
+# omits it, and compact separators so the encoded blob matches Go's
+# json.Marshal. Checked against `kubectl create secret docker-registry
+# --dry-run=client -o yaml` on v1.34.1 with a password carrying a quote and a
+# backslash; the one difference left is Go's HTML-escaping of < > & inside a
+# string, which decodes to the same bytes.
+#
+# Under --dry-run `redact_secrets` replaces the whole .dockerconfigjson line,
+# because a base64 blob that decodes to a credential is a credential.
 render_registry_secret() {
   local ns=$1 name=$2 blob
   blob=$(printf '%s' "${VEXA_CHANNEL_PASS:-}" \
@@ -276,7 +282,8 @@ pw = sys.stdin.read()
 server, user = os.environ["VEXA_DR_SERVER"], os.environ["VEXA_DR_USER"]
 auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
 cfg = {"auths": {server: {"username": user, "password": pw, "auth": auth}}}
-sys.stdout.write(base64.b64encode(json.dumps(cfg).encode()).decode())
+sys.stdout.write(base64.b64encode(
+    json.dumps(cfg, separators=(",", ":")).encode()).decode())
 ')
   cat <<EOF
 apiVersion: v1
