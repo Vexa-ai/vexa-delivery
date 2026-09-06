@@ -57,7 +57,9 @@ export VEXA_CHANNEL_PASS=<the credential from your onboarding mail>
   --verifier-image <the verifier image ref from your onboarding mail>
 ```
 
-Idempotent. Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster.
+Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster.
+
+**If your cluster already runs Argo CD or Kyverno**, say so with `--argocd` and `--kyverno`, which each take `auto` (the default), `adopt`, `install` or `skip`. `auto` looks before it writes: absent → it installs the pinned version; present at the pinned version → it **adopts** yours and applies nothing to it; present at another version → it **refuses and names the version**, before a single object is written. `skip` leaves that component entirely to you.
 
 Four of those flags are the difference between an install that syncs and one that does not, so none of them is optional against a credentialed channel:
 
@@ -74,10 +76,10 @@ Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-s
 
 ```bash
 python3 kit/smoke/vexa_smoke.py --namespace vexa-staging \
-  --customer-values my-values.yaml --flows
+  --customer-values my-values.yaml
 ```
 
-Delivered set healthy → control plane answers → **you open a real meeting, admit the bot and speak while the CLI streams the transcript back** → flows tier answers. Output: a dated receipt naming chart revision, image digests, meeting id and segment count. Paste the **whole** meeting link:
+Delivered set healthy → control plane answers → **you open a real meeting, admit the bot and speak while the CLI streams the transcript back**. Output: a dated receipt naming chart revision, image digests, meeting id and segment count. Paste the **whole** meeting link:
 
 | You paste | Dispatched as |
 |---|---|
@@ -87,6 +89,8 @@ Delivered set healthy → control plane answers → **you open a real meeting, a
 
 An unrecognized link fails immediately. `--non-interactive` rehearses without the human phase: it records S3 as SKIP and the overall verdict stays PASS — it proves the tooling, not capture.
 
+**Add `--flows` only if your entry actually carries the flows tier.** It is not in every chart, and against an entry that ships no `flows-api` the S4 check reports the tier as undelivered and **fails the whole run** for a component you were never sent. Left off, S4 records SKIP and the verdict reflects what you were sent.
+
 <Note>
 **Rung.** This step is the intended procedure and the tool implements it, but **no audio has reached the pipeline in any delivery run yet** — bot dispatch, the pinned image and pod lifecycle are proven; capture is not. [What's proven, and where](tested#the-delivered-software).
 </Note>
@@ -95,10 +99,10 @@ An unrecognized link fails immediately. `--non-interactive` rehearses without th
 
 ```bash
 python3 kit/validate/vexa_validate.py --namespace vexa-staging \
-  --customer-values my-values.yaml --flows
+  --customer-values my-values.yaml
 ```
 
-**This is the one step with a Python dependency:** it needs `pyyaml`, and `jsonschema` as well if you use `--submit`. Preflight, smoke and the report writer are stdlib-only — nothing to install for steps 2 and 4.
+**Two of these steps need a Python package.** This one needs `pyyaml`, and `jsonschema` as well if you use `--submit`. **Step 4 needs `pyyaml` too**, because `--customer-values` is how it reads your admin API token out of your values file — and that token is not optional: without the values file you must pass `--admin-token` instead, or smoke exits before it checks anything. Preflight (step 2) and the report writer are stdlib-only.
 
 Runs steps 2 and 4; add `--install` for step 3 between them. Exit codes: `0` pass · `1` phase failed · `2` usage · `3` redaction leak.
 
