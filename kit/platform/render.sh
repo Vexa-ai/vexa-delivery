@@ -144,7 +144,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$PROVIDER" ] && [ -n "$PROJECT" ] && [ -n "$CHANNEL" ] || usage
+if [ -z "$PROVIDER" ] || [ -z "$PROJECT" ] || [ -z "$CHANNEL" ]; then
+  usage
+fi
 case "$PROVIDER" in
   openshift|kubernetes) ;;
   *) echo "render.sh: --provider takes openshift or kubernetes, not '$PROVIDER'." >&2
