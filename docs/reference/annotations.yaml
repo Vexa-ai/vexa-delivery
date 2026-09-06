@@ -117,6 +117,14 @@ vexa-stations record-ingest: >-
   it — but it is how you backfill a station that was ingested before the ledger,
   without asking the customer to send the report again.
 
+vexa-stations record-credential: >-
+  Ingest the claim edge's `attempts.ndjson` after a delivery — the return leg of
+  credential delivery, and the only place "who tried to claim this station's
+  code, and how it ended" becomes part of the record. Reach for it whenever you
+  copy the spool back, including after a claim that went fine: a park with an
+  opening row and no closing one is a code whose fate nobody wrote down.
+  Re-ingesting the same file is a no-op, so there is no cursor to keep.
+
 vexa-stations pin: >-
   Move a station's pin: the promotion. This is the one write to `channel.yaml`
   a human makes, and it refuses to run without a justification, because a
@@ -135,7 +143,12 @@ vexa-subscriber list: >-
 vexa-subscriber add: >-
   Mint a credential for an account — the same verb rotates an existing one.
   Onboarding a new subscriber and rotating a compromised one are the same act
-  against the registry, and both end with an age-encrypted handoff.
+  against the registry, and the delivery leg is where they differ. `--park`
+  seals the new value to the channel edge's key and parks it under an
+  eight-character code you read aloud on a call, so nobody on their side ever
+  sees the credential and it exists in no mail, chat, ticket or document.
+  Without `--park` you are back to the age-encrypted handoff, which is the
+  right route only when the recipient already holds a key you have confirmed.
 
 vexa-subscriber revoke: >-
   Remove an account's credential. Use it when a pilot ends or a credential is
