@@ -40,3 +40,35 @@ refuses the spelling a human types, which is the one that reaches a page.
 
 Public examples use neutral names — `pilot-stable` for a subscriber channel,
 "the pilot subscriber" for the party.
+
+## `check-secret-argv.py`
+
+`/install` promises, of the channel password: **"read from the environment,
+never from argv."** For three call sites in `kit/install.sh` that was false —
+each ran `kubectl create secret docker-registry … --docker-password=…`, two of
+them under `--dry-run`, inside the command hardened so a render would carry no
+credential. Argv is world-readable in `/proc` and in `ps` output for the life of
+the process. A promise a reviewer can grep for should be a promise a gate
+enforces.
+
+It refuses a credential-shaped **value on a command line** in any tracked
+`*.sh`: `--docker-password=`, `--password=`/`--token=` (never
+`--password-stdin`, which is the fix), and `--from-literal=` whose key looks
+like a credential or whose value reads a credential-shaped variable. A finding
+prints file:line and the flag, never the line — the line is where the
+credential would be.
+
+It does **not** refuse `--from-literal=verdict_sha256=…` or
+`--from-literal=status=…`: those are argv and are not secrets, and a rule this
+repository cannot keep is a rule somebody suppresses. `*/tests/*` is out of
+scope — a stub kubectl *parses* the flag out of its own argv to assert on what
+it was handed; it constructs nothing.
+
+```
+python3 gates/check-secret-argv.py
+make check-secret-argv
+```
+
+When it fires, the fix is to render the object and apply it from stdin.
+`kit/install.sh` § `render_registry_secret` and `kit/claim.sh` §
+`vexa_claim_write_secret` are the two worked examples.

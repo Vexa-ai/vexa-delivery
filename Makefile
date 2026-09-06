@@ -4,7 +4,7 @@
 # release crank, it reads the operator's own environment, and `DRY_RUN=1` is the
 # form of it that touches nothing.
 
-.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-platform test-verify test-edge test-gates validate-goldens docs-reference check-docs check-private-tokens lint
+.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-platform test-verify test-edge test-gates validate-goldens docs-reference check-docs check-private-tokens check-secret-argv lint
 
 # RUNBOOK § 1 as one command: fetch -> build -> sign-images -> push.
 #
@@ -26,7 +26,7 @@ publish:
 	 SIGNING_RECEIPT='$(SIGNING_RECEIPT)' WORK='$(WORK)' DRY_RUN='$(DRY_RUN)' \
 	 sh publisher/publish.sh
 
-test: test-publisher test-preflight test-smoke test-validate test-report test-kit test-platform test-verify test-edge test-gates validate-goldens check-docs check-private-tokens
+test: test-publisher test-preflight test-smoke test-validate test-report test-kit test-platform test-verify test-edge test-gates validate-goldens check-docs check-private-tokens check-secret-argv
 
 test-publisher:
 	python3 -m unittest discover -s publisher/tests -v
@@ -158,3 +158,11 @@ check-docs:
 # tree, which is the honest answer. See gates/README.md.
 check-private-tokens:
 	python3 gates/check-private-tokens.py
+
+# `/install` promises the channel password is "read from the environment, never
+# from argv", and for three call sites in kit/install.sh that was false — argv
+# is world-readable in /proc and in `ps`. A promise a reviewer can grep for
+# should be a promise a gate enforces. Stdlib, reads only *.sh in the tracked
+# tree, prints file:line and the flag. See gates/README.md.
+check-secret-argv:
+	python3 gates/check-secret-argv.py

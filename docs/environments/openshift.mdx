@@ -3,17 +3,11 @@ title: "OpenShift"
 description: "What an OpenShift project must provide — including shared clusters where you hold a namespace, not the cluster"
 ---
 
-**Built for the shape large organizations actually run it: a shared cluster operated by a platform team, where your team holds a project and deploys through GitOps.** Nothing your *project* team does needs cluster-admin, and nothing needs a CLI.
+**Built for the shape large organizations actually run it: a shared cluster operated by a platform team, where your team holds a project and deploys through GitOps.** Nothing your *project* team does needs cluster-admin.
 
-**Five one-time acts do need cluster-admin, and they belong to your platform team**, each measured by a namespace-scoped tenant attempting the verb and being refused ([parity detail](/engineering/openshift-parity)):
+**A CLI is a separate question, and the honest answer is "for some of it".** The install can arrive as [one merge into your GitOps config repo](#how-the-install-works-here) and needs no CLI; with the [platform pack](#one-time-platform-team-asks-one-file-applied-once) the app team runs `kit/install.sh` instead. Either way [preflight](/preflight), [smoke](/install#step-4-smoke-with-a-human-in-a-real-meeting) and the [station report](/install#step-5-send-the-station-report-back) shell out to `kubectl`, from a machine with access to your namespace — not to your cluster. A team with no CLI anywhere can subscribe and stay current; it cannot preflight, smoke-test or report.
 
-| # | The one-time act | Without it |
-|---|---|---|
-| 1 | Install the Argo CD CRDs | no Argo at all — the subscription has nothing to be |
-| 2 | Install Kyverno and the two `ClusterPolicy` objects the admission policy is made of | no admission gate; the in-project verify gate is the only enforcement point |
-| 3 | Bind a cluster-scoped **read** ClusterRole to the Argo application-controller | a namespace-scoped Argo **never syncs** — its cluster cache fails to load and every Application sits `Unknown` |
-| 4 | Create the project, with its SCC annotations and PSA labels | namespaces are cluster-scoped |
-| 5 | Set the project's LimitRange ceiling (see the requirements below) | the delivered chart is refused at admission |
+**The one-time acts that do need cluster-admin belong to your platform team, and they are [one file, applied once](#one-time-platform-team-asks-one-file-applied-once)** — six objects, listed below with what each is for. Every one was measured on 2026-09-06 by a namespace-scoped tenant attempting the verb and being refused, never by asking `auth can-i` ([parity detail](/engineering/openshift-parity)). That rig was `kind` v1.30.0 under PSA `restricted` with Kyverno emulating `restricted-v2` — **not OpenShift**, which the Status section below states in full.
 
 ## Status
 
@@ -32,16 +26,16 @@ description: "What an OpenShift project must provide — including shared cluste
 
 **You are meant to deliver a generic environment, a transcription endpoint, a mailbox and the ports below. The machinery installs itself.** When the install runs once with cluster rights, `kit/install.sh` creates everything it needs — that is how our own cluster went in, and there is no separate ask at all.
 
-Where the app team holds a project and a separate department runs the cluster, six objects are cluster-scoped by construction and a tenant is refused on each. Every one was measured on 2026-09-06 by attempting the verb, not assumed:
+Where the app team holds a project and a separate department runs the cluster, **six objects are your platform team's** and a tenant is refused on each. Four are cluster-scoped by construction; the last two are namespaced objects a project admin is deliberately read-only on. Every one was measured on 2026-09-06 by attempting the verb, not assumed:
 
-| The object | What happens without it |
-|---|---|
-| The three **Argo CD CRDs** | Argo's `namespace-install.yaml` ships no CRDs, so there is no Argo at all |
-| **Kyverno** and the two `ClusterPolicy` objects | no admission gate; the in-project verify gate becomes the only enforcement point |
-| A cluster-scoped **read ClusterRole** for the Argo application-controller | a namespace-scoped Argo **never syncs** — every Application sits `Unknown` on `volumeattachments … is forbidden`, and `resource.inclusions`/`exclusions` do not gate that load |
-| The **projects**, with SCC annotations and PSA labels | namespaces are cluster-scoped |
-| A **LimitRange ceiling ≥ the largest container limit in the chart** | postgres asks 4Gi; against a ceiling sized for the bot's 2Gi `/dev/shm` it is refused at admission, after a green install |
-| A **ResourceQuota** covering the delivered set plus the pods the runtime spawns at meeting time | the install succeeds and the meeting fails |
+| The object | Why it is not the app team's | What happens without it |
+|---|---|---|
+| The three **Argo CD CRDs** | CRDs are cluster-scoped | Argo's `namespace-install.yaml` ships no CRDs, so there is no Argo at all |
+| **Kyverno** and the two `ClusterPolicy` objects | cluster-scoped throughout | no admission gate; the in-project verify gate becomes the only enforcement point |
+| A cluster-scoped **read ClusterRole** for the Argo application-controller | RBAC at cluster scope | a namespace-scoped Argo **never syncs** — every Application sits `Unknown` on `volumeattachments … is forbidden`, and `resource.inclusions`/`exclusions` do not gate that load |
+| The **projects**, with SCC annotations and PSA labels | namespaces are cluster-scoped | there is nothing to install into |
+| A **LimitRange ceiling ≥ the largest container limit in the chart** | a project admin is read-only on limits | postgres asks 4Gi; against a ceiling sized for the bot's 2Gi `/dev/shm` it is refused at admission, after a green install |
+| A **ResourceQuota** covering the delivered set plus the pods the runtime spawns at meeting time | the same: yours to set, theirs to live inside | the install succeeds and the meeting fails |
 
 **They arrive as one file.** `kit/platform/render.sh --provider openshift --project <name> --channel <name> --channel-pubkey channel.pub` renders `platform-openshift.yaml`; your platform team applies it once with `oc apply --server-side --force-conflicts -f platform-openshift.yaml`. The Argo CD and Kyverno halves are the pinned upstream manifests verbatim; the memory ceiling is read from the chart rather than chosen. `kit/platform/README.md` explains every object and is written for the platform engineer, not for us.
 

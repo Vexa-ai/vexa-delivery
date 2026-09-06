@@ -63,6 +63,16 @@ the mirror path
 
 other
   --dry-run     print what would happen; contact nothing, write nothing
+
+exit codes
+  0  claimed — the credential is in the cluster (or on your screen, --print-once)
+  1  THE EDGE REFUSED THIS CLAIM. Something answered and said no: the code is
+     wrong, expired, already used, burned by failed attempts, or bound to
+     another station. Ask for a new code
+  2  usage
+  3  NO CLAIM SERVICE ANSWERED AT --edge. Nothing was reached, or something
+     that is not the claim service answered. Your code is untouched and still
+     good — check the URL and your egress, then run this again
 EOF
   exit 2
 }
@@ -74,6 +84,14 @@ EOF
 # vexa_claim_fetch <code> <edge> <station>
 # On success sets VEXA_CLAIM_USER and VEXA_CLAIM_PASS in the CALLER's shell.
 # Neither value is ever echoed, written, or passed as an argument to anything.
+#
+# Returns 1 when the SERVICE refused the claim and 3 when there is no claim
+# service at this edge. They are one HTTP round trip apart and they are opposite
+# support calls: the first means the code is spent or wrong, the second means
+# the code is untouched and the URL is. Reporting a missing service as "your
+# code may be wrong" sends a subscriber to ask for a new code, which rotates the
+# credential and fixes nothing — and the default --claim-edge is
+# https://<registry>/claim, so an undeployed edge lands exactly here.
 vexa_claim_fetch() {
   local code=$1 edge=$2 station=$3 payload response http body
 
@@ -90,13 +108,30 @@ vexa_claim_fetch() {
   local rc=$?
   set -e
   if [ $rc -ne 0 ]; then
-    echo "claim: could not reach $edge (curl exit $rc)" >&2
+    echo "claim: nothing answered at $edge (curl exit $rc)." >&2
     echo "  $response" >&2
-    return 1
+    echo "  YOUR CODE IS UNTOUCHED — nothing was presented to anything, so it is" >&2
+    echo "  still good. Check the --edge URL and that this machine can reach it." >&2
+    return 3
   fi
 
   http=${response##*$'\n'}
   body=${response%$'\n'*}
+
+  case "$http" in
+    404|405|501|502|503|504)
+      # There is a server, and it does not serve /claim: a 404 from the registry
+      # host, a proxy with no route, a gateway with nothing behind it. The claim
+      # service answers every genuine refusal with 403 and nothing else, so none
+      # of these codes can come from it.
+      echo "claim: there is no claim service at $edge (HTTP $http)." >&2
+      echo "  Something answered, and it was not the claim endpoint — a wrong" >&2
+      echo "  URL, a proxy with no route to it, or the service not running." >&2
+      echo "  YOUR CODE IS UNTOUCHED and still good: this never reached the" >&2
+      echo "  service, so nothing was spent and no attempt was counted. Check" >&2
+      echo "  the --edge URL with whoever read you the code, then run this again." >&2
+      return 3;;
+  esac
 
   if [ "$http" != "200" ]; then
     # The edge answers every refusal identically on purpose — wrong code,
@@ -105,18 +140,22 @@ vexa_claim_fetch() {
     # cannot tell you which it was either, and listing them is the honest
     # substitute for a reason the protocol deliberately withholds.
     echo "claim: the edge refused this claim (HTTP $http)." >&2
-    echo "  The code may be wrong, expired (they live ~15 minutes), already" >&2
-    echo "  used, burned by failed attempts, or bound to another station." >&2
-    echo "  The edge answers all of those the same way. Ask for a new code —" >&2
-    echo "  a re-issue rotates the credential rather than resending it." >&2
+    echo "  The service answered, so this is about the code, not the URL. It may" >&2
+    echo "  be wrong, expired (they live ~15 minutes), already used, burned by" >&2
+    echo "  failed attempts, or bound to another station. The edge answers all of" >&2
+    echo "  those the same way. Ask for a new code — a re-issue rotates the" >&2
+    echo "  credential rather than resending it." >&2
     return 1
   fi
 
   # Parsed through a pipe for the same reason it was sent through one.
   VEXA_CLAIM_USER=$(printf '%s' "$body" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["username"])') || {
-      echo "claim: the edge answered 200 with a body this kit cannot read" >&2
-      return 1
+      # A 200 whose body is not a credential is not the claim service either —
+      # a captive portal, a proxy's own success page, an SSO redirect landing.
+      echo "claim: $edge answered 200 with a body this kit cannot read." >&2
+      echo "  That is not the claim service. Your code is untouched." >&2
+      return 3
     }
   VEXA_CLAIM_PASS=$(printf '%s' "$body" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["password"])')
@@ -216,7 +255,12 @@ claim_main() {
     fi
   fi
 
-  vexa_claim_fetch "$CODE" "$EDGE" "$STATION" || exit 1
+  # 1 (the service refused the code) and 3 (no service at this edge) reach the
+  # caller as themselves; a script wrapping this one has to be able to tell a
+  # spent code from a wrong URL without parsing our prose.
+  local rc=0
+  vexa_claim_fetch "$CODE" "$EDGE" "$STATION" || rc=$?
+  [ "$rc" -eq 0 ] || exit "$rc"
 
   if $PRINT_ONCE; then
     echo "# WARNING: this credential is on your screen and in this terminal's" >&2

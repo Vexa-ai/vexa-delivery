@@ -130,19 +130,41 @@ class RefusedReadsBecomeUnknown(unittest.TestCase):
 class EndToEnd(unittest.TestCase):
     """The whole CLI, on a snapshot a namespace-scoped tenant could produce."""
 
-    def test_main_reports_unknown_and_does_not_exit_1(self):
+    def _run(self, snap):
         with tempfile.TemporaryDirectory() as d:
-            snap = dict(RefusedReadsBecomeUnknown.SNAP)
             p = pathlib.Path(d) / "snap.json"
             p.write_text(json.dumps(snap))
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 rc = pf.main(["--namespace", "vexa-dev", "--snapshot", str(p)])
-            out = buf.getvalue()
-        self.assertEqual(rc, 0, "a refused read must not be reported as a failed check")
+            return rc, buf.getvalue()
+
+    def test_main_reports_unknown_and_does_not_exit_1(self):
+        rc, out = self._run(dict(RefusedReadsBecomeUnknown.SNAP))
+        self.assertNotEqual(rc, 1, "a refused read must not be reported as a failed check")
         self.assertIn("????", out)
         self.assertIn("NOT EVALUATED", out)
         self.assertNotIn("Traceback", out)
+
+    def test_unevaluated_has_its_own_exit_code(self):
+        """4, not 0.
+
+        Sharing 0 with a clean run is what made "fails closed" untrue for the
+        rows the docs list: a namespace-scoped tenant got exit 0 with the node,
+        storage and version checks never run, and `install.sh` proceeded on it
+        with nothing said. 4 is not a failure — it says the answer is
+        incomplete, and it is the thing a caller can test.
+        """
+        rc, _ = self._run(dict(RefusedReadsBecomeUnknown.SNAP))
+        self.assertEqual(rc, 4)
+
+    def test_a_snapshot_that_was_fully_readable_still_exits_zero(self):
+        """The other side of it: no UNKNOWN, no FAIL -> 0, unchanged."""
+        snap = dict(RefusedReadsBecomeUnknown.SNAP)
+        snap["unreadable"] = {}
+        rc, out = self._run(snap)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("NOT EVALUATED", out)
 
 
 if __name__ == "__main__":

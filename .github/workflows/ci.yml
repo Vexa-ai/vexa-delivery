@@ -46,3 +46,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: make check-private-tokens
         run: make check-private-tokens
+  # Same shape, one floor down: `/install` promises the channel password is
+  # "read from the environment, never from argv", and for three call sites in
+  # kit/install.sh that was false. A named job so the promise reports on its
+  # own. Stdlib, reads only the tracked *.sh, needs nothing installed.
+  secret-argv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: make check-secret-argv
+        run: make check-secret-argv

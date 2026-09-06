@@ -1,9 +1,9 @@
 ---
 title: "Install"
-description: "Nothing running yet: five steps you run yourself, one command each — or one command for all of them."
+description: "Nothing running yet: five steps you run yourself — or one command for all of them."
 ---
 
-Each step is one command, and after them the software stays current on its own. (Already running Vexa? [Upgrade](upgrade) is your door.)
+Each step is one command — step 2 takes a chart render first — and after them the software stays current on its own. (Already running Vexa? [Upgrade](upgrade) is your door.)
 
 Your channel's onboarding mail carries what step 3 needs: the channel **name** (`acme-stable` in the examples below), your registry **account name**, your pull-only **credential**, age-encrypted, the channel public key **`channel.pub`**, and the **signature repository** the image signatures live in — see [the channel](channel). `channel.pub` is what every signature on this page is checked against; keep it, and pin it.
 
@@ -12,12 +12,12 @@ Your channel's onboarding mail carries what step 3 needs: the channel **name** (
 | | |
 |---|---|
 | Kubernetes ≥ 1.29 or OpenShift, `kubectl` access to a namespace | [per-cloud deltas](environments/kubernetes) |
-| 2 nodes × 4 vCPU / 8 GB, plus headroom per concurrent meeting bot — the bot requests 500m / 1Gi and its limit ships at 2 vCPU / 2560Mi | measured: p50 922Mi, max 1292Mi across 10 production bots |
+| 2 nodes × 4 vCPU / 8 GB, plus headroom per concurrent meeting bot — the bot pod **declares no requests or limits by design** and inherits your LimitRange defaults | measured: p50 922Mi, max 1292Mi across 10 production bots. Preflight sizes it against those figures (request 1Gi, limit 2560Mi); the pod itself carries none, so your LimitRange decides |
 | A default StorageClass | Postgres, MinIO, Redis volumes |
 | LoadBalancer Services or an ingress you manage | reaching the gateway |
 | Outbound reach to the channel registry, or your own mirror | your cluster pulls |
 
-[Preflight](preflight) checks four of those five rows in step 2 and fails closed, so you find out now rather than at first sync: the version floor (P9), the default StorageClass (P8), the route to the channel registry and a real pull by digest (P5, P7), and whether the delivered set fits your nodes, quotas and pod-security (P1, P2, P3, P4, P6). **The LoadBalancer/ingress row is yours** — no preflight check reads it, because how you expose the gateway is your cluster's business.
+[Preflight](preflight) checks three of those five rows in step 2 — the version floor (P9), the default StorageClass (P8), and whether the delivered set fits your nodes, quotas and pod-security (P1, P2, P3, P4, P6) — and fails closed on every one of them, so you find out now rather than at first sync. **Outbound reach** it reads statically from your NetworkPolicies (P5), which cannot prove a route; proving one, and a real pull by digest (P7), needs `--live-probes` and a namespace that already holds the pull secret, so that pass belongs after step 3. **The LoadBalancer/ingress row is yours** — no preflight check reads it, because how you expose the gateway is your cluster's business.
 
 ## What you open outbound
 
@@ -52,10 +52,16 @@ Replace `acme-stable` with the channel name in your onboarding mail. A bad signa
 ## Step 2 — Preflight
 
 ```bash
-python3 kit/preflight/vexa_preflight.py --namespace vexa-staging
+helm template vexa oci://channel.vexa.ai/vexa/channel/acme-stable/charts/vexa \
+  --namespace vexa-staging --values my-values.yaml > rendered.yaml
+
+python3 kit/preflight/vexa_preflight.py --namespace vexa-staging \
+  --manifests rendered.yaml
 ```
 
-Nine checks, fails closed, every finding names its remedy. See [Preflight](preflight).
+**`--manifests` is what makes P2 and P3 mean anything.** Without it the preflight sees only the bot profile and not one workload the channel delivers — so a chart container asking more than your LimitRange ceiling passes here and is refused at admission after a green install, which is what happened on 2026-09-06 to a 4Gi postgres under a 2560Mi ceiling. `my-values.yaml` is the same file step 3 takes (start from `kit/profiles/vexa/customer-values.example.yaml`), and a credentialed channel needs `helm registry login channel.vexa.ai` first. Step 3 renders the chart itself, so this render is only for running the preflight on its own.
+
+**Eight of the nine checks run here** — P1–P6, P8, P9 — and each names its remedy. P7 is the live pull-by-digest probe: it creates a pod and needs the namespace's image-pull Secret, which step 3 writes, so run it after the install with `--live-probes --pull-test-image <ref>`. A `FAIL` stops the install (exit 1). A check your credential is not allowed to run — listing nodes or StorageClasses from a namespace-scoped account — reports **NOT EVALUATED** and exits 4: nothing failed, and something was never looked at. See [Preflight](preflight).
 
 ## Step 3 — Install
 
@@ -72,9 +78,13 @@ export VEXA_CHANNEL_PASS=<the credential from your onboarding mail>
 
 **Given six digits on a call instead of a credential?** Pass `--claim-code <the six digits> --station <your-station>` in place of `--registry-user` and `VEXA_CHANNEL_PASS`: the installer fetches the credential over TLS and writes it straight into the cluster, so it never reaches your screen, your shell history or a file. The code is single-use and lives about fifteen minutes. On a cluster that is already installed, [`kit/claim.sh`](reference/kit-claim) does the same exchange on its own.
 
+**The call is scheduled with us, and the code is read to you on it.** There is nothing to try cold: a code exists only for the fifteen minutes after somebody says it aloud, and until then `--claim-code` has nothing to present. If the endpoint answers that there is no claim service there, that is the URL and not your code — the code is untouched and still good.
+
 Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster.
 
 **If your cluster already runs Argo CD or Kyverno**, say so with `--argocd` and `--kyverno`, which each take `auto` (the default), `adopt`, `install` or `skip`. `auto` looks before it writes: absent → it installs the pinned version; present at the pinned version → it **adopts** yours and applies nothing to it; present at another version → it **refuses and names the version**, before a single object is written. `skip` leaves that component entirely to you.
+
+`--argocd`, `--kyverno`, `--claim-code` and `--manifests` are in **kit v0.1.6 and later**. `bootstrap.sh` fetches `kit:latest`, so take the `git clone` above until your channel's `latest` is v0.1.6 or newer; on v0.1.5 those four flags exit 2.
 
 Four of those flags are the difference between an install that syncs and one that does not, so none of them is optional against a credentialed channel:
 
@@ -85,7 +95,7 @@ Four of those flags are the difference between an install that syncs and one tha
 | `--verifier-image` | turns the chart-side PreSync verify gate **on**. It is off unless you pass this, and it is the gate that enforces entry freshness, revocation and your contract before a sync. |
 | `--prod-pin <version>` | the production Application is **created either way**, parked at `UNPINNED` — a position that resolves to nothing, so it syncs nothing — until you set a pin. Moving that pin is your gate. |
 
-Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` for a self-signed test registry, `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift). (*Station bundle* here means the machinery chart Vexa publishes into your cluster; the `station-report.yaml` of step 5 is the return leg, travelling the other way.)
+Also: `--registry-ca <pem>` for a private CA, `--registry-insecure` when Argo CD does not trust the registry's certificate — a self-signed test rig, and **also a corporate-CA proxy-cache, where the 2026-09-06 rehearsal recorded it as required**: `--registry-ca` reaches Kyverno, but Argo CD has no CA-bundle path for OCI repos, so without this flag repo-server fails with `x509: certificate signed by unknown authority`. Then `--staging-ns`/`--prod-ns`, `--dry-run`. **No CLI access (OpenShift, shared clusters)?** Merge the signed station bundle chart into your config repo instead — see [OpenShift](environments/openshift). (*Station bundle* here means the machinery chart Vexa publishes into your cluster; the `station-report.yaml` of step 5 is the return leg, travelling the other way.)
 
 ## Step 4 — Smoke, with a human in a real meeting
 

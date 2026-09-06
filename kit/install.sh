@@ -247,6 +247,56 @@ apply() {
   if $DRY_RUN; then echo "--- would apply:"; redact_secrets; else kc apply -f -; fi
 }
 
+# THE CHANNEL PASSWORD NEVER REACHES A CHILD PROCESS'S ARGV.
+#
+# `kubectl create secret docker-registry --docker-password="$VEXA_CHANNEL_PASS"`
+# put it there three times: the Kyverno credential, the kubelet pull Secret and
+# the verifier's Secret. Argv is world-readable in /proc and in `ps` output for
+# the life of the process — on a shared jump host that IS the exposure — and two
+# of the three ran under `--dry-run` as well, inside the command #28 hardened so
+# that a render carries no credential. The kit already refused this shape
+# elsewhere and said why: `kit/claim.sh` § `vexa_claim_write_secret`.
+#
+# So the Secret is RENDERED here and applied from stdin, which is what
+# `/install` promises: "the password is read from the environment, never from
+# argv". The value moves shell variable -> printf (a bash BUILTIN: no exec, so
+# nothing appears in a process listing) -> pipe -> python's stdin -> base64 in
+# the manifest. It is never an argument to anything and never touches disk.
+#
+# The object is the one kubectl would have built: the same `auths` map, the same
+# three keys in the same order, `email` omitted when empty exactly as kubectl
+# omits it, and compact separators so the encoded blob matches Go's
+# json.Marshal. Checked against `kubectl create secret docker-registry
+# --dry-run=client -o yaml` on v1.34.1 with a password carrying a quote and a
+# backslash; the one difference left is Go's HTML-escaping of < > & inside a
+# string, which decodes to the same bytes.
+#
+# Under --dry-run `redact_secrets` replaces the whole .dockerconfigjson line,
+# because a base64 blob that decodes to a credential is a credential.
+render_registry_secret() {
+  local ns=$1 name=$2 blob
+  blob=$(printf '%s' "${VEXA_CHANNEL_PASS:-}" \
+    | VEXA_DR_SERVER="$REGISTRY" VEXA_DR_USER="$REGISTRY_USER" python3 -c '
+import base64, json, os, sys
+pw = sys.stdin.read()
+server, user = os.environ["VEXA_DR_SERVER"], os.environ["VEXA_DR_USER"]
+auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
+cfg = {"auths": {server: {"username": user, "password": pw, "auth": auth}}}
+sys.stdout.write(base64.b64encode(
+    json.dumps(cfg, separators=(",", ":")).encode()).decode())
+')
+  cat <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${name}
+  namespace: ${ns}
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: ${blob}
+EOF
+}
+
 # `apply >/dev/null` silences the one-line confirmation a REAL apply prints.
 # Under --dry-run it silenced the RENDER: the rehearsal's dry run emitted 0
 # ConfigMaps and 2 Secrets where a real run writes 2 contract ConfigMaps, 2
@@ -601,7 +651,11 @@ if [ -n "$CLAIM_CODE" ]; then
     echo "== claiming the channel credential from $CLAIM_EDGE (station $STATION)"
     # shellcheck source=claim.sh disable=SC1091
     source "$HERE/claim.sh"
-    vexa_claim_fetch "$CLAIM_CODE" "$CLAIM_EDGE" "$STATION" || exit 1
+    # The exit code is the claim's, not a flat 1: 3 means nothing answered at
+    # --claim-edge (a different problem, with a different fix, than a code the
+    # service refused). claim.sh's usage lists both.
+    CLAIM_RC=0; vexa_claim_fetch "$CLAIM_CODE" "$CLAIM_EDGE" "$STATION" || CLAIM_RC=$?
+    [ "$CLAIM_RC" -eq 0 ] || exit "$CLAIM_RC"
     REGISTRY_USER=$VEXA_CLAIM_USER
     VEXA_CHANNEL_PASS=$VEXA_CLAIM_PASS
     echo "   claimed; the code is now spent"
@@ -668,8 +722,24 @@ EOF
   [ -n "$PF_MANIFESTS" ] && PF_ARGS+=(--manifests "$PF_MANIFESTS")
   PF_ARGS+=(${KUBECONFIG_ARG[@]+"${KUBECONFIG_ARG[@]}"})
   echo "   vexa_preflight.py ${PF_ARGS[*]}"
-  python3 "$HERE/preflight/vexa_preflight.py" "${PF_ARGS[@]}" \
-    || { echo "preflight FAILED — fix the findings (or rerun with --skip-preflight to proceed anyway, on your own head)"; exit 1; }
+  # Exit 4 is NOT a failure: it means nothing failed and some check could not be
+  # evaluated, because this credential is not allowed to make the read. Treating
+  # it as failure would print `preflight FAILED` over checks that never ran —
+  # the exact lie #28 removed from the check itself. Treating it as success
+  # would hide it, which is what it did until now. So: name it and continue.
+  PF_RC=0
+  python3 "$HERE/preflight/vexa_preflight.py" "${PF_ARGS[@]}" || PF_RC=$?
+  case "$PF_RC" in
+    0) ;;
+    4) echo "   NOTE preflight found nothing wrong, and some checks were NOT EVALUATED (exit 4) —"
+       echo "        this credential could not make the reads they need. That is not a verdict on"
+       echo "        your cluster. To turn them into answers, run it once with a credential that"
+       echo "        can read cluster scope and keep the result:"
+       echo "          python3 kit/preflight/vexa_preflight.py --namespace $STAGING_NS --dump-snapshot snap.json"
+       echo "          python3 kit/preflight/vexa_preflight.py --namespace $STAGING_NS --snapshot snap.json"
+       echo "        The install continues.";;
+    *) echo "preflight FAILED — fix the findings (or rerun with --skip-preflight to proceed anyway, on your own head)"; exit 1;;
+  esac
 else
   echo "== preflight SKIPPED by flag"
 fi
@@ -814,9 +884,7 @@ if [ "$KYVERNO_ACTION" != skip ] && [ "$KYVERNO_ACTION" != pack ] && ! $DRY_RUN;
     # PR vexa-delivery-internal#31's receipt that the namespaced form is silently ignored is
     # withdrawn — it was not the cause of that session's 401s.
     echo "   giving kyverno a credential for the channel registry"
-    kc -n "$KYVERNO_NS" create secret docker-registry channel-registry-creds \
-      --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" \
-      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | kc apply -f - >/dev/null
+    render_registry_secret "$KYVERNO_NS" channel-registry-creds | kc apply -f - >/dev/null
     kc -n "$KYVERNO_NS" get deploy kyverno-admission-controller -o json \
       | jq --arg s "$KYVERNO_NS/channel-registry-creds" \
         '.spec.template.spec.containers[0].args |= (map(select(startswith("--imagePullSecrets=") | not)) + ["--imagePullSecrets=" + $s])' \
@@ -1004,9 +1072,7 @@ if [ -n "$REGISTRY_USER" ]; then
   echo "== image-pull credential for the kubelet, in each workload namespace"
   for ns in "$STAGING_NS" "$PROD_NS"; do
     ensure_namespace "$ns" quiet
-    kc -n "$ns" create secret docker-registry "$KUBELET_PULL_SECRET" \
-      --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" \
-      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply_quiet
+    render_registry_secret "$ns" "$KUBELET_PULL_SECRET" | apply_quiet
     echo "   $ns: $KUBELET_PULL_SECRET"
 
     # AND ATTACH IT TO THE SERVICE ACCOUNTS, which is not belt-and-braces.
@@ -1042,9 +1108,7 @@ if [ -n "$REGISTRY_USER" ] && $VERIFY_ENABLED; then
   # channel it needs its own credential in each target namespace
   VERIFY_REGISTRY_SECRET=vexa-channel-registry-cred
   for ns in "$STAGING_NS" "$PROD_NS"; do
-    kc -n "$ns" create secret docker-registry "$VERIFY_REGISTRY_SECRET" \
-      --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" \
-      --docker-password="$VEXA_CHANNEL_PASS" --dry-run=client -o yaml | apply_quiet
+    render_registry_secret "$ns" "$VERIFY_REGISTRY_SECRET" | apply_quiet
   done
 fi
 VERIFY_INSECURE=false
