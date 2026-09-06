@@ -21,7 +21,14 @@ Phases
   S4 flows tier         (--flows) the flows API serves its vocabulary — the
                         Minutes automation layer is loaded and hot-reloadable
   S5 receipt            verdict + a markdown receipt with chart revision, image
-                        digests, meeting id, segment count, operator identity
+                        digests, meeting id, segment count, operator identity.
+                        WRITTEN ON EVERY PATH, including a crashed one: a phase
+                        that raises becomes a FAIL finding and the run carries
+                        on to write the receipt. A failed smoke is a report, and
+                        it is the report that matters most — `vexa_validate`
+                        reads this file into the station report's
+                        `smoke_receipt`, and the ingest refuses a report that
+                        has none.
 
 Run on the operator's machine with kubectl access:
   python3 kit/smoke/vexa_smoke.py --namespace vexa-staging \
@@ -35,6 +42,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import pathlib
 import subprocess
 import sys
 import re
@@ -291,21 +299,69 @@ def s4_flows(a, findings: list) -> bool:
         pf.__exit__()
 
 
+# ── phases, and the rule that a phase which raises still reports ────────────
+
+def run_phase(phase: str, fn, findings: list) -> bool:
+    """Run one phase. A phase that RAISES is a phase that FAILED, and a failure
+    is a report.
+
+    On 2026-09-06, against a half-converged estate, S2 hit an unhandled
+    `RuntimeError: port-forward to svc/vexa-vexa-admin-api did not come up in
+    15s` and the whole run died there: no verdict, no receipt, and — because
+    `vexa_validate` reads the receipt smoke writes — a station report with no
+    `smoke_receipt` section, which the ingest then refused at S2 as incomplete.
+    The path that broke was the FAILURE-REPORTING path, which is the one the
+    RUNBOOK says matters more than the success one.
+
+    The README already promised `--non-interactive` "never fakes it: no
+    admitted bot -> honest FAIL". That guard covered S3 alone; S1 and S2 had
+    none, and they are the two a struggling subscriber hits first.
+
+    SystemExit is caught with everything else, deliberately: a phase that calls
+    sys.exit on a meeting URL it cannot parse is still a finding about this run,
+    and the run has already produced evidence worth writing down by then.
+    """
+    try:
+        return bool(fn())
+    except KeyboardInterrupt:
+        raise
+    except SystemExit as e:
+        findings.append((phase, "FAIL", f"stopped the phase: {e}"))
+        return False
+    except Exception as e:                                          # noqa: BLE001
+        detail = " ".join(str(e).split())[:400]
+        findings.append((phase, "FAIL",
+                         f"{type(e).__name__}: {detail} — reported, not raised; "
+                         f"the run continues so this receipt exists"))
+        return False
+
+
 # ── receipt ─────────────────────────────────────────────────────────────────
 
 def write_receipt(a, findings, receipt: dict) -> str:
+    """The receipt, and it is written whatever happened.
+
+    EVERY READ IN HERE IS OPTIONAL. This function runs after a FAILED run at
+    least as often as after a passing one, and a cluster that failed S1 is
+    exactly the cluster whose `get deploy` may also fail. A receipt missing its
+    image list still carries the verdict and the findings, which is the part
+    anybody reads; a receipt that was never written carries nothing, and
+    downstream the whole report is refused for its absence.
+    """
     now = datetime.datetime.now(datetime.timezone.utc)
-    app = ""
-    try:
-        r = kc(a, "get", "app", "-A", "-o",
-               "jsonpath={range .items[*]}{.metadata.name} {.status.sync.revision}{\"\\n\"}{end}",
-               check=False)
-        app = r.stdout.strip()
-    except Exception:
-        pass
-    images = kc(a, "get", "deploy", "-o",
-                "jsonpath={range .items[*]}{range .spec.template.spec.containers[*]}{.image}{\"\\n\"}{end}{end}").stdout
-    verdict = "PASS" if all(f[1] != "FAIL" for f in findings) else "FAIL"
+
+    def read(*args, absent="(could not be read)"):
+        try:
+            return kc(a, *args, check=False).stdout.strip() or ""
+        except Exception as e:                                      # noqa: BLE001
+            return f"{absent}: {type(e).__name__}: {e}"
+
+    app = read("get", "app", "-A", "-o",
+               "jsonpath={range .items[*]}{.metadata.name} {.status.sync.revision}{\"\\n\"}{end}")
+    images = read("get", "deploy", "-o",
+                  "jsonpath={range .items[*]}{range .spec.template.spec.containers[*]}"
+                  "{.image}{\"\\n\"}{end}{end}")
+    verdict = "PASS" if findings and all(f[1] != "FAIL" for f in findings) else "FAIL"
     path = f"smoke-receipt-{now.strftime('%Y%m%d-%H%M%S')}.md"
     lines = [f"# vexa-smoke receipt — {now.isoformat(timespec='seconds')}",
              f"\nVERDICT: **{verdict}**  ·  operator: {a.operator_email}  ·  namespace: {a.namespace}\n",
@@ -313,13 +369,13 @@ def write_receipt(a, findings, receipt: dict) -> str:
     lines += [f"| {p} | {res} | {msg} |" for p, res, msg in findings]
     if app:
         lines += ["\n## Subscription", "```", app, "```"]
-    lines += ["\n## Delivered images (digest-pinned)", "```", images.strip(), "```"]
+    lines += ["\n## Delivered images (digest-pinned)", "```", images.strip() or "(none)", "```"]
     if receipt.get("meeting"):
         m = receipt["meeting"]
         lines += [f"\n## Live meeting\n{m['platform']} `{m['native_id']}` — "
                   f"{receipt.get('segments', 0)} transcript segments captured, "
                   f"row id {m.get('row_id')}"]
-    open(path, "w").write("\n".join(lines) + "\n")
+    pathlib.Path(path).write_text("\n".join(lines) + "\n")
     return path
 
 
@@ -350,10 +406,10 @@ def main() -> int:
 
     findings: list = []
     receipt: dict = {}
-    ok = s1_delivered_set(a, findings)
-    ok = s2_control_plane(a, findings) and ok
-    ok = s3_live_meeting(a, findings, receipt) and ok
-    ok = s4_flows(a, findings) and ok
+    ok = run_phase("S1", lambda: s1_delivered_set(a, findings), findings)
+    ok = run_phase("S2", lambda: s2_control_plane(a, findings), findings) and ok
+    ok = run_phase("S3", lambda: s3_live_meeting(a, findings, receipt), findings) and ok
+    ok = run_phase("S4", lambda: s4_flows(a, findings), findings) and ok
     for p, res, msg in findings:
         print(f"[{res}] {p} · {msg}")
     path = write_receipt(a, findings, receipt)
