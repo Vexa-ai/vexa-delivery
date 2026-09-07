@@ -785,17 +785,44 @@ two Deployments to 1. For storage, restore the `filesystem` stanza and remount
 the retained PVC — it holds the complete pre-migration tree as a point-in-time
 image.
 
-### 5.2 The edge, and what is anonymous
+### 5.2 The edge: what is anonymous, and what each credential may read
 
-The registry cannot express "read this path without credentials" — htpasswd is
-all-or-nothing — so the split is enforced at the Caddy edge:
+The registry cannot express "read this path without credentials", and it cannot
+express "read only this path" either — htpasswd is all-or-nothing in both
+directions. So both splits are enforced at the Caddy edge:
 
 | Path | Access |
 |---|---|
 | Signature reads: `GET\|HEAD ^/v2/.+/signatures/(manifests\|blobs\|referrers)/[^/]+$` | **anonymous** — a stock zero-credential Kyverno must verify without a secret |
-| `/v2/`, `tags/list`, `_catalog`, everything else | subscriber credential — **enumeration stays behind credentials** |
-| Channel page: `GET\|HEAD ^/vexa/channel/[a-z0-9][a-z0-9-]{1,62}/?$` → `edge/page` | **both, and no `basic_auth` in Caddy** — the service reads `/v2/` back through this same edge with the CALLER's credential, so this table governs it; anonymous is answered with one line and a link, **never a 404** |
-| Mutating verbs | publisher credential only |
+| `GET /v2/` (the ping) | any subscriber credential |
+| `/v2/vexa/channel/<channel>/**` | the accounts **subscribed to that channel**, named at the edge. 403 for every other credential |
+| `/v2/vexa/stations/<station>/**` | the account **named `<station>`**. 403 for every other credential — the same comparison the submit path makes for writes |
+| `_catalog` | **publisher only; a subscriber gets 403.** Enumeration is refused, not filtered |
+| Anything else under `/v2/` | publisher only. A namespace added tomorrow arrives closed |
+| Channel page: `GET\|HEAD ^/vexa/channel/[a-z0-9][a-z0-9-]{1,62}/?$` → `edge/page` | **both, and no `basic_auth` in Caddy** — the service reads `/v2/` back through this same edge with the CALLER's credential, so this table governs it and a subscriber sees only the channels it may read; anonymous is answered with one line and a link, **never a 404** |
+| Mutating verbs | publisher credential only, except a station's own submit path |
+
+**Reads are scoped per subscriber, and that is newer than the rest of this
+section.** Until 2026-09-07 the edge scoped *writes* per station and left reads
+to fall through to the registry, so any subscriber credential could read every
+channel on the host, every mirrored image and every other station's evidence
+bundles. This table then promised only that *enumeration stays behind
+credentials*. It did not promise isolation between subscribers, and there was
+none — measured, not assumed: with one subscriber credential, `_catalog` 200,
+another channel's `current` 200, another station's `tags/list` 200. Receipt,
+with the account × path table before and after:
+[2026-09-07 · edge read scope](receipts/2026-09-07-edge-read-scope).
+
+The gate is **additive**. Caddy authenticates the account to decide scope and
+passes the caller's own `Authorization` upstream, so the registry still
+authenticates every request that gets through, on the same htpasswd as before.
+No password and no hash moved to make this work: what a credential is *worth*
+changed, what it *is* did not.
+
+**Signature reads stay anonymous on every channel** — they are verification
+material, not secrets, and fetching one requires already knowing the digest.
+Enumerating them does not: `…/signatures/tags/list` is an ordinary read and is
+scoped like every other.
 
 `referrers` is included so the modern cosign layout works the day we move to
 it. Those paths were found by **measuring the verifier's three requests in the
@@ -911,6 +938,18 @@ Special cases: `add publisher` also rewrites the edge's `PUBLISHER_BCRYPT`;
 station-write is deliberately manual — one `basic_auth` line in the Caddyfile
 plus one `SUB_<NAME>_BCRYPT` env entry — after which `add <name>` maintains
 it. **The publisher credential never leaves us.**
+
+**Since read scope (§ 5.2), the edge half comes FIRST for a new account.** A
+credential the edge has never heard of authenticates nowhere: `401` on every
+read, including the `GET /v2/` that `add` itself uses to prove a fresh
+credential before printing it — so the mint aborts, and it reports a broken
+rotation where the truth is an account with no read scope. Admit the account at
+the edge before minting it: one `SUB_<NAME>_BCRYPT` line in `$CHANNEL_ROOT/env`,
+one `basic_auth` line and one channel line in the read gate, `docker compose up
+-d --force-recreate`, then `add <name>`, which fills the real hash in. Rotating
+an account that already has those lines is unchanged and needs none of it.
+**An account that can read is a decision, not a default** — the same sentence
+this file already made about writing, for the same reason.
 
 Pull-only is proxy enforcement, and the security model does not rest on it:
 every artifact is signed and digest-pinned, and the subscriber verifies with a
