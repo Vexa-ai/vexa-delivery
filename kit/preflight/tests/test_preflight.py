@@ -113,6 +113,105 @@ class LimitRanges(unittest.TestCase):
         self.assertEqual(c.status, "FAIL")
         self.assertIn("above the LimitRange max", " ".join(c.findings))
 
+    # ---- 2026-09-07: the three quarters of admission the check did not read.
+    #
+    # The LimitRanger compares `max` and `min` against the REQUEST and the
+    # LIMIT, for every resource the LimitRange names. This check compared one of
+    # those four pairs, in one dimension, so cpu was declared and never checked
+    # against anything, and a request over the ceiling was invisible.
+
+    TENANT_LR = {                      # the tenant grant's own shape
+        "metadata": {"name": "vexa-dev-limits"},
+        "spec": {"limits": [{"type": "Container",
+                             "max": {"cpu": "8", "memory": "2560Mi"},
+                             "min": {"cpu": "5m", "memory": "16Mi"},
+                             "default": {"cpu": "1", "memory": "512Mi"},
+                             "defaultRequest": {"cpu": "10m", "memory": "64Mi"}}]},
+    }
+
+    def test_the_delivered_postgres_against_the_documented_ceiling(self):
+        """The exact refusal of 2026-09-07, predicted instead of observed."""
+        pg = {"requests": {"cpu": "200m", "memory": "512Mi"},
+              "limits": {"cpu": "4000m", "memory": "4Gi"}}
+        c = pf.check_limitranges({"limitranges": [self.TENANT_LR], "nodes": []},
+                                 [workload("postgres", kind="StatefulSet", resources=pg)])
+        self.assertEqual(c.status, "FAIL")
+        text = " ".join(c.findings)
+        self.assertIn("limits.memory 4Gi above the LimitRange max 2560Mi", text)
+        self.assertIn("maximum memory usage per Container is 2560Mi", text)
+
+    def test_a_request_over_the_max_fails_even_when_the_limit_fits(self):
+        lr = {"metadata": {"name": "caps"},
+              "spec": {"limits": [{"type": "Container", "max": {"memory": "256Mi"}}]}}
+        res = {"requests": {"cpu": "100m", "memory": "512Mi"},
+               "limits": {"cpu": "500m", "memory": "256Mi"}}
+        c = pf.check_limitranges({"limitranges": [lr], "nodes": []},
+                                 [workload("g", resources=res)])
+        self.assertEqual(c.status, "FAIL")
+        self.assertIn("requests.memory 512Mi above the LimitRange max 256Mi",
+                      " ".join(c.findings))
+
+    def test_cpu_is_compared_too(self):
+        res = {"requests": {"cpu": "100m", "memory": "256Mi"},
+               "limits": {"cpu": "16", "memory": "512Mi"}}
+        c = pf.check_limitranges({"limitranges": [self.TENANT_LR], "nodes": []},
+                                 [workload("greedy", resources=res)])
+        self.assertEqual(c.status, "FAIL")
+        self.assertIn("limits.cpu 16 above the LimitRange max 8", " ".join(c.findings))
+
+    def test_a_limit_below_the_min_fails(self):
+        res = {"requests": {"cpu": "10m", "memory": "20Mi"},
+               "limits": {"cpu": "100m", "memory": "8Mi"}}
+        c = pf.check_limitranges({"limitranges": [self.TENANT_LR], "nodes": []},
+                                 [workload("tiny", resources=res)])
+        self.assertEqual(c.status, "FAIL")
+        self.assertIn("limits.memory 8Mi below the LimitRange min 16Mi",
+                      " ".join(c.findings))
+
+    def test_a_pass_names_the_ceiling_it_compared_against(self):
+        """Positive evidence. A PASS that says only 'a LimitRange exists' cannot
+        be distinguished, an hour later, from a PASS taken against a ceiling
+        somebody has since lowered — which is exactly what happened on
+        2026-09-07, where the live max.memory was 8Gi at preflight time and
+        2560Mi by the time postgres was admitted."""
+        c = pf.check_limitranges({"limitranges": [self.TENANT_LR], "nodes": []},
+                                 [workload("gateway", resources=DECLARED)])
+        self.assertEqual(c.status, "PASS")
+        text = " ".join(c.findings)
+        self.assertIn("vexa-dev-limits", text)
+        self.assertIn("max.memory=2560Mi", text)
+        self.assertIn("max.cpu=8", text)
+
+
+class Quota(unittest.TestCase):
+    """P3 summed memory and nothing else, so a quota's `limits.cpu` — which the
+    tenant grant carries — bounded a total the check never computed."""
+
+    def quota(self, hard, used=None):
+        return {"metadata": {"name": "vexa-dev-quota"},
+                "status": {"hard": hard, "used": used or {}}}
+
+    def test_cpu_headroom_is_checked(self):
+        res = {"requests": {"cpu": "2", "memory": "256Mi"},
+               "limits": {"cpu": "8", "memory": "512Mi"}}
+        snap = {"resourcequotas": [self.quota({"limits.cpu": "4"})]}
+        c = pf.check_quota(snap, [workload("greedy", resources=res)])
+        self.assertEqual(c.status, "FAIL")
+        self.assertIn("limits.cpu", " ".join(c.findings))
+
+    def test_memory_headroom_still_checked_and_used_is_subtracted(self):
+        snap = {"resourcequotas": [self.quota({"limits.memory": "1Gi"},
+                                              {"limits.memory": "768Mi"})]}
+        c = pf.check_quota(snap, [workload("g", resources=DECLARED),
+                                  workload("h", resources=DECLARED)])
+        self.assertEqual(c.status, "FAIL")
+        self.assertIn("limits.memory", " ".join(c.findings))
+
+    def test_headroom_that_covers_it_passes(self):
+        snap = {"resourcequotas": [self.quota({"limits.memory": "8Gi", "limits.cpu": "16"})]}
+        c = pf.check_quota(snap, [workload("g", resources=DECLARED)])
+        self.assertEqual(c.status, "PASS")
+
 
 class PodSecuritySCC(unittest.TestCase):
     """openshift audit: the hardened workloads (hard-coded UID 1001) are the SCC-rejected ones."""

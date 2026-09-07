@@ -344,13 +344,55 @@ def _verdict_of(manifest: dict) -> str:
     return "PASS" if all(v == "PASS" for v in seen) else "REFUSED"
 
 
+def _release_of(manifest: dict) -> dict:
+    """The station report's own `release` block, reduced to the identity fields.
+
+    The report ALREADY carries what it is running — `entry_seq`, `entry_digest`,
+    `chart_version`, `chart_digest`, and `pin` where Argo was readable. Until
+    2026-09-07 the reducer read none of it: a bundle whose report said
+    `entry_seq: 5, chart_version: 0.12.36` was reduced to
+    `subscribed_position: unknown` and `entry_seq: null`, so `stale` could not
+    fire for it and the ledger held less than the bundle it had just stored.
+    """
+    rel = manifest.get("release") or {}
+    return {k: v for k, v in {
+        "entry_seq": rel.get("entry_seq"),
+        "entry_digest": rel.get("entry_digest"),
+        "chart_version": rel.get("chart_version"),
+        "chart_digest": rel.get("chart_digest"),
+        "pin": rel.get("pin"),
+    }.items() if v is not None}
+
+
 def _position_of(manifest: dict, values_text: str) -> str:
-    """What the station says it is following. `targetRevision` in the station's
-    own values is the honest source; absent that, we record `unknown` rather
-    than assume `*` — an assumed position is worse than a missing one."""
+    """What the station says it is following, read from what it actually sent.
+
+    Four sources, most specific first, and each one is something the station
+    ASSERTED rather than something we assumed:
+
+      1. `release.pin` — the Application's own position, read off the cluster by
+         the report generator. This is the answer when there is one.
+      2. `targetRevision` in the values the operator handed us with the bundle.
+      3. `release.chart_version` — the chart revision the subscription actually
+         resolved to. A station following `*` has no pin to state, and this is
+         the number `channel.yaml`'s `pins:` are written in, so it is directly
+         comparable with our intent.
+      4. `release.entry_seq`, spelled `seq N` so nobody reads a sequence as a
+         chart version.
+
+    Only when the report asserts none of those is it `unknown` — which stays the
+    honest value, never an assumed `*`.
+    """
+    rel = manifest.get("release") or {}
+    if rel.get("pin"):
+        return str(rel["pin"])
     m = re.search(r"targetRevision:\s*[\"']?([^\s\"']+)", values_text or "")
     if m:
         return m.group(1)
+    if rel.get("chart_version"):
+        return str(rel["chart_version"])
+    if isinstance(rel.get("entry_seq"), int):
+        return f"seq {rel['entry_seq']}"
     return manifest.get("position") or "unknown"
 
 
@@ -404,7 +446,25 @@ def record_ingest(root: pathlib.Path, *, channel: str, station: str, receipt: di
     # which entry it is running is telling us we do not know, and writing the
     # newest in its place would make `stale` unable to fire for exactly the
     # stations we are least sure about. `null` is the honest value.
+    #
+    # But the REPORT is the station saying it, not us assuming it: when the
+    # ingest receipt carries no sequence and `release.entry_seq` does, that is
+    # the station's own claim about which entry it is running and it belongs in
+    # the ledger. Reading neither is how a report asserting seq 5 was reduced to
+    # `entry_seq: null` on 2026-09-07.
+    release = _release_of(manifest)
     entry_seq = receipt.get("entry_seq")
+    if entry_seq is None:
+        entry_seq = release.get("entry_seq")
+    # THE CROSS-CHECK (vexa-delivery#47 item 2, the reducer's half). Two sources
+    # for one fact must be compared, not silently ranked. A disagreement means
+    # the bundle and the gate that accepted it describe different releases, and
+    # that is a finding about the submission rather than a number to pick from.
+    mismatch = []
+    for field in ("entry_seq", "entry_digest"):
+        theirs, ours = release.get(field), receipt.get(field)
+        if theirs is not None and ours is not None and theirs != ours:
+            mismatch.append(f"{field}: report says {theirs}, ingest receipt says {ours}")
     state.update({
         "schema_version": SCHEMA_VERSION,
         "station": station,
@@ -412,6 +472,9 @@ def record_ingest(root: pathlib.Path, *, channel: str, station: str, receipt: di
         "identity": _manifest_identity(manifest),
         "contract": manifest.get("contract") or state.get("contract"),
         "subscribed_position": _position_of(manifest, values_text),
+        # What the report says is RUNNING, kept beside what it says it FOLLOWS.
+        # They are different facts and the ledger held neither.
+        "release": release or state.get("release"),
         "last_receipt": {
             "entry_seq": entry_seq,
             "ts": receipt.get("ingested_at") or utcnow(),
@@ -421,7 +484,11 @@ def record_ingest(root: pathlib.Path, *, channel: str, station: str, receipt: di
             "path": str((rdir / "ingest-receipt.json").relative_to(sdir)),
         },
     })
+    if mismatch:
+        state["last_receipt"]["entry_mismatch"] = mismatch
     state["flags"] = derive_flags(state, channel_doc)
+    if mismatch and "entry-mismatch" not in state["flags"]:
+        state["flags"].append("entry-mismatch")
     write_yaml(sdir / "state.yaml", STATE_HEADER, state)
 
     sha = None

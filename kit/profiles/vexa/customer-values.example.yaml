@@ -13,3 +13,30 @@ secrets:
 global:
   imagePullSecrets: []                # e.g. [{name: your-registry-cred}]
   tolerations: []                     # your node taints, if any (preflight P1 names them)
+
+# THE DELIVERED SET FITS A 2560Mi PER-CONTAINER CEILING BY DEFAULT (2026-09-07).
+#
+# The chart asks `postgres.resources.limits.memory: 4Gi`. The documented project
+# shape — a pre-created OpenShift-style project whose LimitRange caps a
+# Container at 2560Mi, the figure sized for the meeting bot's 2Gi memory-backed
+# /dev/shm — REFUSES that pod:
+#
+#   pods "<release>-postgres-0" is forbidden: maximum memory usage per Container
+#   is 2560Mi, but limit is 4Gi
+#
+# and the estate comes up partly down, with the admin tier crash-looping behind
+# a database that was never admitted. That happened on 2026-09-07, after a green
+# install. postgres is the ONLY container in the chart above 2560Mi; everything
+# else asks 1Gi or less.
+#
+# So the shipped default fits the documented shape. This is a CEILING, not a
+# sizing recommendation: if your platform team can size the project to the
+# chart's own largest ask (kit/platform/render.sh computes it — 4Gi today),
+# raise this or delete the block and give the database the headroom. Preflight
+# P2 compares every declared request and limit against YOUR LimitRange and names
+# the object and the number, so either choice is checked before the first sync
+# instead of at admission.
+postgres:
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: 4000m, memory: 2Gi }

@@ -106,9 +106,20 @@ issued by a platform team you do not control.
 
   Then hand that same file to the preflight — `install.sh --manifests
   rendered.yaml`, or let the installer render it itself — and P2 compares every
-  delivered container against the ceiling before anything is installed. Without
-  it P2 sees only the bot profile, which is how a 4Gi postgres reached admission
-  with a green preflight behind it.
+  delivered container against the ceiling before anything is installed: every
+  request and every limit, memory and cpu, against `max` and `min`, naming the
+  object and the number. Without `--manifests` P2 sees only the bot profile,
+  which is how a 4Gi postgres reached admission with a green preflight behind
+  it.
+
+  **The other end of the same ask, since kit v0.1.7: the shipped profile fits
+  2560Mi.** `kit/profiles/vexa/customer-values.example.yaml` caps the delivered
+  postgres so a default install lands inside a project sized at the bot's floor
+  — that is the shape a pilot actually gets, and a partly-up estate is a worse
+  outcome than a smaller database. postgres is the only container in the chart
+  above 2560Mi. If your platform team *can* size the project to the chart's own
+  ask, do that and delete the cap: the two roads end in the same place, and P2
+  checks whichever one you took.
 - Spawned meeting bots inherit the LimitRange defaults today; first-class
   resource fields on spawned workloads are tracked upstream, and the LimitRange
   is the documented interim.

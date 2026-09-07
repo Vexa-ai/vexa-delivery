@@ -231,6 +231,56 @@ class IngestReducer(unittest.TestCase):
                                receipt=receipt(), manifest=manifest())
         self.assertIsNone(vs.load_yaml(pathlib.Path(out["path"]))["last_receipt"]["entry_seq"])
 
+    # ---- 2026-09-07: the report said seq 5 and the ledger wrote `unknown`.
+    #
+    # A station bundle whose report carried entry_seq 5, an entry digest, a
+    # chart version and a chart digest was reduced to
+    # `subscribed_position: unknown` / `entry_seq: null`. The reducer read the
+    # values file and a `position` key that appears in no schema, and never the
+    # release block the report actually carries.
+
+    def test_the_position_comes_from_the_reports_release_block(self):
+        m = manifest()
+        m["release"] = {"entry_seq": 5, "chart_version": "0.12.36",
+                        "entry_digest": "sha256:" + "1" * 64}
+        out = vs.record_ingest(self.root, channel="pilot-stable", station="pilot",
+                               receipt=receipt(), manifest=m)
+        state = vs.load_yaml(pathlib.Path(out["path"]))
+        self.assertEqual(state["subscribed_position"], "0.12.36")
+        self.assertEqual(state["last_receipt"]["entry_seq"], 5)
+        self.assertEqual(state["release"]["entry_digest"], "sha256:" + "1" * 64)
+
+    def test_a_pin_beats_the_resolved_revision(self):
+        m = manifest()
+        m["release"] = {"pin": "0.12.30", "chart_version": "0.12.36", "entry_seq": 5}
+        out = vs.record_ingest(self.root, channel="pilot-stable", station="pilot",
+                               receipt=receipt(), manifest=m)
+        self.assertEqual(vs.load_yaml(pathlib.Path(out["path"]))["subscribed_position"],
+                         "0.12.30")
+
+    def test_a_bare_sequence_is_spelled_as_one(self):
+        """`5` is not a chart version and must not read as one."""
+        m = manifest()
+        m["release"] = {"entry_seq": 5}
+        out = vs.record_ingest(self.root, channel="pilot-stable", station="pilot",
+                               receipt=receipt(), manifest=m)
+        self.assertEqual(vs.load_yaml(pathlib.Path(out["path"]))["subscribed_position"],
+                         "seq 5")
+
+    def test_report_and_receipt_disagreeing_is_a_flag_not_a_choice(self):
+        """vexa-delivery#47 item 2, the reducer's half: two sources for one fact
+        are compared, never silently ranked."""
+        m = manifest()
+        m["release"] = {"entry_seq": 5, "entry_digest": "sha256:" + "1" * 64}
+        out = vs.record_ingest(self.root, channel="pilot-stable", station="pilot",
+                               receipt=receipt(entry_seq=4), manifest=m)
+        state = vs.load_yaml(pathlib.Path(out["path"]))
+        self.assertIn("entry-mismatch", state["flags"])
+        self.assertIn("report says 5", " ".join(state["last_receipt"]["entry_mismatch"]))
+        # the gate's own number is kept; the report's is recorded beside it
+        self.assertEqual(state["last_receipt"]["entry_seq"], 4)
+        self.assertEqual(state["release"]["entry_seq"], 5)
+
     def test_a_failed_phase_is_a_contract_breach(self):
         out = vs.record_ingest(self.root, channel="pilot-stable", station="pilot",
                                receipt=receipt(), manifest=manifest(verdicts=("PASS", "FAIL")))

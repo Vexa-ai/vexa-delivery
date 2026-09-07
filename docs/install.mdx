@@ -61,6 +61,8 @@ python3 kit/preflight/vexa_preflight.py --namespace vexa-staging \
 
 **`--manifests` is what makes P2 and P3 mean anything.** Without it the preflight sees only the bot profile and not one workload the channel delivers — so a chart container asking more than your LimitRange ceiling passes here and is refused at admission after a green install, which is what happened on 2026-09-06 to a 4Gi postgres under a 2560Mi ceiling. `my-values.yaml` is the same file step 3 takes (start from `kit/profiles/vexa/customer-values.example.yaml`), and a credentialed channel needs `helm registry login channel.vexa.ai` first. Step 3 renders the chart itself, so this render is only for running the preflight on its own.
 
+**P2 compares every declared request and limit against your LimitRange's `max` and `min`, in memory and cpu**, names the object and the number admission will refuse it on, and prints the ceiling it compared against — so a pass records what was true when it was taken. **P4 reads the effective admission**: the PSA enforce level and the SCC annotations your namespace actually carries. A namespace that enforces neither is **NOT EVALUATED**, never a pass — nothing about hardened namespaces can be verified where nothing is enforced.
+
 **Eight of the nine checks run here** — P1–P6, P8, P9 — and each names its remedy. P7 is the live pull-by-digest probe: it creates a pod and needs the namespace's image-pull Secret, which step 3 writes, so run it after the install with `--live-probes --pull-test-image <ref>`. A `FAIL` stops the install (exit 1). A check your credential is not allowed to run — listing nodes or StorageClasses from a namespace-scoped account — reports **NOT EVALUATED** and exits 4: nothing failed, and something was never looked at. See [Preflight](preflight).
 
 ## Step 3 — Install
@@ -80,7 +82,9 @@ export VEXA_CHANNEL_PASS=<the credential from your onboarding mail>
 
 **The call is scheduled with us, and the code is read to you on it.** There is nothing to try cold: a code exists only for the fifteen minutes after somebody says it aloud, and until then `--claim-code` has nothing to present. If the endpoint answers that there is no claim service there, that is the URL and not your code — the code is untouched and still good.
 
-Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster.
+Installs pinned Argo CD, pinned Kyverno, your admission policy and the subscription. `my-values.yaml` is yours (start from `kit/profiles/vexa/customer-values.example.yaml`), applied over every release and never leaving your cluster. Its shipped default keeps every delivered container under a **2560Mi** per-container ceiling — the documented project shape — by capping the delivered database, which the chart otherwise asks 4Gi for; delete that block if your LimitRange clears the chart's own largest ask.
+
+**Namespaces are create-only.** If `--staging-ns`/`--prod-ns` already exist — the normal shape where a platform team pre-creates the project with its PSA labels, SCC annotations and rolebindings — the installer says so and writes nothing to them. It creates a namespace only when it is the thing creating it, so a security grant it does not own is never merged over or pruned.
 
 **If your cluster already runs Argo CD or Kyverno**, say so with `--argocd` and `--kyverno`, which each take `auto` (the default), `adopt`, `install` or `skip`. `auto` looks before it writes: absent → it installs the pinned version; present at the pinned version → it **adopts** yours and applies nothing to it; present at another version → it **refuses and names the version**, before a single object is written. `skip` leaves that component entirely to you.
 
