@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The claim edge, reachable from a CONTAINERISED Caddy. Add this file when Caddy
+# runs inside the registry stack's compose project — as it does on the live
+# channel host — and proxy to the alias it declares:
+#
+#     CLAIM_EDGE_IMAGE=… CHANNEL_ROOT=… \
+#       docker compose -f edge/claim/compose.yaml \
+#                      -f edge/claim/compose.caddy-container.yaml up -d
+#
+#     handle /claim {
+#         reverse_proxy claim-edge:8088
+#     }
+#
+# WHY THIS FILE EXISTS. compose.yaml publishes the service on 127.0.0.1:8088,
+# and the deploy note used to say `reverse_proxy 127.0.0.1:8088`. That is right
+# only where Caddy runs on the host. Where Caddy is a container, 127.0.0.1 in
+# its Caddyfile is the CADDY CONTAINER'S loopback — the publish on the host's is
+# unreachable from it. The wrong shape is silent: `caddy validate` passes, Caddy
+# starts, and only a claim fails, with a 502 the subscriber sees during the call
+# where somebody is reading six digits aloud (2026-09-06 receipt, finding 2).
+# The live edge carried this shape as a host-local override file for a day;
+# this is that file, in the repository, so the next deploy does not rediscover
+# it.
+#
+# The service joins the registry stack's network under the alias `claim-edge`
+# AND keeps its own project network, so the base file's loopback publish still
+# works for a host-side `curl 127.0.0.1:8088/healthz`. Nothing else changes:
+# the image, the mounts, the read-only root and the dropped capabilities are
+# the base file's.
+#
+# The network is declared EXTERNAL and named, never created here: it belongs
+# to the registry's compose project, and `up` on this file must never create a
+# second network that Caddy is not on. A wrong name fails loudly at `up`
+# ("network … declared as external, but could not be found"), which is the
+# opposite of the defect this file fixes. The default is what compose names
+# the implicit network of a project called `channel`; confirm the live one with
+#
+#     docker inspect <caddy container> \
+#       --format '{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}'
+#
+# and set CHANNEL_STACK_NETWORK if it differs.
+
+services:
+  claim-edge:
+    networks:
+      default: {}
+      channel-stack:
+        aliases:
+          - claim-edge
+
+networks:
+  channel-stack:
+    external: true
+    name: ${CHANNEL_STACK_NETWORK:-channel_default}

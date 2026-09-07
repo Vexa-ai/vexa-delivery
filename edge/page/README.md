@@ -4,9 +4,12 @@
 page instead of `404 page not found`.
 
 **Deployed 2026-09-06** on the live channel edge:
-[receipt](/receipts/2026-09-06-edge-claim-and-channel-page). [§ Deploy](#deploy)
-is what was done, with one correction marked **⚠** where the note as written
-would have failed.
+[receipt](/receipts/2026-09-06-edge-claim-and-channel-page). That deploy found
+the note as written routed Caddy to a loopback that was not the host's; the
+containerised-Caddy shape now ships as a compose override and the service proves
+its own public route with `--probe`, both shown against a throwaway rig:
+[receipt](/receipts/2026-09-07-edge-deploy-defects-rig). [§ Deploy](#deploy) is
+the corrected note.
 
 | | |
 |---|---|
@@ -127,15 +130,30 @@ laptop. The image is two Python files; the build context is this directory only.
 docker build -t <registry>/vexa/page-edge:<tag> edge/page
 ```
 
-**2 · Start it.** `PAGE_EDGE_IMAGE` must be the digest, not the tag.
-`CHANNEL_EDGE_URL` is the edge's **own** origin — see
+**2 · Start it, in the shape Caddy has.** `PAGE_EDGE_IMAGE` must be the digest,
+not the tag. `CHANNEL_EDGE_URL` is the edge's **own** origin — see
 [`config/channel.example.env`](../../config/channel.example.env).
 
 ```bash
+# Caddy is a CONTAINER in the registry stack's compose project — the live edge.
+# The override joins that project's network under the alias `page-edge`.
+PAGE_EDGE_IMAGE=<ref>@sha256:… docker compose \
+  -f edge/page/compose.yaml -f edge/page/compose.caddy-container.yaml up -d
+
+# Caddy runs ON THE HOST: the base file alone; Caddy reaches 127.0.0.1:8089.
 PAGE_EDGE_IMAGE=<ref>@sha256:… docker compose -f edge/page/compose.yaml up -d
+
+# Either way:
 docker compose -f edge/page/compose.yaml exec page-edge \
   python3 /app/page_edge.py --check
 ```
+
+[`compose.caddy-container.yaml`](compose.caddy-container.yaml) attaches the
+service to the stack's network and changes nothing else; the network name
+defaults to `channel_default` and is set with `CHANNEL_STACK_NETWORK` when the
+live one differs — a wrong name fails loudly at `up`. On 2026-09-06 the note
+said `reverse_proxy 127.0.0.1:8089` and Caddy was a container, whose loopback is
+its own: the config validated, Caddy started, and only the page failed.
 
 If the edge's public name does not resolve to the host from inside it, set
 `CHANNEL_EDGE_HOST` to that name and point `CHANNEL_EDGE_URL` at the address:
@@ -149,20 +167,34 @@ must be answered rather than refused:
 ```caddyfile
 @channel_page path_regexp chanpage ^/vexa/channel/[a-z0-9][a-z0-9-]{1,62}/?$
 handle @channel_page {
-    reverse_proxy 127.0.0.1:8089
+    reverse_proxy page-edge:8089       # Caddy in a container: the compose alias
+    # reverse_proxy 127.0.0.1:8089     # Caddy on the host: the loopback publish
 }
 ```
-
-> **⚠ `127.0.0.1` only if Caddy runs on the host.** Where Caddy is itself a
-> container — as it is on the live edge — that loopback is the Caddy container's
-> own and the publish above is unreachable from it. Attach this service to the
-> registry stack's network and proxy to its alias (`reverse_proxy
-> page-edge:8089`).
 
 Order matters: this stanza must not shadow `/v2/…`, and the regexp above cannot
 — `/v2/` is a different prefix, and the pattern admits exactly one path segment
 after `/vexa/channel/`. Caddy passes the `Authorization` header through by
 default; nothing needs to be added for it, and nothing may strip it.
+
+**Then prove it from inside the service:**
+
+```bash
+docker compose -f edge/page/compose.yaml exec page-edge \
+  python3 /app/page_edge.py --probe
+```
+
+Two anonymous `GET`s through the public edge, for a channel that need not
+exist — an anonymous request makes no upstream call, so this costs the registry
+nothing and needs no credential. The URL defaults to `PAGE_UPSTREAM`, which *is*
+the edge's own origin. What it says:
+
+| Answer | Verdict |
+|---|---|
+| `200` with this service's one line, and `?signin=1` answers this service's `401` | **OK** |
+| `404` — the registry's `page not found` | no route reaches this service |
+| `502` / `503` / `504` | the stanza points at a loopback that is not this host's — Caddy is a container |
+| `401` on the **bare** path | the route carries a `basic_auth` it must not |
 
 **4 · Add the row to RUNBOOK § 5.2's table** — done in the change that added
 this directory, before the route existed, so the table describes the edge as it

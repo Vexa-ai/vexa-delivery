@@ -10,6 +10,7 @@ this repository already skips bcrypt hashing.
 
 import datetime
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -144,6 +145,32 @@ class Park(unittest.TestCase):
         self.park("123456")
         mode = vc.park_path(self.spool, "pilot").stat().st_mode
         self.assertFalse(mode & 0o077, oct(mode))
+
+    @unittest.skipIf(os.geteuid() == 0, "root can read anything")
+    def test_a_park_this_process_cannot_read_is_our_error_not_a_refusal(self):
+        # A park delivered by `scp` as root into a spool owned by 65532 exists
+        # and cannot be opened by the service (2026-09-06 receipt, finding 4).
+        # That is OUR misconfiguration: it must be a ClaimError — the 503 path,
+        # an `error:` row for the operator — and never a refusal that spends the
+        # subscriber's attempt, and never the bare PermissionError that used to
+        # drop the connection with a traceback and no row anywhere.
+        self.park("123456")
+        park = vc.park_path(self.spool, "pilot")
+        park.chmod(0)
+        self.addCleanup(park.chmod, 0o600)
+        with self.assertRaises(vc.ClaimError) as caught:
+            vc.redeem(self.spool, station="pilot", code="123456",
+                      decrypt=decrypt_ok, now=at(1))
+        self.assertNotIsInstance(caught.exception, vc.ClaimRefused)
+        self.assertIn("owner", str(caught.exception))
+        self.assertIn("chown", str(caught.exception))
+        # The park survives, no state was written, and the deploy-time check
+        # names exactly this file.
+        self.assertTrue(park.exists())
+        self.assertFalse(list(self.spool.glob("*.state.json")))
+        self.assertEqual(vc.unreadable_parks(self.spool), [park])
+        park.chmod(0o600)
+        self.assertEqual(vc.unreadable_parks(self.spool), [])
 
     def test_claim_returns_the_credential_once(self):
         self.park("123456")

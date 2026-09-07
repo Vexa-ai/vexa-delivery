@@ -11,21 +11,58 @@ machine takes it, so this runs in CI where the binary is absent. The one real
 envelope is proved in test_claim.py.
 """
 
+import contextlib
 import datetime
+import io
 import json
+import os
 import pathlib
+import socket
 import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import claim_edge as ce  # noqa: E402
 import vexa_claim as vc  # noqa: E402
+
+
+def stub_server(status, body=b"", headers=None):
+    """Something that is NOT the claim service, answering on a real socket:
+    the Caddy write gate (401), a registry's 404, a proxy with a dead upstream
+    (502), a captive portal (200), a redirect."""
+
+    class Stub(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.send_response(status)
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = do_POST  # noqa: N815
+
+        def log_message(self, *a):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.02}, daemon=True).start()
+    return server
+
+
+def closed_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 ARMOR = "-----BEGIN AGE ENCRYPTED FILE-----\nfixture\n-----END AGE ENCRYPTED FILE-----\n"
 # The needle. A leak is a test failure rather than something a reviewer has to
@@ -172,6 +209,120 @@ class EdgeCase(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(body, ce.REFUSED_BODY)
         self.assertTrue(vc.park_path(self.spool, "pilot").exists())
+
+    @unittest.skipIf(os.geteuid() == 0, "root can read anything")
+    def test_a_park_this_uid_cannot_read_is_503_and_costs_no_attempt(self):
+        # The live edge's first park: `scp` as root into a spool owned by
+        # 65532, `root:root 0600`, unreadable to `USER 65532` (2026-09-06
+        # receipt, finding 4). On the wire it must be the same answer as a park
+        # sealed to a rotated key — ours to fix, theirs to retry — and in the
+        # log it must be a row that says which. It used to be neither: the
+        # PermissionError escaped the handler, the connection dropped, and Caddy
+        # turned that into a 502 with no row anywhere.
+        self.park("123456")
+        park = vc.park_path(self.spool, "pilot")
+        park.chmod(0)
+        # The park is redeemed — and deleted — at the end of this test.
+        self.addCleanup(lambda: park.exists() and park.chmod(0o600))
+        status, body = self.post({"code": "123456", "station": "pilot"})
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body), {"error": "unavailable"})
+        self.assertNotIn(NEEDLE.encode(), body)
+        self.assertTrue(park.exists())
+        self.assertFalse(list(self.spool.glob("*.state.json")))
+        (row,) = self.attempts()
+        self.assertEqual(row["station"], "pilot")
+        self.assertTrue(row["outcome"].startswith("error:"), row["outcome"])
+        self.assertIn("owner", row["outcome"])
+        self.assertNotIn("123456", row["outcome"])
+        # ...and the right code, once the owner is fixed, still works: the
+        # attempt above cost nothing.
+        park.chmod(0o600)
+        status, body = self.post({"code": "123456", "station": "pilot"})
+        self.assertEqual(status, 200)
+
+    # ------------------------------------------------------------------ probe
+
+    def stub(self, status, body=b"", headers=None) -> str:
+        server = stub_server(status, body, headers)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}/claim"
+
+    def test_probe_ok_when_the_route_reaches_this_spool(self):
+        ok, lines = ce.probe(self.config, self.base + "/claim")
+        self.assertTrue(ok, lines)
+        self.assertIn("probe OK", lines[0])
+        # One row, under a station no real station has, refused as malformed:
+        # the probe carried no code, so nothing was compared and nothing spent.
+        (row,) = self.attempts()
+        self.assertTrue(row["station"].startswith(ce.PROBE_STATION_PREFIX))
+        self.assertEqual(row["outcome"], vc.REFUSAL_MALFORMED)
+        self.assertIsNone(row["park_id"])
+        self.assertIn(row["station"], lines[0])
+        self.assertIn("127.0.0.1", lines[1])
+
+    def test_probe_never_touches_a_real_park(self):
+        record = self.park("123456")
+        ok, _ = ce.probe(self.config, self.base + "/claim")
+        self.assertTrue(ok)
+        self.assertTrue(vc.park_path(self.spool, "pilot").exists())
+        self.assertFalse(
+            vc.state_path(self.spool, "pilot", record["park_id"]).exists())
+        self.assertEqual([a for a in self.attempts() if a["station"] == "pilot"], [])
+
+    def test_probe_tells_this_service_from_another_one(self):
+        # A 403 with the right body proves A claim service answered. The row in
+        # THIS spool is what proves it was this one, through this route.
+        other = FixtureConfig(pathlib.Path(tempfile.mkdtemp(prefix="vexa-other-")))
+        ok, lines = ce.probe(other, self.base + "/claim")
+        self.assertFalse(ok)
+        self.assertIn("not in this spool", lines[0])
+
+    def test_probe_names_the_write_gate(self):
+        # 2026-09-06, finding 3: the stanza below `@write` and every claim a
+        # 401. A MISSING stanza is the same 401 — the gate matches POST on every
+        # path — so the verdict names both.
+        url = self.stub(401, b"", {"WWW-Authenticate": 'Basic realm="Vexa channel registry"'})
+        ok, lines = ce.probe(self.config, url)
+        self.assertFalse(ok)
+        self.assertIn("401", lines[0])
+        self.assertIn("write gate", lines[0])
+        self.assertIn("missing or sits below", lines[1])
+        self.assertIn("ABOVE", lines[1])
+        self.assertEqual(self.attempts(), [])
+
+    def test_probe_names_a_missing_route(self):
+        ok, lines = ce.probe(self.config, self.stub(404, b"page not found\n"))
+        self.assertFalse(ok)
+        self.assertIn("no route", lines[0])
+
+    def test_probe_names_a_loopback_that_is_not_this_hosts(self):
+        # 2026-09-06, finding 2: `reverse_proxy 127.0.0.1:8088` from a Caddy
+        # that is a container. Validates, starts, 502 on the call.
+        ok, lines = ce.probe(self.config, self.stub(502))
+        self.assertFalse(ok)
+        self.assertIn("cannot reach this service", lines[0])
+        self.assertIn("127.0.0.1:8088", lines[1])
+        self.assertIn("compose.caddy-container.yaml", lines[1])
+
+    def test_probe_refuses_a_200(self):
+        ok, lines = ce.probe(self.config, self.stub(200, b"<html>welcome</html>"))
+        self.assertFalse(ok)
+        self.assertIn("something other than this service", lines[0])
+
+    def test_probe_does_not_follow_a_redirect(self):
+        url = self.stub(302, b"", {"Location": "http://sso.example.invalid/login"})
+        ok, lines = ce.probe(self.config, url)
+        self.assertFalse(ok)
+        self.assertIn("redirected", lines[0])
+        self.assertIn("sso.example.invalid", lines[0])
+
+    def test_probe_reports_nothing_answering(self):
+        ok, lines = ce.probe(self.config, f"http://127.0.0.1:{closed_port()}/claim",
+                             timeout=2)
+        self.assertFalse(ok)
+        self.assertIn("nothing answered", lines[0])
 
     # ------------------------------------------------------------ rate limits
 
@@ -439,6 +590,86 @@ class EdgeCase(unittest.TestCase):
         with self.assertRaises(vc.ClaimError) as caught:
             config.check()
         self.assertIn("readable", str(caught.exception))
+
+
+class CheckCase(unittest.TestCase):
+    """`--check` and `--probe` as the deploy runs them: through `main`, from
+    the environment, with `age` stubbed present so this runs in CI too."""
+
+    def setUp(self):
+        root = pathlib.Path(tempfile.mkdtemp(prefix="vexa-check-"))
+        self.spool = root / "spool"
+        self.spool.mkdir()
+        self.identity = root / "edge.key"
+        self.identity.write_text("AGE-SECRET-KEY-NOT-A-REAL-KEY\n")
+        self.identity.chmod(0o600)
+        self.env = {"CLAIM_SPOOL": str(self.spool), "CLAIM_IDENTITY": str(self.identity)}
+        patcher = unittest.mock.patch.object(vc, "have_age", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def main(self, argv, env=None):
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.dict(os.environ, env or self.env, clear=False), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            if not (env or {}).get("CLAIM_PUBLIC_URL"):
+                os.environ.pop("CLAIM_PUBLIC_URL", None)
+            rc = ce.main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def park(self, station="pilot"):
+        record = vc.build_park(station=station, account="pilot", code="123456",
+                               ciphertext=ARMOR, parked_by="t", edge="x")
+        return vc.write_park(self.spool, record)
+
+    def test_a_clean_spool_checks_clean(self):
+        self.assertEqual(ce.Config.from_env(self.env).check(), [])
+        rc, out, _ = self.main(["--check"])
+        self.assertEqual(rc, 0)
+        self.assertIn("config OK", out)
+
+    @unittest.skipIf(os.geteuid() == 0, "root can write anywhere")
+    def test_an_unwritable_spool_refuses(self):
+        # The attempt counter and the attempts log live in the spool. Unwritable,
+        # the five-attempt burn cannot be recorded — and before this check the
+        # first attempt was a dropped connection, not a refusal at deploy time.
+        self.spool.chmod(0o500)
+        self.addCleanup(self.spool.chmod, 0o700)
+        with self.assertRaises(vc.ClaimError) as caught:
+            ce.Config.from_env(self.env).check()
+        self.assertIn("not writable", str(caught.exception))
+        self.assertIn("chown", str(caught.exception))
+        rc, _, err = self.main(["--check"])
+        self.assertEqual(rc, 2)
+        self.assertIn("not writable", err)
+
+    @unittest.skipIf(os.geteuid() == 0, "root can read anything")
+    def test_a_park_this_uid_cannot_read_is_named_and_check_refuses(self):
+        park = self.park()
+        park.chmod(0)
+        self.addCleanup(park.chmod, 0o600)
+        self.assertEqual(ce.Config.from_env(self.env).check(), [park])
+        rc, _, err = self.main(["--check"])
+        self.assertEqual(rc, 2)
+        self.assertIn("pilot.park.json", err)
+        self.assertIn("chown", err)
+        # Readable again: clean.
+        park.chmod(0o600)
+        self.assertEqual(self.main(["--check"])[0], 0)
+
+    def test_the_probe_verb_needs_a_url(self):
+        rc, _, err = self.main(["--probe"])
+        self.assertEqual(rc, 2)
+        self.assertIn("CLAIM_PUBLIC_URL", err)
+
+    def test_the_probe_verb_takes_its_url_from_the_environment(self):
+        # No service behind it: the verdict is "nothing answered", exit 1, and
+        # the URL it judged is the one from the environment.
+        url = f"http://127.0.0.1:{closed_port()}/claim"
+        rc, _, err = self.main(["--probe"], {**self.env, "CLAIM_PUBLIC_URL": url})
+        self.assertEqual(rc, 1)
+        self.assertIn(url, err)
+        self.assertIn("nothing answered", err)
 
 
 if __name__ == "__main__":

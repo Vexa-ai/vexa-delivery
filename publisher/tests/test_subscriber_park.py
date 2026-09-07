@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,6 +29,46 @@ import vexa_stations as vst  # noqa: E402
 
 ARMOR_HEAD = "-----BEGIN AGE ENCRYPTED FILE-----"
 PASSWORD = "not-a-real-password"
+ARMOR = f"{ARMOR_HEAD}\nnot-a-real-envelope\n-----END AGE ENCRYPTED FILE-----\n"
+
+# Stand-ins for the two commands the scp transport runs on the edge host. Each
+# logs its argv to $STUB_LOG, so a test can assert on what would have run and
+# in which order; `scp` also lands the file in $STUB_SCP_DEST so the copy is
+# observable. Answers are steered by environment variables the tests set.
+SSH_STUB = """#!/usr/bin/env python3
+import os, sys
+with open(os.environ["STUB_LOG"], "a") as fh:
+    fh.write("ssh " + " ".join(sys.argv[1:]) + "\\n")
+rc = int(os.environ.get("STUB_SSH_RC", "0"))
+if rc:
+    sys.stderr.write("ssh: connect to host edge port 22: Connection refused\\n")
+    sys.exit(rc)
+command = sys.argv[-1]
+if "stat -c" in command:
+    # The remote shell runs `test -d P && stat ... || echo no-such-directory`,
+    # which exits 0 either way; a missing spool is the sentinel on stdout.
+    if os.environ.get("STUB_SSH_NO_DIR"):
+        sys.stdout.write("no-such-directory\\n")
+        sys.exit(0)
+    sys.stdout.write(os.environ.get("STUB_SSH_STAT", "65532:65532") + "\\n")
+    sys.exit(0)
+if "chown" in command:
+    rc = int(os.environ.get("STUB_SSH_CHOWN_RC", "0"))
+    if rc:
+        sys.stderr.write("chown: changing ownership: Operation not permitted\\n")
+    sys.exit(rc)
+sys.exit(0)
+"""
+SCP_STUB = """#!/usr/bin/env python3
+import os, shutil, sys
+with open(os.environ["STUB_LOG"], "a") as fh:
+    fh.write("scp " + " ".join(sys.argv[1:]) + "\\n")
+src, target = sys.argv[-2], sys.argv[-1]
+dest = os.environ.get("STUB_SCP_DEST")
+if dest:
+    shutil.copy2(src, os.path.join(dest, os.path.basename(target)))
+sys.exit(int(os.environ.get("STUB_SCP_RC", "0")))
+"""
 
 
 def new_ledger():
@@ -256,6 +297,204 @@ class ParkEndToEnd(unittest.TestCase):
             decrypt=lambda a: vc.age_decrypt(str(self.dir / "edge.key"), a))
         self.assertEqual(out, {"station": "pilot", "username": "pilot",
                                "password": PASSWORD})
+
+
+class SshTransport(unittest.TestCase):
+    """The scp leg, against stub `ssh` and `scp`: what runs on the edge host
+    BEFORE the mint, and what runs AFTER the copy.
+
+    The park is copied as the SSH user — root on the standalone host — and
+    landed `root:root 0600` in a spool owned by 65532, unreadable to the
+    service (2026-09-06 receipt, finding 4). Two things close that: the spool's
+    owner is read before anything is rotated, and the file is handed to that
+    owner before the code is printed.
+    """
+
+    TARGET = "root@edge:/srv/channel/claims"
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-ssh-"))
+        bin_dir = self.dir / "bin"
+        bin_dir.mkdir()
+        for name, text in (("ssh", SSH_STUB), ("scp", SCP_STUB)):
+            (bin_dir / name).write_text(text)
+            (bin_dir / name).chmod(0o755)
+        self.log = self.dir / "calls.log"
+        self.remote = self.dir / "remote"
+        self.remote.mkdir()
+        self.saved = dict(os.environ)
+        for key in ("CHANNEL_CLAIM_EDGE", "CHANNEL_CLAIM_EDGE_RECIPIENT",
+                    "CHANNEL_CLAIM_SPOOL", "CHANNEL_CLAIM_SPOOL_SSH",
+                    "VEXA_STATIONS_DIR", "STUB_SSH_RC", "STUB_SSH_STAT",
+                    "STUB_SSH_NO_DIR", "STUB_SSH_CHOWN_RC", "STUB_SCP_RC"):
+            os.environ.pop(key, None)
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+        os.environ["STUB_LOG"] = str(self.log)
+        os.environ["STUB_SCP_DEST"] = str(self.remote)
+        self.ledger = new_ledger()
+        self.recipients = self.dir / "edge.recipients"
+        self.recipients.write_text(
+            "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p\n")
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self.saved)
+
+    def calls(self):
+        return self.log.read_text().splitlines() if self.log.is_file() else []
+
+    def ok_args(self, **kw):
+        base = dict(edge="https://channel.example/claim",
+                    edge_recipient=str(self.recipients), park_out=None,
+                    park_ssh=self.TARGET, ledger=str(self.ledger))
+        base.update(kw)
+        return args(**base)
+
+    def record(self):
+        return vc.build_park(station="pilot", account="pilot", code="123456",
+                             ciphertext=ARMOR, parked_by="tester",
+                             edge="https://channel.example/claim")
+
+    # ---------------------------------------------------------------- target
+
+    def test_an_scp_target_splits_into_what_ssh_dials_and_the_path(self):
+        self.assertEqual(vs.split_scp_target(self.TARGET),
+                         ("root@edge", "/srv/channel/claims"))
+        self.assertEqual(vs.split_scp_target("root@edge:/srv/channel/claims/"),
+                         ("root@edge", "/srv/channel/claims"))
+        # scp wants an IPv6 literal bracketed; ssh wants it bare.
+        self.assertEqual(vs.split_scp_target("[2001:db8::1]:/srv/claims"),
+                         ("2001:db8::1", "/srv/claims"))
+        for bad in ("edge", "edge:", ":/srv/claims", "edge:relative/path", ""):
+            with self.subTest(bad=bad):
+                with self.assertRaises(vs.SubscriberError):
+                    vs.split_scp_target(bad)
+
+    # ------------------------------------------------------------- preflight
+
+    @unittest.skipUnless(vc.have_age(), "no `age` binary on this host")
+    def test_the_spool_owner_is_read_before_the_mint(self):
+        ctx = vs.park_preflight(self.ok_args(), "pilot")
+        self.assertEqual(ctx["spool_owner"], "65532:65532")
+        (call,) = self.calls()
+        self.assertTrue(call.startswith("ssh -o BatchMode=yes root@edge "), call)
+        self.assertIn("test -d /srv/channel/claims", call)
+        self.assertIn("stat -c %u:%g /srv/channel/claims", call)
+
+    def test_a_root_owned_spool_refuses_before_the_mint(self):
+        # With the shipped image (USER 65532) every park into it would be
+        # unreadable. Refused here, with nothing rotated and the one-line fix.
+        os.environ["STUB_SSH_STAT"] = "0:0"
+        with self.assertRaises(vs.SubscriberError) as caught:
+            vs.park_preflight(self.ok_args(), "pilot")
+        self.assertIn("owned by root", str(caught.exception))
+        self.assertIn("chown 65532:65532 /srv/channel/claims", str(caught.exception))
+        self.assertIn("Nothing was minted", str(caught.exception))
+
+    def test_an_edge_host_that_does_not_answer_refuses_before_the_mint(self):
+        # This used to fail at the scp — after the rotation, with the
+        # subscriber's old credential already dead and nothing parked.
+        os.environ["STUB_SSH_RC"] = "255"
+        with self.assertRaises(vs.SubscriberError) as caught:
+            vs.park_preflight(self.ok_args(), "pilot")
+        self.assertIn("Connection refused", str(caught.exception))
+
+    def test_a_spool_that_is_not_a_directory_refuses_before_the_mint(self):
+        os.environ["STUB_SSH_NO_DIR"] = "1"
+        with self.assertRaises(vs.SubscriberError) as caught:
+            vs.park_preflight(self.ok_args(), "pilot")
+        self.assertIn("not a directory", str(caught.exception))
+        self.assertIn("Nothing was minted", str(caught.exception))
+
+    def test_a_local_spool_is_not_probed_over_ssh(self):
+        spool = self.dir / "spool"
+        with contextlib.suppress(vs.SubscriberError, vc.ClaimError):
+            vs.park_preflight(self.ok_args(park_ssh=None, park_out=str(spool)),
+                              "pilot")
+        self.assertEqual(self.calls(), [])
+
+    # -------------------------------------------------------------- delivery
+
+    def test_the_copy_is_followed_by_a_chown_to_the_spools_owner(self):
+        where = vs.deliver_park(self.record(), spool=None, ssh=self.TARGET,
+                                owner="65532:65532")
+        scp, ssh = self.calls()
+        self.assertTrue(scp.startswith("scp -q "), scp)
+        self.assertTrue(scp.endswith(" root@edge:/srv/channel/claims/pilot.park.json"), scp)
+        self.assertIn("chown 65532:65532 /srv/channel/claims/pilot.park.json", ssh)
+        self.assertIn("chmod 600 /srv/channel/claims/pilot.park.json", ssh)
+        self.assertTrue(ssh.startswith("ssh -o BatchMode=yes root@edge "), ssh)
+        # What the operator's receipt line says, so the owner is on the screen
+        # during the call instead of discovered from a uniform 403.
+        self.assertEqual(where, f"{self.TARGET}/pilot.park.json (owner 65532:65532, the spool's)")
+        # The copy really happened, and the local temp copy is gone.
+        landed = json.loads((self.remote / "pilot.park.json").read_text())
+        self.assertEqual(landed["station"], "pilot")
+        local_copy = pathlib.Path(scp.split()[2])
+        self.assertEqual(local_copy.name, "pilot.park.json")
+        self.assertFalse(local_copy.parent.exists())
+
+    def test_without_an_owner_in_hand_the_delivery_reads_it_first(self):
+        vs.deliver_park(self.record(), spool=None, ssh=self.TARGET)
+        stat, scp, chown = self.calls()
+        self.assertIn("stat -c", stat)
+        self.assertTrue(scp.startswith("scp "))
+        self.assertIn("chown 65532:65532", chown)
+
+    def test_a_chown_that_fails_refuses_and_names_the_fix(self):
+        # The park is on the host and the code is NOT printed: the refusal says
+        # what to run before anyone reads six digits aloud against it.
+        os.environ["STUB_SSH_CHOWN_RC"] = "1"
+        with self.assertRaises(vs.SubscriberError) as caught:
+            vs.deliver_park(self.record(), spool=None, ssh=self.TARGET,
+                            owner="65532:65532")
+        text = str(caught.exception)
+        self.assertIn("chown 65532:65532 /srv/channel/claims/pilot.park.json", text)
+        self.assertIn("Do not read the code out", text)
+        self.assertIn("Operation not permitted", text)
+
+    def test_a_copy_that_fails_never_reaches_the_chown(self):
+        os.environ["STUB_SCP_RC"] = "1"
+        with self.assertRaises(vs.SubscriberError):
+            vs.deliver_park(self.record(), spool=None, ssh=self.TARGET,
+                            owner="65532:65532")
+        self.assertEqual([c.split()[0] for c in self.calls()], ["scp"])
+
+    # ----------------------------------------------------------- local spool
+
+    def test_a_local_park_already_owned_by_the_spools_owner_is_left_alone(self):
+        spool = self.dir / "spool"
+        path = vc.write_park(spool, self.record())
+        with unittest.mock.patch("os.chown") as chown:
+            self.assertIsNone(vs.adopt_spool_owner(path))
+        chown.assert_not_called()
+
+    def test_a_local_park_takes_the_owner_of_its_spool(self):
+        # A publisher running as root on the edge host itself, writing into the
+        # service's spool: same defect, one transport over. Only root can hand
+        # a file to another uid, so the file's owner is faked and the chown is
+        # observed rather than performed.
+        spool = self.dir / "spool"
+        path = vc.write_park(spool, self.record())
+        real_stat = pathlib.Path.stat
+
+        def as_if_root_wrote_it(self_, *a, **kw):
+            st = real_stat(self_, *a, **kw)
+            if self_ == path:
+                fields = list(st)
+                fields[4] = fields[5] = 0
+                return os.stat_result(fields)
+            return st
+
+        with unittest.mock.patch.object(pathlib.Path, "stat", as_if_root_wrote_it), \
+                unittest.mock.patch("os.chown") as chown:
+            self.assertIsNone(vs.adopt_spool_owner(path))
+            chown.assert_called_once_with(path, os.getuid(), os.getgid())
+
+        with unittest.mock.patch.object(pathlib.Path, "stat", as_if_root_wrote_it), \
+                unittest.mock.patch("os.chown", side_effect=PermissionError):
+            warning = vs.adopt_spool_owner(path)
+        self.assertIn(f"chown {os.getuid()}:{os.getgid()}", warning)
 
 
 class AttemptsIngest(unittest.TestCase):

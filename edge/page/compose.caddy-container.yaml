@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The channel page, reachable from a CONTAINERISED Caddy. Add this file when
+# Caddy runs inside the registry stack's compose project — as it does on the
+# live channel host — and proxy to the alias it declares:
+#
+#     PAGE_EDGE_IMAGE=… CHANNEL_EDGE_URL=… \
+#       docker compose -f edge/page/compose.yaml \
+#                      -f edge/page/compose.caddy-container.yaml up -d
+#
+#     @channel_page path_regexp chanpage ^/vexa/channel/[a-z0-9][a-z0-9-]{1,62}/?$
+#     handle @channel_page {
+#         reverse_proxy page-edge:8089
+#     }
+#
+# Same reasoning as edge/claim/compose.caddy-container.yaml, which carries it
+# in full: `reverse_proxy 127.0.0.1:8089` is correct only where Caddy runs on
+# the host. From a Caddy container that loopback is Caddy's own, the config
+# validates, Caddy starts, and only a page fails — as a 502 in the browser of
+# the person being onboarded (2026-09-06 receipt, finding 2).
+#
+# The network is EXTERNAL and named, never created here; a wrong name fails
+# loudly at `up`. The default is what compose names the implicit network of a
+# project called `channel`; set CHANNEL_STACK_NETWORK if the live one differs.
+
+services:
+  page-edge:
+    networks:
+      default: {}
+      channel-stack:
+        aliases:
+          - page-edge
+
+networks:
+  channel-stack:
+    external: true
+    name: ${CHANNEL_STACK_NETWORK:-channel_default}

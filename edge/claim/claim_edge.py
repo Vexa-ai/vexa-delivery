@@ -35,8 +35,13 @@ sequence, and the `code_sha256` of the park it was aimed at — never of the cod
 that was offered, because that hash IS the code to anyone willing to spend a
 minute searching.
 
-DEPLOYMENT: see README.md in this directory. This service has NOT been deployed
-by the change that introduced it — the live edge is founder-owned.
+DEPLOYMENT: see README.md in this directory. Live on the channel host since
+2026-09-06. Two verbs exist for the deploy and nothing else: `--check` validates
+this process's own configuration and refuses an unwritable spool or a park it
+cannot read; `--probe` posts to the PUBLIC claim URL from inside this service and
+says which of the three ways the route can be wrong it is — shadowed by the
+Caddy write gate (401), missing (404), or pointing at a loopback that is not
+this host's (502) — instead of leaving each to be found on a call.
 """
 
 from __future__ import annotations
@@ -46,9 +51,12 @@ import collections
 import json
 import os
 import pathlib
+import secrets
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -191,7 +199,19 @@ class Config:
             trust_forwarded_for=env.get("CLAIM_TRUST_FORWARDED_FOR", "") == "1",
         )
 
-    def check(self) -> None:
+    def check(self) -> "list[pathlib.Path]":
+        """Refuse what would fail on the call; return what would fail per park.
+
+        Raises for anything that makes EVERY claim fail — a missing or readable
+        identity, no `age`, a spool this uid cannot write (the attempt counter
+        and the attempts log live there, so an unwritable spool makes the five-
+        attempt burn unenforceable and was, before this line, a dropped
+        connection on the first attempt). Returns the parks this uid cannot
+        READ, which fail one station each: `--check` refuses on them, the server
+        warns and serves, because refusing to start over one file delivered
+        with the wrong owner would take every other station's delivery down
+        with it.
+        """
         if not pathlib.Path(self.identity).is_file():
             raise vexa_claim.ClaimError(f"age identity not found: {self.identity}")
         if not vexa_claim.identity_is_private(self.identity):
@@ -203,7 +223,21 @@ class Config:
             )
         if not vexa_claim.have_age():
             raise vexa_claim.ClaimError("the `age` binary is not on PATH")
-        self.spool.mkdir(parents=True, exist_ok=True)
+        try:
+            self.spool.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            raise vexa_claim.ClaimError(
+                f"spool {self.spool} does not exist and uid {os.getuid()} cannot "
+                "create it"
+            ) from None
+        if not os.access(self.spool, os.W_OK | os.X_OK):
+            raise vexa_claim.ClaimError(
+                f"spool {self.spool} is not writable by uid {os.getuid()}: the "
+                "attempt counter and the attempts log live there. On the host, "
+                f"chown {os.getuid()}:{os.getgid()} the directory compose mounts at "
+                "/spool (edge/claim/README.md § Deploy, step 1)"
+            )
+        return vexa_claim.unreadable_parks(self.spool)
 
     def decrypt(self, armor: str) -> str:
         return vexa_claim.age_decrypt(self.identity, armor)
@@ -280,10 +314,15 @@ def serve_claim(config: Config, body: bytes, source: str) -> "tuple[int, bytes]"
     except vexa_claim.ClaimRefused as refusal:
         log_attempt(config, station, refusal.reason, source, park_id, park_hash)
         return HTTPStatus.FORBIDDEN, REFUSED_BODY
-    except vexa_claim.ClaimError as exc:
-        # OUR fault, not theirs: a park sealed to a rotated key, an unreadable
-        # spool. `redeem` has already declined to burn the park over it, and the
-        # caller is told to retry rather than that they got it wrong.
+    except (vexa_claim.ClaimError, OSError) as exc:
+        # OUR fault, not theirs: a park sealed to a rotated key, a park
+        # delivered with the wrong owner, a spool that stopped being writable.
+        # `redeem` has already declined to burn the park over it, and the caller
+        # is told to retry rather than that they got it wrong. `OSError` is here
+        # so that a spool I/O failure answers the wire at all — before it did,
+        # the handler thread died with a traceback and the caller got a dropped
+        # connection, which Caddy turns into a 502 and the operator's log into
+        # nothing.
         log_attempt(config, station, f"error:{exc}", source, park_id, park_hash)
         return HTTPStatus.SERVICE_UNAVAILABLE, json.dumps(
             {"error": "unavailable"}
@@ -361,6 +400,159 @@ class Handler(BaseHTTPRequestHandler):
         )
 
 
+# --------------------------------------------------------------------------
+# --probe: the route, proven from inside the service.
+#
+# Three ways the deploy was wrong on 2026-09-06, every one of them answering the
+# subscriber's real claim with a status that says nothing about which it was:
+#
+#   401  the /claim stanza sat BELOW Caddy's `@write method PUT POST PATCH
+#        DELETE` gate. `handle` blocks are evaluated in order and the first
+#        match wins, so the publisher gate answered every claim. A MISSING
+#        stanza is the same 401: the gate matches POST on every path.
+#   502  the stanza proxied to 127.0.0.1:8088 and Caddy was a container, whose
+#        loopback is its own. The config validates, Caddy starts, a claim fails.
+#   404  no route and no write gate either — not the channel edge at all.
+#
+# `caddy validate` passes all three. This posts ONE deliberately malformed claim
+# — a station and no code — to the public URL and reads the answer. The service
+# treats that body as `malformed`: 403, no park read, no attempt spent against
+# anything, one row in the attempts log under a station name no real station
+# has. That row is then looked up in THIS spool, which is what turns "a claim
+# service answered" into "this one did, through this route".
+# --------------------------------------------------------------------------
+
+PROBE_TIMEOUT = 10
+PROBE_STATION_PREFIX = "probe-"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, not a hop to follow: whatever is at the other
+    end of it is not this service, and following it could carry the probe to a
+    host the operator never named."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def probe_station() -> str:
+    return PROBE_STATION_PREFIX + secrets.token_hex(4)
+
+
+def find_attempt(spool: pathlib.Path, station: str) -> "dict | None":
+    """The most recent attempt in this spool's log for `station`, or None."""
+    path = vexa_claim.attempts_path(spool)
+    if not path.is_file():
+        return None
+    hit = None
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("station") == station:
+                hit = event
+    return hit
+
+
+def probe(config: Config, url: str, *, timeout: float = PROBE_TIMEOUT) -> "tuple[bool, list[str]]":
+    """One malformed claim against the public URL; the verdict as lines.
+
+    `(ok, lines)`. Prints nothing itself so it can be tested as a value. Every
+    line names the URL it judged, and every failing verdict names the section of
+    README.md § Deploy that fixes it.
+    """
+    station = probe_station()
+    body = json.dumps({"station": station}).encode()
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+    )
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            status, answer, headers = resp.status, resp.read(MAX_BODY), resp.headers
+    except urllib.error.HTTPError as exc:
+        status, headers = exc.code, exc.headers
+        answer = exc.read(MAX_BODY) if exc.fp else b""
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return False, [
+            f"probe FAILED: nothing answered at {url} ({exc}).",
+            "  The service cannot reach its own public address from inside the "
+            "container — DNS, egress, or a name that does not resolve to this host.",
+        ]
+
+    if status == HTTPStatus.FORBIDDEN and answer == REFUSED_BODY:
+        row = find_attempt(config.spool, station)
+        if row is None:
+            return False, [
+                f"probe FAILED: a claim service answered at {url} (403, the "
+                "refusal this service sends) but the attempt is not in this "
+                f"spool ({config.spool}).",
+                "  Caddy is proxying /claim to a different claim edge, or this "
+                "container has a different spool mounted than the one it served.",
+            ]
+        return True, [
+            f"probe OK: {url} reaches this service — refused the probe as "
+            "designed (403), and the attempt is in this spool as station "
+            f"{station} (seq {row.get('seq')}, outcome {row.get('outcome')}).",
+            f"  source as this service saw it: {row.get('source')}"
+            + ("" if config.trust_forwarded_for else
+               "  (CLAIM_TRUST_FORWARDED_FOR is off: behind Caddy this is Caddy's "
+               "address, not the caller's)"),
+        ]
+    if status == HTTPStatus.UNAUTHORIZED:
+        # A missing stanza and a stanza below the gate are the SAME answer on
+        # the wire: `@write` matches POST on every path, so with no `handle
+        # /claim` above it the gate takes the request either way (the rig of
+        # 2026-09-07 proved both shapes answer 401, not 404).
+        return False, [
+            f"probe FAILED: {url} answered 401 — the write gate took the request: "
+            "no `handle /claim` stanza is ABOVE it.",
+            "  The Caddyfile's `@write method PUT POST PATCH DELETE` matches POST on "
+            "every path, and `handle` blocks are evaluated in order, so a /claim "
+            "stanza that is missing or sits below the gate is never reached and "
+            "the publisher gate answers every claim. Put the stanza ABOVE the write "
+            "gate (README.md § Deploy, step 4).",
+        ]
+    if status in (HTTPStatus.NOT_FOUND, HTTPStatus.METHOD_NOT_ALLOWED):
+        return False, [
+            f"probe FAILED: {url} answered {status} — no route to /claim reaches "
+            "this service.",
+            "  The stanza is missing from the Caddyfile, or this is not the edge's "
+            "URL (README.md § Deploy, step 4).",
+        ]
+    if status in (HTTPStatus.BAD_GATEWAY, HTTPStatus.SERVICE_UNAVAILABLE,
+                  HTTPStatus.GATEWAY_TIMEOUT):
+        return False, [
+            f"probe FAILED: {url} answered {status} — the edge has a route to "
+            "/claim but cannot reach this service.",
+            "  If Caddy is a container, `reverse_proxy 127.0.0.1:8088` is Caddy's "
+            "OWN loopback: proxy to the compose alias (`claim-edge:8088`) and start "
+            "this service with compose.caddy-container.yaml (README.md § Deploy, "
+            "steps 3-4).",
+        ]
+    if 300 <= status < 400:
+        return False, [
+            f"probe FAILED: {url} redirected ({status}) to "
+            f"{headers.get('Location', '?')} — that is not the claim service.",
+        ]
+    if status == HTTPStatus.OK:
+        return False, [
+            f"probe FAILED: {url} answered 200 to a claim with no code — "
+            "something other than this service is answering (a captive portal, "
+            "a proxy's own page, an SSO landing).",
+        ]
+    return False, [
+        f"probe FAILED: {url} answered {status}, which this service never sends "
+        "for a malformed claim.",
+    ]
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="claim_edge",
@@ -371,7 +563,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="host:port to bind (default: $CLAIM_LISTEN or 127.0.0.1:8088; "
                         "TLS is Caddy's, upstream of this process)")
     p.add_argument("--check", action="store_true",
-                   help="validate configuration and exit, serving nothing")
+                   help="validate configuration and exit, serving nothing; refuses "
+                        "an unwritable spool and names any park this uid cannot read")
+    p.add_argument("--probe", nargs="?", const="", metavar="URL",
+                   help="post one malformed claim to the PUBLIC claim URL (default: "
+                        "$CLAIM_PUBLIC_URL) and say whether the route reaches this "
+                        "service — 401 is the Caddy write gate shadowing /claim, "
+                        "502 is a loopback that is not this host's, 404 is no "
+                        "route. Serves nothing.")
     return p
 
 
@@ -379,13 +578,31 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
         config = Config.from_env()
-        config.check()
+        unreadable = config.check()
     except vexa_claim.ClaimError as exc:
         print(f"claim-edge: {exc}", file=sys.stderr)
         return 2
+    for park in unreadable:
+        print(f"claim-edge: {park.name} is in the spool but uid {os.getuid()} "
+              "cannot read it — delivered with the wrong owner; on the host, "
+              "chown it to the spool's owner (README.md § Deploy, step 5)",
+              file=sys.stderr)
     if args.check:
+        if unreadable:
+            return 2
         print(f"claim-edge: config OK (spool {config.spool}, identity mode 600)")
         return 0
+    if args.probe is not None:
+        url = args.probe or os.environ.get("CLAIM_PUBLIC_URL", "")
+        if not url:
+            print("claim-edge: --probe needs the public claim URL: pass it, or set "
+                  "$CLAIM_PUBLIC_URL (compose.yaml takes it from "
+                  "$CHANNEL_CLAIM_EDGE)", file=sys.stderr)
+            return 2
+        ok, lines = probe(config, url)
+        for line in lines:
+            print(f"claim-edge: {line}", file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
 
     host, _, port = args.listen.rpartition(":")
     Handler.config = config

@@ -21,6 +21,11 @@ services:
     restart: unless-stopped
     # LOOPBACK ONLY. Caddy reverse-proxies /vexa/channel/* to this port and owns
     # TLS, exactly as it owns the registry's.
+    #
+    # This is the HOST's loopback. A Caddy that is itself a container cannot
+    # reach it, and on the live edge Caddy is one: there, add
+    # compose.caddy-container.yaml beside this file, which joins the registry
+    # stack's network under the alias `page-edge` for the Caddyfile to proxy to.
     ports:
       - "127.0.0.1:8089:8089"
     environment:
