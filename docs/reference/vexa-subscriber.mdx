@@ -15,7 +15,9 @@ Emitted from `python3 publisher/vexa_subscriber.py --help`.
 ```text
 usage: vexa_subscriber [-h] {list,add,revoke} ...
 
-Manage credentials on the Vexa channel registry (channel.vexa.ai).
+Manage credentials on the Vexa channel registry, which runs on a standalone Docker host. Host
+coordinates are site configuration: $CHANNEL_REGISTRY_SSH, $CHANNEL_ROOT and $CHANNEL_EDGE_URL,
+documented in config/channel.example.env.
 
 positional arguments:
   {list,add,revoke}
@@ -88,5 +90,5 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
-  --force     allow revoking the publisher account
+  --force     allow revoking the publisher or edge-signature-reader account
 ```
