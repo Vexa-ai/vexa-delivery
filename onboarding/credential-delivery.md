@@ -40,8 +40,14 @@ route — it is what the first three exist to avoid.
 ## Mint
 
 ```bash
+# needs SSH to the standalone channel host: $CHANNEL_REGISTRY_SSH, $CHANNEL_ROOT
+# and $CHANNEL_EDGE_URL from config/channel.env (RUNBOOK § 5.4)
 python3 publisher/vexa_subscriber.py add <subscriber>
 ```
+
+The tool rewrites the host's `htpasswd` and `env`, recreates the stack, and
+proves the new credential against the live `/v2/` **before** printing it — a
+credential that reaches your screen has already authenticated once.
 
 The password is printed **once**, to stdout, and is not recoverable afterwards.
 Vault it immediately in the operator's secrets vault

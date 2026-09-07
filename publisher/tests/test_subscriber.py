@@ -1,12 +1,21 @@
-"""Hermetic tests for vexa_subscriber's htpasswd handling.
+"""Hermetic tests for vexa_subscriber's htpasswd and env-file handling, and for
+what the verbs do to the standalone host.
 
-Nothing here touches a cluster, a registry or the network. The cluster half of
-the module (kubectl shell-outs) is deliberately not exercised — the parts worth
-testing are the ones where a bug silently locks somebody out or silently grants
-them access.
+Nothing here touches a host, a registry or the network. The pure half is tested
+directly; the host half runs against an in-memory stand-in behind ``ssh_run``
+that records every remote command line and every byte sent over stdin — so
+"the password never reaches a remote argv" and "a refusal writes nothing" are
+assertions, not prose. The parts worth testing are the ones where a bug
+silently locks somebody out, silently grants them access, or silently rotates
+an account and prints nothing.
 """
 
+import argparse
+import base64
+import contextlib
+import io
 import os
+import shlex
 import subprocess
 import sys
 import unittest
@@ -126,6 +135,46 @@ class TestNameValidation(unittest.TestCase):
             vs.add_entry("", "evil:$2y$fake", BC)
 
 
+class TestComposeEscape(unittest.TestCase):
+    def test_every_dollar_doubles(self):
+        # Compose v5 interpolates '$' in env_file values; the un-escaped form
+        # once ate three characters of a bcrypt hash (RUNBOOK § 5.3).
+        self.assertEqual(vs.compose_escape(BC), BC.replace("$", "$$"))
+        self.assertEqual(vs.compose_escape("no-dollars"), "no-dollars")
+
+    def test_escaped_bcrypt_survives_compose_interpolation(self):
+        # What compose does to $$ is collapse it back to $ — round trip.
+        self.assertEqual(vs.compose_escape(BC).replace("$$", "$"), BC)
+
+
+class TestEnvFile(unittest.TestCase):
+    ENV = "# comment\nPUBLISHER_BCRYPT=old\nEDGE_READER_BASIC=abc\nSUB_PILOT_BCRYPT=x\n"
+
+    def test_sub_env_key(self):
+        self.assertEqual(vs.sub_env_key("pilot"), "SUB_PILOT_BCRYPT")
+        self.assertEqual(vs.sub_env_key("test-sub"), "SUB_TEST_SUB_BCRYPT")
+
+    def test_set_replaces_only_the_target_line(self):
+        out = vs.set_env_value(self.ENV, "PUBLISHER_BCRYPT", "new")
+        self.assertIn("PUBLISHER_BCRYPT=new\n", out)
+        self.assertIn("# comment\n", out)
+        self.assertIn("EDGE_READER_BASIC=abc\n", out)
+        self.assertIn("SUB_PILOT_BCRYPT=x\n", out)
+
+    def test_missing_key_is_an_error_not_an_append(self):
+        # A key we expected but did not find means the host layout drifted.
+        with self.assertRaises(vs.SubscriberError):
+            vs.set_env_value(self.ENV, "SUB_GHOST_BCRYPT", "v")
+
+    def test_duplicate_key_rejected(self):
+        with self.assertRaises(vs.SubscriberError):
+            vs.set_env_value("A=1\nA=2\n", "A", "3")
+
+    def test_env_has_key(self):
+        self.assertTrue(vs.env_has_key(self.ENV, "SUB_PILOT_BCRYPT"))
+        self.assertFalse(vs.env_has_key(self.ENV, "SUB_GHOST_BCRYPT"))
+
+
 class TestPassword(unittest.TestCase):
     def test_length_and_alphabet(self):
         pw = vs.generate_password()
@@ -174,6 +223,239 @@ class TestHashing(unittest.TestCase):
 
     def test_salted(self):
         self.assertNotEqual(vs.bcrypt_hash("same"), vs.bcrypt_hash("same"))
+
+
+# --------------------------------------------------------------------------
+# The host half, against a stand-in. Every remote command line and every byte
+# of stdin is recorded, so the assertions below are about what actually left
+# this process for the host — not about what the code says it does.
+# --------------------------------------------------------------------------
+
+ROOT = "/srv/x"
+HTPASSWD = f"edge-signature-reader:{BC}\npilot:{BC}\npublisher:{BC}\n"
+ENV = ("# throwaway\n"
+       f"PUBLISHER_BCRYPT={BC.replace('$', '$$')}\n"
+       "EDGE_READER_BASIC=ZWRnZTpvbGQ=\n"
+       f"SUB_PILOT_BCRYPT={BC.replace('$', '$$')}\n")
+FAKE_DIGEST = "$2y$05$" + "F" * 53
+CREDENTIAL_LINE = r"^[a-z0-9-]+:[A-Za-z0-9]{32}$"
+
+
+class FakeHost:
+    """What the standalone host looks like from behind ``ssh_run``."""
+
+    def __init__(self, htpasswd=HTPASSWD, env=ENV):
+        self.files = {f"{ROOT}/htpasswd": htpasswd, f"{ROOT}/env": env}
+        self.commands = []   # (remote command line, stdin) in order
+        self.events = []     # "recreate" / "healthz" / ("verify", name, pw)
+
+    def ssh_run(self, command, stdin=None):
+        self.commands.append((command, stdin))
+        if command.startswith("cat "):
+            return self.files[shlex.split(command)[1]]
+        if command.startswith("umask 077 && cat > "):
+            target = shlex.split(command.split("&&")[-1])[-1]
+            self.files[target] = stdin
+            return ""
+        if command.endswith("docker compose up -d --force-recreate"):
+            self.events.append("recreate")
+            return ""
+        raise AssertionError(f"unexpected remote command: {command!r}")
+
+    @property
+    def writes(self):
+        return [c for c, _ in self.commands if c.startswith("umask 077")]
+
+
+class HostCase(unittest.TestCase):
+    def setUp(self):
+        self.saved = {k: getattr(vs, k) for k in
+                      ("ssh_run", "verify_healthz", "verify_credential", "bcrypt_hash")}
+        self.env_backup = {k: os.environ.get(k) for k in
+                           ("CHANNEL_REGISTRY_SSH", "CHANNEL_ROOT", "CHANNEL_EDGE_URL")}
+        vs.verify_healthz = lambda: self.host.events.append("healthz")
+        vs.verify_credential = lambda n, p: self.host.events.append(("verify", n, p))
+        vs.bcrypt_hash = lambda password: FAKE_DIGEST
+        self.reset_host()
+
+    def reset_host(self, **files):
+        """A fresh host and a complete site environment; originals untouched."""
+        self.host = FakeHost(**files)
+        vs.ssh_run = self.host.ssh_run
+        os.environ.update(CHANNEL_REGISTRY_SSH="operator@channel.invalid",
+                          CHANNEL_ROOT=ROOT, CHANNEL_EDGE_URL="https://channel.invalid")
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(vs, k, v)
+        for k, v in self.env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def run_verb(self, func, **kw):
+        base = dict(park=False, force=False)
+        base.update(kw)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = func(argparse.Namespace(**base))
+        return rc, out.getvalue(), err.getvalue()
+
+    def printed_credential(self, out):
+        lines = [ln for ln in out.splitlines() if not ln.startswith("#")]
+        self.assertEqual(len(lines), 1, out)
+        self.assertRegex(lines[0], CREDENTIAL_LINE)
+        return lines[0].partition(":")[2]
+
+    def env_value(self, key):
+        for line in self.host.files[f"{ROOT}/env"].splitlines():
+            if line.split("=", 1)[0] == key:
+                return line.split("=", 1)[1]
+        self.fail(f"{key} missing from env")
+
+
+class TestAddOnTheHost(HostCase):
+    def test_rotating_a_station_subscriber_touches_both_files_then_recreates(self):
+        rc, out, _ = self.run_verb(vs.cmd_add, name="pilot")
+        self.assertEqual(rc, 0)
+        pw = self.printed_credential(out)
+        self.assertEqual(vs.parse_htpasswd(self.host.files[f"{ROOT}/htpasswd"])["pilot"],
+                         FAKE_DIGEST)
+        # Escaped for compose: every '$' doubled, nothing else touched.
+        self.assertEqual(self.env_value("SUB_PILOT_BCRYPT"), FAKE_DIGEST.replace("$", "$$"))
+        self.assertEqual(self.env_value("PUBLISHER_BCRYPT"), BC.replace("$", "$$"))
+        self.assertIn("# throwaway\n", self.host.files[f"{ROOT}/env"])
+        # Write, write, recreate, healthz, prove — and only then was it printed.
+        self.assertEqual(len(self.host.writes), 2)
+        self.assertEqual(self.host.events, ["recreate", "healthz", ("verify", "pilot", pw)])
+        self.assertEqual(self.host.files[f"{ROOT}/htpasswd"].count("\n"), 3)
+
+    def test_writes_precede_the_recreate_and_are_atomic_0600(self):
+        self.run_verb(vs.cmd_add, name="pilot")
+        recreate_at = next(i for i, (c, _) in enumerate(self.host.commands)
+                           if c.endswith("--force-recreate"))
+        for c in self.host.writes:
+            self.assertLess(self.host.commands.index((c, self.host.files[
+                shlex.split(c.split("&&")[-1])[-1]])), recreate_at)
+            self.assertIn("umask 077 && cat > ", c)
+            self.assertIn("chmod 600 ", c)
+            self.assertIn(" && mv ", c)
+
+    def test_publisher_rotation_rewrites_the_write_gate(self):
+        rc, out, _ = self.run_verb(vs.cmd_add, name="publisher")
+        self.assertEqual(rc, 0)
+        self.printed_credential(out)
+        self.assertEqual(self.env_value("PUBLISHER_BCRYPT"), FAKE_DIGEST.replace("$", "$$"))
+        self.assertEqual(self.env_value("SUB_PILOT_BCRYPT"), BC.replace("$", "$$"))
+
+    def test_edge_reader_rotation_rewrites_the_basic_credential_the_edge_presents(self):
+        rc, out, _ = self.run_verb(vs.cmd_add, name="edge-signature-reader")
+        self.assertEqual(rc, 0)
+        pw = self.printed_credential(out)
+        expected = base64.b64encode(f"edge-signature-reader:{pw}".encode()).decode()
+        self.assertEqual(self.env_value("EDGE_READER_BASIC"), expected)
+        # The value legitimately lands in the env file (the edge must PRESENT
+        # it), and it travels there over stdin: never on a remote command line.
+        for command, _ in self.host.commands:
+            self.assertNotIn(pw, command)
+            self.assertNotIn(expected, command)
+        self.assertNotIn(pw, self.host.files[f"{ROOT}/htpasswd"])
+
+    def test_a_new_pull_only_subscriber_leaves_env_alone_and_says_so(self):
+        rc, out, err = self.run_verb(vs.cmd_add, name="rehearsal")
+        self.assertEqual(rc, 0)
+        self.printed_credential(out)
+        self.assertEqual(len(self.host.writes), 1)          # htpasswd only
+        self.assertEqual(self.host.files[f"{ROOT}/env"], ENV)
+        self.assertIn("pull-only", err)
+        self.assertIn("SUB_REHEARSAL_BCRYPT", err)
+        self.assertIn("rehearsal", vs.parse_htpasswd(self.host.files[f"{ROOT}/htpasswd"]))
+        self.assertEqual(self.host.events, ["recreate", "healthz", ("verify", "rehearsal",
+                         self.printed_credential(out))])
+
+    def test_the_password_never_reaches_a_remote_command_line(self):
+        for name in ("pilot", "publisher", "edge-signature-reader", "rehearsal"):
+            with self.subTest(name=name):
+                self.reset_host()
+                _, out, _ = self.run_verb(vs.cmd_add, name=name)
+                pw = self.printed_credential(out)
+                self.assertTrue(all(pw not in c for c, _ in self.host.commands))
+
+    def test_a_missing_env_key_refuses_before_any_write(self):
+        self.reset_host(env=ENV.replace("EDGE_READER_BASIC=ZWRnZTpvbGQ=\n", ""))
+        with self.assertRaises(vs.SubscriberError) as caught:
+            self.run_verb(vs.cmd_add, name="edge-signature-reader")
+        self.assertIn("EDGE_READER_BASIC", str(caught.exception))
+        self.assertEqual(self.host.writes, [])
+        self.assertEqual(self.host.events, [])
+
+    def test_a_root_that_is_not_the_stack_refuses_before_any_write(self):
+        # $CHANNEL_ROOT pointing at a directory with an env file but no
+        # PUBLISHER_BCRYPT is not the live stack; nothing is rotated there.
+        self.reset_host(env="# something else\nOTHER=1\n")
+        with self.assertRaises(vs.SubscriberError) as caught:
+            self.run_verb(vs.cmd_add, name="pilot")
+        self.assertIn("PUBLISHER_BCRYPT", str(caught.exception))
+        self.assertEqual(self.host.writes, [])
+
+    def test_site_variables_are_demanded_before_the_mint(self):
+        # The edge URL is only USED after the recreate; demanded up front, a
+        # missing one refuses with zero remote commands instead of after the
+        # htpasswd was rewritten.
+        for var in ("CHANNEL_REGISTRY_SSH", "CHANNEL_ROOT", "CHANNEL_EDGE_URL"):
+            with self.subTest(var=var):
+                self.reset_host()
+                os.environ.pop(var)
+                with self.assertRaises(vs.SubscriberError) as caught:
+                    self.run_verb(vs.cmd_add, name="pilot")
+                self.assertIn(var, str(caught.exception))
+                self.assertEqual(self.host.commands, [])
+
+    def test_park_preflight_runs_before_any_host_read(self):
+        with self.assertRaises(vs.SubscriberError) as caught:
+            self.run_verb(vs.cmd_add, name="pilot", park=True, channel=None)
+        self.assertIn("--channel", str(caught.exception))
+        self.assertEqual(self.host.commands, [])
+
+
+class TestRevokeOnTheHost(HostCase):
+    def test_the_two_edge_accounts_need_force(self):
+        for name in ("publisher", "edge-signature-reader"):
+            with self.subTest(name=name):
+                with self.assertRaises(vs.SubscriberError):
+                    self.run_verb(vs.cmd_revoke, name=name)
+                self.assertEqual(self.host.commands, [])
+        rc, out, _ = self.run_verb(vs.cmd_revoke, name="publisher", force=True)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("publisher", vs.parse_htpasswd(self.host.files[f"{ROOT}/htpasswd"]))
+
+    def test_revoke_removes_the_line_recreates_and_notes_the_lingering_env_key(self):
+        rc, out, err = self.run_verb(vs.cmd_revoke, name="pilot")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("pilot", vs.parse_htpasswd(self.host.files[f"{ROOT}/htpasswd"]))
+        self.assertEqual(len(self.host.writes), 1)
+        self.assertEqual(self.host.files[f"{ROOT}/env"], ENV)   # deliberately untouched
+        self.assertEqual(self.host.events, ["recreate", "healthz"])
+        self.assertIn("SUB_PILOT_BCRYPT", err)
+        self.assertIn("revoked pilot", out)
+
+    def test_revoking_an_absent_account_writes_nothing(self):
+        with self.assertRaises(vs.SubscriberError):
+            self.run_verb(vs.cmd_revoke, name="ghost")
+        self.assertEqual(self.host.writes, [])
+        self.assertEqual(self.host.events, [])
+
+
+class TestListOnTheHost(HostCase):
+    def test_scope_is_read_from_the_two_files(self):
+        rc, out, _ = self.run_verb(vs.cmd_list)
+        self.assertEqual(rc, 0)
+        rows = {ln.split()[0]: ln.split()[1] for ln in out.splitlines()[1:]}
+        self.assertEqual(rows, {"edge-signature-reader": "edge-held",
+                                "pilot": "pull+station",
+                                "publisher": "push+pull"})
+        self.assertTrue(all(c.startswith("cat ") for c, _ in self.host.commands))
 
 
 if __name__ == "__main__":
