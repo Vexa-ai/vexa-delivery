@@ -387,8 +387,13 @@ def is_bcrypt(digest: str) -> bool:
 # --------------------------------------------------------------------------
 
 
-def ssh_run(command: str, stdin: "str | None" = None) -> str:
-    target = channel_ssh()
+def ssh_run(command: str, stdin: "str | None" = None, *,
+            target: "str | None" = None) -> str:
+    """The ONE SSH shell-out. Dials `$CHANNEL_REGISTRY_SSH` unless `target`
+    names another login — the park leg passes the host half of
+    `$CHANNEL_CLAIM_SPOOL_SSH`, which is its own setting and is dialled as
+    itself even where it is the same machine."""
+    target = target or channel_ssh()
     cmd = ["ssh", "-o", "BatchMode=yes", target, command]
     try:
         proc = subprocess.run(
@@ -531,29 +536,6 @@ def split_scp_target(target: str) -> "tuple[str, str]":
     return host, path
 
 
-def spool_ssh_run(host: str, command: str) -> str:
-    """One command on the SPOOL's host; its stdout, or a refusal that quotes it.
-
-    A sibling of `ssh_run`, which dials `$CHANNEL_REGISTRY_SSH` for the mint:
-    the spool is addressed by `$CHANNEL_CLAIM_SPOOL_SSH`, which names its own
-    host — the same machine on the standalone edge, but a separate setting, so
-    it is dialled as itself. Same `BatchMode`: a prompt here would hang a
-    rotation in a terminal nobody is watching.
-    """
-    try:
-        proc = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", host, "--", command],
-            capture_output=True, text=True,
-        )
-    except FileNotFoundError:
-        raise SubscriberError("ssh not found on PATH") from None
-    if proc.returncode != 0:
-        raise SubscriberError(
-            f"ssh {host} {command!r} failed:\n{proc.stderr.strip()}"
-        )
-    return proc.stdout
-
-
 def remote_spool_owner(target: str) -> str:
     """`uid:gid` of the spool directory on the edge host, checked BEFORE the mint.
 
@@ -578,8 +560,9 @@ def remote_spool_owner(target: str) -> str:
     # One remote command, exit 0 either way, so that "ssh failed" (a non-zero
     # exit, quoted from stderr) and "no such directory" (this sentinel) are
     # told apart instead of both reading as a failed login.
-    out = spool_ssh_run(
-        host, f"test -d {quoted} && stat -c %u:%g {quoted} || echo no-such-directory"
+    out = ssh_run(
+        f"test -d {quoted} && stat -c %u:%g {quoted} || echo no-such-directory",
+        target=host,
     ).strip()
     if not re.fullmatch(r"[0-9]+:[0-9]+", out):
         raise SubscriberError(
@@ -675,7 +658,7 @@ def deliver_park(record: dict, *, spool: "str | None", ssh: "str | None",
 
     remote_file = shlex.quote(f"{remote_dir}/{name}")
     try:
-        spool_ssh_run(host, f"chown {owner} {remote_file} && chmod 600 {remote_file}")
+        ssh_run(f"chown {owner} {remote_file} && chmod 600 {remote_file}", target=host)
     except SubscriberError as exc:
         raise SubscriberError(
             f"the park landed at {target} but is still owned by the SSH user, "

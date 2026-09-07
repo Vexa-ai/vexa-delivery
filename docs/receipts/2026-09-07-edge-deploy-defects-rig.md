@@ -20,8 +20,10 @@ commits are the rig's tree rebased onto `9c3e69c` and signed. `edge/` is
 byte-identical to `eda7269`. Of the park leg — `split_scp_target`,
 `remote_spool_owner`, `adopt_spool_owner`, `deliver_park`, `park_preflight`,
 `park_credential` — every function is identical too; the one change is the
-SSH helper, renamed `spool_ssh_run` beside #42's `ssh_run` and given the same
-`-o BatchMode=yes`. The stub `kubectl` below stood in for the mint path *as it
+SSH shell-out: the owner read and the chown now go through #42's `ssh_run`,
+given an explicit `target`, instead of a second `subprocess.run(["ssh", …])`
+of their own — the same `-o BatchMode=yes`. The stub `kubectl` below stood in
+for the mint path *as it
 was at `eda7269`*; after #42 the mint is an SSH write to the host, which this
 rig did not exercise and #42's own receipt does.
 

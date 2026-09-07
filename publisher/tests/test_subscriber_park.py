@@ -377,7 +377,7 @@ class SshTransport(unittest.TestCase):
         ctx = vs.park_preflight(self.ok_args(), "pilot")
         self.assertEqual(ctx["spool_owner"], "65532:65532")
         (call,) = self.calls()
-        self.assertTrue(call.startswith("ssh -o BatchMode=yes root@edge -- "), call)
+        self.assertTrue(call.startswith("ssh -o BatchMode=yes root@edge "), call)
         self.assertIn("test -d /srv/channel/claims", call)
         self.assertIn("stat -c %u:%g /srv/channel/claims", call)
 
@@ -423,7 +423,7 @@ class SshTransport(unittest.TestCase):
         self.assertTrue(scp.endswith(" root@edge:/srv/channel/claims/pilot.park.json"), scp)
         self.assertIn("chown 65532:65532 /srv/channel/claims/pilot.park.json", ssh)
         self.assertIn("chmod 600 /srv/channel/claims/pilot.park.json", ssh)
-        self.assertTrue(ssh.startswith("ssh -o BatchMode=yes root@edge -- "), ssh)
+        self.assertTrue(ssh.startswith("ssh -o BatchMode=yes root@edge "), ssh)
         # What the operator's receipt line says, so the owner is on the screen
         # during the call instead of discovered from a uniform 403.
         self.assertEqual(where, f"{self.TARGET}/pilot.park.json (owner 65532:65532, the spool's)")
