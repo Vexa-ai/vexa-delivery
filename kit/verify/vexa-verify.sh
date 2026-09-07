@@ -53,6 +53,53 @@ if [ -n "$VERDICT_OUT" ]; then
   fi
 fi
 
+# A PATH TYPO MUST NOT WEAR THE ATTACK MESSAGE (2026-09-07).
+#
+# This script chdirs into --workdir below and only then resolves --pubkey and
+# --policy. A RELATIVE path given on the command line therefore silently missed,
+# and the miss surfaced as
+#
+#     FAIL  entry signature does NOT verify against the pinned channel key
+#     FAIL  revocation list signature does NOT verify ...
+#
+# — because cosign was handed a key file that was not there. The same entry
+# verified `Verified OK` by hand one command later. The comment at the freshness
+# check below says a signature failure "says someone may be attacking you",
+# which makes it the worst available message for a mistyped path.
+#
+# So both paths are resolved to absolute HERE, before the chdir and before a
+# single verification runs, and a file that is not there is named as what it is.
+# --policy is not optional-if-missing either: a --policy that silently resolves
+# to "no contract" turns every contract check into a check that did not run.
+abspath() {   # $1 = path -> absolute, without requiring the file to exist
+  case "$1" in
+    /*) printf '%s' "$1";;
+    *)  printf '%s/%s' "$(pwd)" "$1";;
+  esac
+}
+if [ ! -f "$PUBKEY" ]; then
+  echo "pubkey file not found: $PUBKEY" >&2
+  echo "  (a relative path is resolved against the directory you ran this from," >&2
+  echo "   never against --workdir. This is a path error and says nothing at all" >&2
+  echo "   about the entry.)" >&2
+  exit 2
+fi
+PUBKEY=$(abspath "$PUBKEY")
+if [ -n "$POLICY" ]; then
+  if [ ! -f "$POLICY" ]; then
+    echo "policy file not found: $POLICY" >&2
+    echo "  (a contract that cannot be read is not an empty contract — refusing" >&2
+    echo "   rather than reporting checks that never ran)" >&2
+    exit 2
+  fi
+  POLICY=$(abspath "$POLICY")
+fi
+# Same class, the other direction: a relative --verdict-out/--verdict-log is
+# written INSIDE the workdir, which the next run deletes. Resolve them against
+# the directory the operator ran from, which is where they meant them.
+[ -n "$VERDICT_OUT" ] && VERDICT_OUT=$(abspath "$VERDICT_OUT")
+[ -n "$VERDICT_LOG" ] && VERDICT_LOG=$(abspath "$VERDICT_LOG")
+
 FAILED=0
 ok()   { echo "OK    $1"; }
 fail() { echo "FAIL  $1" >&2; FAILED=$((FAILED+1)); }

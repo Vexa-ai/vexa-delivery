@@ -159,12 +159,36 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(rc, 4)
 
     def test_a_snapshot_that_was_fully_readable_still_exits_zero(self):
-        """The other side of it: no UNKNOWN, no FAIL -> 0, unchanged."""
-        snap = dict(RefusedReadsBecomeUnknown.SNAP)
+        """The other side of it: no UNKNOWN, no FAIL -> 0, unchanged.
+
+        The namespace now carries a PSA enforce label, because since 2026-09-07
+        a namespace that enforces NOTHING is itself UNKNOWN (P4, test below).
+        "Fully readable" has to mean there was something to read.
+        """
+        snap = json.loads(json.dumps(RefusedReadsBecomeUnknown.SNAP))
         snap["unreadable"] = {}
+        snap["namespace"]["metadata"]["labels"] = {
+            "pod-security.kubernetes.io/enforce": "baseline"}
         rc, out = self._run(snap)
         self.assertEqual(rc, 0)
         self.assertNotIn("NOT EVALUATED", out)
+
+    def test_a_namespace_that_enforces_nothing_is_unknown_not_a_pass(self):
+        """2026-09-07: P4 returned PASS on a project whose PSA labels and SCC
+        annotations the installer had just stripped — "no SCC and no PSA enforce
+        label ... nothing to trip, nothing verified" printed as a green. A pass
+        obtained from the enforcement being absent is the one shape this check
+        must never produce."""
+        snap = json.loads(json.dumps(RefusedReadsBecomeUnknown.SNAP))
+        snap["unreadable"] = {}
+        c = pf.check_pod_security(snap, [dict(pf.BOT_PROFILE)])
+        self.assertEqual(c.status, "UNKNOWN")
+        text = " ".join(c.findings)
+        self.assertIn("enforces nothing", text)
+        self.assertIn("This is not a pass", text)
+        rc, out = self._run(snap)
+        self.assertEqual(rc, 4)
+        self.assertIn("NOT EVALUATED", out)
 
 
 if __name__ == "__main__":

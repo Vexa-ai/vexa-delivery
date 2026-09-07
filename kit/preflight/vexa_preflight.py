@@ -366,6 +366,38 @@ def container_requirements(container):
     return req, lim
 
 
+# The two dimensions LimitRange constrains, with the parser and the printer for
+# each. Memory was the only one compared until 2026-09-07; cpu was declared and
+# then never checked against anything, which is the same hole one column over.
+DIMENSIONS = (
+    ("memory", parse_memory, fmt_mem),
+    ("cpu", parse_cpu, lambda v: f"{v}m"),
+)
+
+
+def limitrange_ceiling(container_lr):
+    """One line naming what P2 is comparing against — the LimitRange's own
+    numbers, printed whether or not anything trips them.
+
+    POSITIVE EVIDENCE, and it is the point. On 2026-09-07 P2 said only
+    "namespace has 1 LimitRange(s)" and PASSED, and the receipt read that pass
+    as proof the check does not compare against `max` at all. It does. What it
+    could not say was WHICH ceiling it had compared against — the live
+    `max.memory` was 8Gi at that moment and was reset to 2560Mi afterwards, so
+    the pass was true when taken and false an hour later, and nothing in the
+    output could distinguish those two worlds. A check that prints the number it
+    used is auditable; one that prints "a LimitRange exists" is not.
+    """
+    bits = []
+    for name, parse, fmt in DIMENSIONS:
+        for key in ("max", "min", "default", "defaultRequest"):
+            vals = {i.get(key, {}).get(name) for i in container_lr
+                    if (i.get(key) or {}).get(name)}
+            for v in sorted(vals):
+                bits.append(f"{key}.{name}={v}")
+    return ", ".join(bits) if bits else "no Container limits declared in it"
+
+
 def check_limitranges(snapshot, workloads):
     c = Check("P2", "Declared resources on every container, and they fit the LimitRange",
               "vexa#1005 (a customer LimitRange squeezed undeclared bots to 64Mi); vexa-platform#338 (sizing env vars dead code)")
@@ -375,7 +407,9 @@ def check_limitranges(snapshot, workloads):
     lr_items = [i for lr in lrs for i in lr.get("spec", {}).get("limits", [])]
     container_lr = [i for i in lr_items if i.get("type") == "Container"]
     if lrs:
-        c.note(f"namespace has {len(lrs)} LimitRange(s)")
+        names = ", ".join(lr.get("metadata", {}).get("name", "?") for lr in lrs)
+        c.note(f"namespace has {len(lrs)} LimitRange(s): {names}")
+        c.note(f"compared against — {limitrange_ceiling(container_lr)}")
     for w in workloads:
         for ct in w["containers"]:
             req, lim = container_requirements(ct)
@@ -403,22 +437,43 @@ def check_limitranges(snapshot, workloads):
                     remedy="declare requests+limits in the delivered values; sizes for bots: request 1Gi / limit 2560Mi (measured)",
                 )
                 continue
+            # EVERY DECLARED NUMBER AGAINST BOTH BOUNDS, IN BOTH DIMENSIONS.
+            #
+            # The LimitRanger admission plugin checks `max` and `min` against
+            # the request AND the limit, for every resource named in the
+            # LimitRange — plugin/pkg/admission/limitranger/admission.go,
+            # maxConstraint/minConstraint. This check compared exactly one of
+            # those four pairs (limits.memory vs max, requests.memory vs min)
+            # and no cpu at all, so three quarters of what admission will refuse
+            # was invisible to the check whose whole job is to predict it.
             for i in container_lr:
                 mx = i.get("max") or {}
                 mn = i.get("min") or {}
-                lim_mem = parse_memory(lim.get("memory"))
-                if mx.get("memory") and lim_mem and lim_mem > parse_memory(mx["memory"]):
-                    c.fail(
-                        f"{w['kind']}/{w['name']} '{ct['name']}' declares limits.memory "
-                        f"{lim.get('memory')} above the LimitRange max {mx['memory']} — admission will refuse the pod.",
-                        remedy="raise the LimitRange max or deliver a smaller profile for this environment",
-                    )
-                req_mem = parse_memory(req.get("memory"))
-                if mn.get("memory") and req_mem and req_mem < parse_memory(mn["memory"]):
-                    c.fail(
-                        f"{w['kind']}/{w['name']} '{ct['name']}' requests.memory {req.get('memory')} "
-                        f"is below the LimitRange min {mn['memory']}."
-                    )
+                lrname = "LimitRange"
+                for name, parse, _fmt in DIMENSIONS:
+                    for field, declared in (("requests", req), ("limits", lim)):
+                        raw = declared.get(name)
+                        if raw is None:
+                            continue
+                        value = parse(raw)
+                        if value is None:
+                            continue
+                        if mx.get(name) is not None and value > parse(mx[name]):
+                            c.fail(
+                                f"{w['kind']}/{w['name']} '{ct['name']}' declares {field}.{name} "
+                                f"{raw} above the {lrname} max {mx[name]} — admission will refuse "
+                                f"the pod ('maximum {name} usage per Container is {mx[name]}, "
+                                f"but {field[:-1]} is {raw}').",
+                                remedy=("raise the LimitRange max, or deliver a smaller profile for this "
+                                        "environment (kit/profiles/vexa/customer-values.example.yaml "
+                                        "caps the delivered postgres for exactly this reason)"),
+                            )
+                        if mn.get(name) is not None and value < parse(mn[name]):
+                            c.fail(
+                                f"{w['kind']}/{w['name']} '{ct['name']}' declares {field}.{name} "
+                                f"{raw} below the {lrname} min {mn[name]} — admission will refuse the pod.",
+                                remedy="raise the declared value, or lower the LimitRange min",
+                            )
     return c
 
 
@@ -430,30 +485,35 @@ def check_quota(snapshot, workloads):
     if not quotas:
         c.note("no ResourceQuota in the namespace")
         return c
-    need_req = sum(
-        parse_memory((container_requirements(ct)[0]).get("memory") or "0")
-        for w in workloads
-        for ct in w["containers"]
-    )
-    need_lim = sum(
-        parse_memory((container_requirements(ct)[1]).get("memory") or "0")
-        for w in workloads
-        for ct in w["containers"]
-    )
+    # Memory AND cpu. cpu was summed nowhere, so a quota with `limits.cpu` — the
+    # tenant grant's own shape — was a bound nothing compared anything against.
+    def total(index, dimension, parse):
+        return sum(
+            parse((container_requirements(ct)[index]).get(dimension) or "0")
+            for w in workloads
+            for ct in w["containers"]
+        )
+
+    needs = {
+        "requests.memory": (total(0, "memory", parse_memory), parse_memory, fmt_mem),
+        "limits.memory": (total(1, "memory", parse_memory), parse_memory, fmt_mem),
+        "requests.cpu": (total(0, "cpu", parse_cpu), parse_cpu, lambda v: f"{v}m"),
+        "limits.cpu": (total(1, "cpu", parse_cpu), parse_cpu, lambda v: f"{v}m"),
+    }
     for q in quotas:
         hard = q.get("status", {}).get("hard") or q.get("spec", {}).get("hard") or {}
         used = q.get("status", {}).get("used", {}) or {}
-        for key, need in (("requests.memory", need_req), ("limits.memory", need_lim)):
+        for key, (need, parse, fmt) in needs.items():
             if key in hard:
-                free = parse_memory(hard[key]) - parse_memory(used.get(key, "0"))
+                free = parse(hard[key]) - parse(used.get(key, "0"))
                 if need > free:
                     c.fail(
-                        f"quota '{q['metadata']['name']}' leaves {fmt_mem(free)} of {key} "
-                        f"but the delivered set declares {fmt_mem(need)} — admission will refuse pods at the margin.",
+                        f"quota '{q['metadata']['name']}' leaves {fmt(free)} of {key} "
+                        f"but the delivered set declares {fmt(need)} — admission will refuse pods at the margin.",
                         remedy="raise the quota or shrink the delivered profile",
                     )
                 else:
-                    c.note(f"quota '{q['metadata']['name']}' {key}: need {fmt_mem(need)}, free {fmt_mem(free)}")
+                    c.note(f"quota '{q['metadata']['name']}' {key}: need {fmt(need)}, free {fmt(free)}")
     return c
 
 
@@ -476,6 +536,32 @@ def check_pod_security(snapshot, workloads):
     labels = ns.get("metadata", {}).get("labels", {}) or {}
     is_openshift = snapshot.get("openshift_scc", False)
     psa_enforce = labels.get("pod-security.kubernetes.io/enforce")
+
+    # THE EFFECTIVE ADMISSION, READ AND PRINTED BEFORE ANY VERDICT (2026-09-07).
+    #
+    # This check used to end with a NOTE — "no SCC and no PSA enforce label on
+    # the namespace — admission here is permissive" — and a PASS. On the
+    # 2026-09-07 rehearsal that PASS was produced by the installer having just
+    # stripped the project's PSA labels and SCC annotations (`ensure_namespace`,
+    # now create-only). A green obtained from the enforcement being absent, in
+    # the one check whose subject IS the enforcement. Had the run stopped there
+    # it would have reported a hardened estate that was not one.
+    #
+    # Two changes, and the second is the one that matters:
+    #   - the effective admission is stated, always, so a PASS says what it was
+    #     measured against instead of only that it happened;
+    #   - "nothing enforces here" is UNKNOWN, never PASS. Nothing was verified,
+    #     which is exactly what UNKNOWN means in this file, and install.sh
+    #     already renders exit 4 as "not a verdict on your cluster".
+    scc_annotations = sorted(k for k in annotations if k.startswith("openshift.io/sa.scc."))
+    effective = [
+        f"PSA enforce={psa_enforce or 'none'}"
+        f" (audit={labels.get('pod-security.kubernetes.io/audit') or 'none'},"
+        f" warn={labels.get('pod-security.kubernetes.io/warn') or 'none'})",
+        f"SCC API on this cluster: {'present' if is_openshift else 'absent'}",
+        f"namespace SCC annotations: {', '.join(scc_annotations) if scc_annotations else 'none'}",
+    ]
+    c.note("effective admission — " + "; ".join(effective))
 
     for w in workloads:
         flags = w.get("host_flags", {})
@@ -537,8 +623,18 @@ def check_pod_security(snapshot, workloads):
                     seccomp = (sc.get("seccompProfile") or pod_sc.get("seccompProfile") or {}).get("type")
                     if seccomp not in ("RuntimeDefault", "Localhost"):
                         c.fail(f"{w['kind']}/{w['name']} '{ct['name']}': seccompProfile RuntimeDefault required under PSA restricted.")
-    if not is_openshift and not psa_enforce:
-        c.note("no SCC and no PSA enforce label on the namespace — admission here is permissive; nothing to trip, nothing verified about hardened namespaces")
+    if not psa_enforce and not scc_annotations:
+        c.unknown(
+            "UNEVALUATED — this namespace enforces nothing: no PSA enforce label and no "
+            "openshift.io/sa.scc.* annotations. Admission here is permissive, so nothing "
+            "the delivered set declares can be tripped and NOTHING about hardened "
+            "namespaces was verified. This is not a pass. If the project was created by "
+            "your platform team with a security grant, that grant is missing NOW — read "
+            "the namespace and compare it with the manifest it was created from.",
+            remedy=("apply the project's own grant (PSA labels + SCC annotations) and re-run. "
+                    "install.sh no longer writes to a namespace it did not create, so nothing "
+                    "in this kit removes it"),
+        )
     return c
 
 

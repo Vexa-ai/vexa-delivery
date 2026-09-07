@@ -70,6 +70,7 @@ test-kit:
 	bash kit/tests/test_install_manifests.sh
 	bash kit/tests/test_install_dry_run_secrets.sh
 	bash kit/tests/test_install_object_names.sh
+	bash kit/tests/test_install_namespace_and_contract.sh
 	bash kit/tests/test_claim.sh
 
 # Every service under edge/, each against its own fixtures. One target rather
@@ -104,6 +105,7 @@ test-platform:
 # oras/cosign. Offline: no registry, no cluster, no signature.
 test-verify:
 	bash kit/verify/tests/test_estate_verify.sh
+	bash kit/verify/tests/test_path_resolution.sh
 	bash kit/verify/tests/test_verdict_out.sh
 	bash kit/verify/tests/test_carriage_contract.sh
 	bash kit/verify/tests/test_verdict_wiring.sh

@@ -358,10 +358,38 @@ detect_component() {   # $1 = namespace, $2.. = candidate deployment names
 # the other verifies — never both, because a `create namespace` from a tenant
 # is Forbidden and would stop the script on a namespace that already exists.
 #
+# CREATE-ONLY, AND THIS IS THE WHOLE POINT (2026-09-07).
+#
+# This function used to run
+#
+#     kubectl create namespace <ns> --dry-run=client -o yaml | kubectl apply -f -
+#
+# unconditionally. Against a namespace THIS INSTALLER DID NOT CREATE that is not
+# a no-op: `apply` of a bare Namespace is a three-way merge, and it PRUNES
+# whatever an earlier declarative apply had put there. On the 2026-09-07
+# rehearsal a pre-created project went from
+#
+#     pod-security.kubernetes.io/{enforce,enforce-version,audit,warn}: restricted
+#     openshift.io/sa.scc.{uid-range,supplemental-groups,mcs}
+#
+# to the single `kubernetes.io/metadata.name` label — silently. PSA enforcement
+# and the annotations the SCC mutation reads were gone, from a namespace the
+# installer does not own, and preflight P4 then returned PASS *because* they
+# were gone. A pass obtained from the enforcement being absent.
+#
+# The documented pilot shape is exactly this: a project pre-created by the
+# platform team, carrying SCC annotations and PSA labels
+# (docs/environments/openshift). So the rule is create-only: this installer
+# writes a Namespace object ONLY when it is the thing creating it. An existing
+# namespace's labels, annotations and rolebindings are never touched, never
+# merged into, never pruned. Nothing here needs to change them, and the platform
+# team's grant is not ours to edit.
+#
 # `quiet` as the second argument routes the create through apply_quiet rather
 # than apply: silent on a REAL run, still RENDERED under --dry-run. That is the
 # distinction apply_quiet exists to hold, and a bare `>/dev/null` on the call
 # would take the render away again.
+NS_HANDLED=""
 ensure_namespace() {   # $1 = namespace  $2 = "quiet" to route through apply_quiet
   if $PACK_SCOPE; then
     $DRY_RUN && return 0
@@ -370,6 +398,15 @@ ensure_namespace() {   # $1 = namespace  $2 = "quiet" to route through apply_qui
     echo "  platform pack owns it. Either it was not applied, or --staging-ns/--prod-ns name"
     echo "  something the pack did not create."
     exit 3
+  fi
+  # Said once per namespace per run: this is called from two loops, and four
+  # copies of the same line is noise rather than evidence.
+  case " $NS_HANDLED " in *" $1 "*) return 0;; esac
+  NS_HANDLED="$NS_HANDLED $1"
+  if kc get namespace "$1" >/dev/null 2>&1; then
+    echo "   namespace '$1' already exists — NOT touched (labels, annotations and"
+    echo "     rolebindings are left exactly as the platform team set them)"
+    return 0
   fi
   if [ "${2:-}" = quiet ]; then
     kc create namespace "$1" --dry-run=client -o yaml | apply_quiet
@@ -990,23 +1027,67 @@ ${REGISTRY_CRED_FIELDS}
 ${INSECURE_FIELDS}
 EOF
 
+# THE BYTES THE GATE HASHES MUST BE THE BYTES THE LEDGER HOLDS (2026-09-07).
+#
+# This loop wrote the ConfigMap through `json.dumps(yaml.safe_load(file))`. That
+# re-serializes the document — on the 2026-09-07 rehearsal, 757 bytes of record
+# into 617 bytes of compact JSON — and the in-cluster gate hashes the copy it is
+# given. So the recorded verdict named `contract_sha256: 31c6669e…` while the
+# ledger record, and the station report's own `contract_document` section, hash
+# to `da5d15d4…`. Two hashes for one contract, and an audit asking "which
+# promise was this admitted under" cannot answer from either side.
+#
+# A JSON contract is now mounted VERBATIM: same bytes in the ConfigMap as on
+# disk, so the gate's hash equals the record's. Only a YAML contract is
+# converted — the gate reads it with `jq` and needs JSON — and then BOTH shas
+# are recorded in the ConfigMap itself, so the converted document can still be
+# traced back to the bytes a human signed off. Prefer a JSON contract: it is
+# the only shape where the two numbers are one number.
+sha256_of() {   # $1 = file -> bare hex, no filename, on Linux and macOS alike
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
 echo "== station contracts + channel key (what each environment verifies against)"
 CONTRACT_FILE=${CONTRACT:-$HERE/verify/policy.example.yaml}
 CONTRACT_PROD_FILE=${CONTRACT_PROD:-$CONTRACT_FILE}
+CONTRACT_WORK=$(mktemp -d)
 for pair in "vexa-contract-staging:$CONTRACT_FILE:$STAGING_NS" "vexa-contract-prod:$CONTRACT_PROD_FILE:$PROD_NS"; do
   cmname=${pair%%:*}; rest=${pair#*:}; file=${rest%%:*}; ns=${rest##*:}
   ensure_namespace "$ns" quiet
-  python3 - "$file" <<PYEOF2 > /tmp/vexa-contract.json
+  [ -f "$file" ] || { echo "install.sh: contract file not found: $file"; exit 2; }
+  CM_JSON="$CONTRACT_WORK/contract.json"
+  CM_EXTRA=()
+  if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$file" 2>/dev/null; then
+    # Already JSON. Byte-for-byte, which is the fix.
+    cp "$file" "$CM_JSON"
+    CONTRACT_SOURCE_NOTE="verbatim"
+  else
+    python3 - "$file" "$CM_JSON" <<'PYEOF2'
 import json, sys, yaml
-print(json.dumps(yaml.safe_load(open(sys.argv[1])) or {}))
+doc = yaml.safe_load(open(sys.argv[1])) or {}
+open(sys.argv[2], "w").write(json.dumps(doc))
 PYEOF2
-  kc -n "$ns" create configmap "$cmname" --from-file=contract.json=/tmp/vexa-contract.json \
+    cp "$file" "$CONTRACT_WORK/contract.source"
+    CM_EXTRA=(--from-file="contract.source=$CONTRACT_WORK/contract.source"
+              --from-literal="contract.source.sha256=$(sha256_of "$file")")
+    CONTRACT_SOURCE_NOTE="YAML converted to JSON — both shas recorded"
+  fi
+  CM_SHA=$(sha256_of "$CM_JSON")
+  kc -n "$ns" create configmap "$cmname" --from-file="contract.json=$CM_JSON" \
+    --from-literal="contract.sha256=$CM_SHA" \
+    ${CM_EXTRA[@]+"${CM_EXTRA[@]}"} \
     --dry-run=client -o yaml | apply_quiet
   kc -n "$ns" create secret generic vexa-channel-pubkey --from-file=channel.pub="$PUBKEY" \
     --dry-run=client -o yaml | apply_quiet
-  echo "   $ns: $cmname ($(basename "$file")) + channel key"
+  # Printed, because this is the number the verdict will carry and the number
+  # the ledger record must already hold. A mismatch is now visible at install
+  # time instead of in an audit.
+  echo "   $ns: $cmname ($(basename "$file"), $CONTRACT_SOURCE_NOTE)"
+  echo "     contract.json sha256:$CM_SHA — the verdict will name this"
+  echo "   $ns: channel key"
 done
-rm -f /tmp/vexa-contract.json
+rm -rf "$CONTRACT_WORK"
 
 # 6 · the subscription --------------------------------------------------------
 echo "== channel subscription (ApplicationSet: staging follows 'current'; prod follows YOUR pin)"
