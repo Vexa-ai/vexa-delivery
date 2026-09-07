@@ -8,6 +8,10 @@ that records every remote command line and every byte sent over stdin — so
 assertions, not prose. The parts worth testing are the ones where a bug
 silently locks somebody out, silently grants them access, or silently rotates
 an account and prints nothing.
+
+``test_subscriber_host.py`` covers the same host half one level lower: the
+real ``ssh``/``docker``/``curl``/``htpasswd`` shell-outs, against shims on
+``PATH`` that log every argv, so the two files cannot agree by construction.
 """
 
 import argparse
@@ -15,6 +19,7 @@ import base64
 import contextlib
 import io
 import os
+import pathlib
 import shlex
 import subprocess
 import sys
@@ -146,6 +151,11 @@ class TestComposeEscape(unittest.TestCase):
         # What compose does to $$ is collapse it back to $ — round trip.
         self.assertEqual(vs.compose_escape(BC).replace("$$", "$"), BC)
 
+    def test_the_escaped_hash_keeps_its_length(self):
+        # The scar was a LENGTH: 57 characters where 60 were written. What the
+        # container ends up holding must be the hash, character for character.
+        self.assertEqual(len(vs.compose_escape(BC).replace("$$", "$")), len(BC))
+
 
 class TestEnvFile(unittest.TestCase):
     ENV = "# comment\nPUBLISHER_BCRYPT=old\nEDGE_READER_BASIC=abc\nSUB_PILOT_BCRYPT=x\n"
@@ -153,6 +163,14 @@ class TestEnvFile(unittest.TestCase):
     def test_sub_env_key(self):
         self.assertEqual(vs.sub_env_key("pilot"), "SUB_PILOT_BCRYPT")
         self.assertEqual(vs.sub_env_key("test-sub"), "SUB_TEST_SUB_BCRYPT")
+
+    def test_an_invalid_account_name_cannot_forge_a_key(self):
+        # The key is interpolated into an env file; a name carrying '=' or a
+        # newline would write a second variable.
+        for name in ("a=b", "a\nb", "A"):
+            with self.subTest(name=name):
+                with self.assertRaises(vs.SubscriberError):
+                    vs.sub_env_key(name)
 
     def test_set_replaces_only_the_target_line(self):
         out = vs.set_env_value(self.ENV, "PUBLISHER_BCRYPT", "new")
@@ -173,6 +191,76 @@ class TestEnvFile(unittest.TestCase):
     def test_env_has_key(self):
         self.assertTrue(vs.env_has_key(self.ENV, "SUB_PILOT_BCRYPT"))
         self.assertFalse(vs.env_has_key(self.ENV, "SUB_GHOST_BCRYPT"))
+        # A key is a whole key, not a prefix: SUB_PILOT_BCRYPT must not answer
+        # for SUB_PILOT_BCRYPT_OLD, and a commented-out line is not a key.
+        self.assertFalse(vs.env_has_key("SUB_PILOT_BCRYPT_OLD=x\n", "SUB_PILOT_BCRYPT"))
+        self.assertFalse(vs.env_has_key("# SUB_PILOT_BCRYPT=x\n", "SUB_PILOT_BCRYPT"))
+
+    def test_everything_else_is_byte_identical(self):
+        # The Caddyfile reads this file by key; the operator reads it by eye.
+        out = vs.set_env_value(self.ENV, "PUBLISHER_BCRYPT", "new")
+        self.assertEqual(
+            [ln for ln in out.splitlines() if not ln.startswith("PUBLISHER_")],
+            [ln for ln in self.ENV.splitlines() if not ln.startswith("PUBLISHER_")],
+        )
+
+    def test_a_file_with_no_trailing_newline_keeps_not_having_one(self):
+        self.assertEqual(vs.set_env_value("A=1", "A", "2"), "A=2")
+
+
+class TestAccountScope(unittest.TestCase):
+    ENV = "PUBLISHER_BCRYPT=x\nEDGE_READER_BASIC=y\nSUB_PILOT_BCRYPT=z\n"
+
+    def test_scope_is_read_from_the_env_file_not_assumed(self):
+        self.assertEqual(vs.account_scope("publisher", self.ENV), "push+pull")
+        self.assertEqual(vs.account_scope("edge-signature-reader", self.ENV), "edge-held")
+        self.assertEqual(vs.account_scope("pilot", self.ENV), "pull+station")
+        self.assertEqual(vs.account_scope("rehearsal", self.ENV), "pull")
+
+
+class TestSiteConfiguration(unittest.TestCase):
+    """ADR-0009 § 4: host coordinates are configuration, not repository content.
+
+    None of the three has a default. A defaulted ssh target would operate
+    somebody else's host and report success; a defaulted root would fail
+    loudly on the first read, but a default that drifts from the example file
+    is still a coordinate this module would be asserting about an estate it
+    knows nothing of. Each one refuses, and names itself.
+    """
+
+    def setUp(self):
+        self.saved = {k: os.environ.pop(k, None)
+                      for k in ("CHANNEL_REGISTRY_SSH", "CHANNEL_ROOT", "CHANNEL_EDGE_URL")}
+
+    def tearDown(self):
+        for key, value in self.saved.items():
+            os.environ.pop(key, None)
+            if value is not None:
+                os.environ[key] = value
+
+    def test_no_host_literal_survives_in_the_module(self):
+        # The port's whole reason for landing in this repository rather than
+        # the private one: no address, and no absolute path held as a constant.
+        source = pathlib.Path(vs.__file__).read_text()
+        self.assertNotRegex(source, r"\b\w+@\d{1,3}(?:\.\d{1,3}){3}\b")
+        self.assertNotRegex(source, r"(?m)^[A-Z_]+ *= *['\"]/")
+
+    def test_each_coordinate_refuses_and_names_its_variable(self):
+        for func, var in ((vs.channel_ssh, "CHANNEL_REGISTRY_SSH"),
+                          (vs.channel_root, "CHANNEL_ROOT"),
+                          (vs.edge_url, "CHANNEL_EDGE_URL")):
+            with self.subTest(var=var):
+                with self.assertRaises(vs.SubscriberError) as caught:
+                    func()
+                self.assertIn(var, str(caught.exception))
+                self.assertIn("channel.example.env", str(caught.exception))
+
+    def test_a_trailing_slash_does_not_double_up(self):
+        os.environ["CHANNEL_ROOT"] = "/srv/channel/"
+        self.assertEqual(vs.htpasswd_path(), "/srv/channel/htpasswd")
+        self.assertEqual(vs.env_path(), "/srv/channel/env")
+        os.environ["CHANNEL_EDGE_URL"] = "https://channel.example/"
+        self.assertEqual(vs.edge_url(), "https://channel.example")
 
 
 class TestPassword(unittest.TestCase):
