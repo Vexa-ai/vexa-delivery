@@ -408,10 +408,11 @@ class Handler(BaseHTTPRequestHandler):
 #
 #   401  the /claim stanza sat BELOW Caddy's `@write method PUT POST PATCH
 #        DELETE` gate. `handle` blocks are evaluated in order and the first
-#        match wins, so the publisher gate answered every claim.
+#        match wins, so the publisher gate answered every claim. A MISSING
+#        stanza is the same 401: the gate matches POST on every path.
 #   502  the stanza proxied to 127.0.0.1:8088 and Caddy was a container, whose
 #        loopback is its own. The config validates, Caddy starts, a claim fails.
-#   404  no stanza at all — the registry's own "page not found".
+#   404  no route and no write gate either — not the channel edge at all.
 #
 # `caddy validate` passes all three. This posts ONE deliberately malformed claim
 # — a station and no code — to the public URL and reads the answer. The service
@@ -505,12 +506,18 @@ def probe(config: Config, url: str, *, timeout: float = PROBE_TIMEOUT) -> "tuple
                "address, not the caller's)"),
         ]
     if status == HTTPStatus.UNAUTHORIZED:
+        # A missing stanza and a stanza below the gate are the SAME answer on
+        # the wire: `@write` matches POST on every path, so with no `handle
+        # /claim` above it the gate takes the request either way (the rig of
+        # 2026-09-07 proved both shapes answer 401, not 404).
         return False, [
-            f"probe FAILED: {url} answered 401 — the write gate took the request.",
-            "  The `handle /claim` stanza sits BELOW `@write method PUT POST PATCH "
-            "DELETE` in the Caddyfile. `handle` blocks are evaluated in order and "
-            "the first match wins, so the publisher gate answers every claim. Move "
-            "the stanza ABOVE the write gate (README.md § Deploy, step 4).",
+            f"probe FAILED: {url} answered 401 — the write gate took the request: "
+            "no `handle /claim` stanza is ABOVE it.",
+            "  The Caddyfile's `@write method PUT POST PATCH DELETE` matches POST on "
+            "every path, and `handle` blocks are evaluated in order, so a /claim "
+            "stanza that is missing or sits below the gate is never reached and "
+            "the publisher gate answers every claim. Put the stanza ABOVE the write "
+            "gate (README.md § Deploy, step 4).",
         ]
     if status in (HTTPStatus.NOT_FOUND, HTTPStatus.METHOD_NOT_ALLOWED):
         return False, [

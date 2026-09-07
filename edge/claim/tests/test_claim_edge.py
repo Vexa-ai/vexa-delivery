@@ -280,12 +280,15 @@ class EdgeCase(unittest.TestCase):
         self.assertIn("not in this spool", lines[0])
 
     def test_probe_names_the_write_gate(self):
-        # 2026-09-06, finding 3: the stanza below `@write` and every claim a 401.
+        # 2026-09-06, finding 3: the stanza below `@write` and every claim a
+        # 401. A MISSING stanza is the same 401 — the gate matches POST on every
+        # path — so the verdict names both.
         url = self.stub(401, b"", {"WWW-Authenticate": 'Basic realm="Vexa channel registry"'})
         ok, lines = ce.probe(self.config, url)
         self.assertFalse(ok)
         self.assertIn("401", lines[0])
         self.assertIn("write gate", lines[0])
+        self.assertIn("missing or sits below", lines[1])
         self.assertIn("ABOVE", lines[1])
         self.assertEqual(self.attempts(), [])
 

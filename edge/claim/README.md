@@ -284,9 +284,9 @@ station name no real station has. What it says:
 | Answer | Verdict |
 |---|---|
 | `403` with this service's body, **and** the row is in this spool | **OK** — the route reaches this service, and the row's `source` is what Caddy forwards |
-| `401` | the stanza is below the write gate |
+| `401` | the write gate took it: the stanza is below the gate, **or missing** — on the wire those are the same answer, because `@write` matches POST on every path |
 | `502` / `503` / `504` | the stanza points at a loopback that is not this host's — Caddy is a container |
-| `404` | no route to `/claim` at that URL |
+| `404` | no route and no write gate: not the channel edge at that URL |
 | `403` with this service's body, but no row here | a claim service answered, and it was not this one |
 
 `compose.yaml` passes `$CHANNEL_CLAIM_EDGE` in as `CLAIM_PUBLIC_URL`, so
