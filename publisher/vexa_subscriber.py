@@ -85,6 +85,7 @@ import base64
 import json
 import os
 import pathlib
+import re
 import secrets
 import shlex
 import shutil
@@ -509,7 +510,124 @@ def verify_credential(name: str, password: str) -> None:
 # --------------------------------------------------------------------------
 
 
-def deliver_park(record: dict, *, spool: "str | None", ssh: "str | None") -> str:
+def split_scp_target(target: str) -> "tuple[str, str]":
+    """`user@host:/path` into what `ssh` dials and the path on that host.
+
+    The same string `scp` takes, split at its first colon, so the operator sets
+    ONE value (`$CHANNEL_CLAIM_SPOOL_SSH`) and both the copy and the chown that
+    follows it land on the same host. An IPv6 literal arrives bracketed for
+    scp's sake and `ssh` wants it bare.
+    """
+    text = target.rstrip("/")
+    if text.startswith("["):
+        host, sep, path = text[1:].partition("]:")
+    else:
+        host, sep, path = text.partition(":")
+    if not sep or not host or not path.startswith("/"):
+        raise SubscriberError(
+            f"--park-ssh {target!r} is not an scp target: expected "
+            "user@host:/absolute/path/to/spool (see config/channel.example.env)"
+        )
+    return host, path
+
+
+def spool_ssh_run(host: str, command: str) -> str:
+    """One command on the SPOOL's host; its stdout, or a refusal that quotes it.
+
+    A sibling of `ssh_run`, which dials `$CHANNEL_REGISTRY_SSH` for the mint:
+    the spool is addressed by `$CHANNEL_CLAIM_SPOOL_SSH`, which names its own
+    host — the same machine on the standalone edge, but a separate setting, so
+    it is dialled as itself. Same `BatchMode`: a prompt here would hang a
+    rotation in a terminal nobody is watching.
+    """
+    try:
+        proc = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", host, "--", command],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        raise SubscriberError("ssh not found on PATH") from None
+    if proc.returncode != 0:
+        raise SubscriberError(
+            f"ssh {host} {command!r} failed:\n{proc.stderr.strip()}"
+        )
+    return proc.stdout
+
+
+def remote_spool_owner(target: str) -> str:
+    """`uid:gid` of the spool directory on the edge host, checked BEFORE the mint.
+
+    The park is copied by `scp` as the SSH user — root, on the standalone host —
+    and lands `root:root 0600`. The service is `USER 65532` (edge/claim/
+    Dockerfile), correctly not root, so a park left owned by root is one it
+    cannot open: the code gets read aloud against a file the edge answers with
+    the uniform 403, which says nothing. Observed exactly so on the live edge
+    on 2026-09-06 (receipt, finding 4), when the deploy note's `chown` covered
+    the DIRECTORY and nothing covered the file.
+
+    So the file takes the owner of the spool it lands in — the one fact the
+    deploy already decided — and this reads that owner up front, where a spool
+    that is missing, unreachable, or itself still root-owned refuses before
+    anything is rotated. A root-owned spool is refused outright: with the
+    shipped image every park into it would be unreadable, and the fix is one
+    line on the edge host. `stat -c` is GNU coreutils, which the edge host has
+    by being a Linux Docker host.
+    """
+    host, path = split_scp_target(target)
+    quoted = shlex.quote(path)
+    # One remote command, exit 0 either way, so that "ssh failed" (a non-zero
+    # exit, quoted from stderr) and "no such directory" (this sentinel) are
+    # told apart instead of both reading as a failed login.
+    out = spool_ssh_run(
+        host, f"test -d {quoted} && stat -c %u:%g {quoted} || echo no-such-directory"
+    ).strip()
+    if not re.fullmatch(r"[0-9]+:[0-9]+", out):
+        raise SubscriberError(
+            f"the spool {path} on {host} is not a directory (or `stat -c` is not "
+            f"GNU stat there): got {out!r}. Create it on the edge host — "
+            "edge/claim/README.md § Deploy, step 1. Nothing was minted."
+        )
+    if out.startswith("0:"):
+        raise SubscriberError(
+            f"the spool {path} on {host} is owned by root. The claim edge runs as "
+            "uid 65532 (edge/claim/Dockerfile) and cannot read a park that lands "
+            "in a root-owned spool — the code would be read aloud against a file "
+            f"the service cannot open. On the edge host: chown 65532:65532 {path} "
+            "(edge/claim/README.md § Deploy, step 1). Nothing was minted."
+        )
+    return out
+
+
+def adopt_spool_owner(path: pathlib.Path) -> "str | None":
+    """Give a locally written park the owner of the spool it landed in.
+
+    The local transport has the same shape of failure one level down: a
+    publisher running as root on the edge host itself, writing into the
+    service's 65532-owned spool, leaves a root-owned file the service cannot
+    read. Only root can hand a file to another uid, so this is best effort —
+    a publisher that is not root keeps its own file, which is the right answer
+    for a synced directory (the far end re-owns it) and is said aloud for a
+    shared mount rather than left to fail at the call.
+
+    Returns a warning line, or None when the owner already matches.
+    """
+    want = path.parent.stat()
+    have = path.stat()
+    if (have.st_uid, have.st_gid) == (want.st_uid, want.st_gid):
+        return None
+    try:
+        os.chown(path, want.st_uid, want.st_gid)
+    except PermissionError:
+        return (
+            f"park is owned by uid {have.st_uid} inside a spool owned by uid "
+            f"{want.st_uid}; the edge can read it only if it runs as uid "
+            f"{have.st_uid} — otherwise chown {want.st_uid}:{want.st_gid} {path}"
+        )
+    return None
+
+
+def deliver_park(record: dict, *, spool: "str | None", ssh: "str | None",
+                 owner: "str | None" = None) -> str:
     """Put the park where the edge will read it. Local directory, or scp.
 
     Exactly one transport, chosen by the operator's site: a spool the publisher
@@ -518,10 +636,25 @@ def deliver_park(record: dict, *, spool: "str | None", ssh: "str | None") -> str
     on the scp path is written 0600 into a 0700 temp directory and removed
     afterwards — it is ciphertext, but it is ciphertext with a fifteen-minute
     code beside it in somebody's terminal.
+
+    ON THE SCP PATH THE COPY IS FOLLOWED BY A CHOWN, over the same SSH login, to
+    `owner` — the spool directory's own `uid:gid`, read by `remote_spool_owner`
+    (passed in from the preflight, or read here). `scp` writes as the SSH user,
+    and a park owned by root in a spool the service owns as 65532 is a park the
+    service cannot open (2026-09-06, finding 4). The mode is re-asserted to 0600
+    in the same command rather than trusted to scp's protocol negotiation.
+    Both steps happen before the code is printed, so the operator never reads
+    six digits aloud against a file the edge cannot read.
     """
     name = f"{record['station']}.park.json"
     if spool:
-        return str(vexa_claim.write_park(pathlib.Path(spool).expanduser(), record))
+        path = vexa_claim.write_park(pathlib.Path(spool).expanduser(), record)
+        warning = adopt_spool_owner(path)
+        if warning:
+            print(f"# warning: {warning}", file=sys.stderr)
+        return str(path)
+    host, remote_dir = split_scp_target(ssh)
+    owner = owner or remote_spool_owner(ssh)
     work = pathlib.Path(tempfile.mkdtemp(prefix="vexa-park-"))
     try:
         vexa_claim.write_park(work, record)
@@ -537,9 +670,20 @@ def deliver_park(record: dict, *, spool: "str | None", ssh: "str | None") -> str
             raise SubscriberError("scp not found on PATH") from None
         except subprocess.CalledProcessError as exc:
             raise SubscriberError(f"scp to {target} failed:\n{exc.stderr.strip()}") from None
-        return target
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+    remote_file = shlex.quote(f"{remote_dir}/{name}")
+    try:
+        spool_ssh_run(host, f"chown {owner} {remote_file} && chmod 600 {remote_file}")
+    except SubscriberError as exc:
+        raise SubscriberError(
+            f"the park landed at {target} but is still owned by the SSH user, "
+            f"and the edge cannot read it until it is the spool's: on {host}, "
+            f"chown {owner} {remote_dir}/{name}. Do not read the code out until "
+            f"that is done.\n{exc}"
+        ) from None
+    return f"{target} (owner {owner}, the spool's)"
 
 
 def park_preflight(args: argparse.Namespace, account: str) -> dict:
@@ -590,9 +734,18 @@ def park_preflight(args: argparse.Namespace, account: str) -> dict:
         "edge": env_or_flag(args.edge, "CHANNEL_CLAIM_EDGE", "the claim endpoint URL"),
         "spool": spool,
         "ssh": ssh,
+        "spool_owner": None,
         "root": ledger_call(vexa_stations, vexa_stations.resolve_root, args.ledger),
         "channel": args.channel,
     }
+    # The two checks that leave this host come last, cheapest first. The SSH
+    # round trip proves the edge host answers, the spool exists, and who owns
+    # it — the owner the park will be handed to after the copy — so a wrong
+    # `$CHANNEL_CLAIM_SPOOL_SSH`, a spool nobody created, or a spool still owned
+    # by root refuses HERE, with nothing rotated, rather than at the scp after
+    # the subscriber's old credential has already stopped working.
+    if ssh:
+        context["spool_owner"] = remote_spool_owner(ssh)
     # LAST, and it is the expensive one: encrypt a throwaway to prove the key
     # works. A recipients file that is present but malformed fails here, on a
     # value nobody needs, instead of after the rotation.
@@ -641,7 +794,8 @@ def park_credential(ctx: dict, args: argparse.Namespace, *, account: str,
         ctx["root"], channel=ctx["channel"], station=ctx["station"],
         events=[vexa_stations.park_event(record)],
     )
-    where = deliver_park(record, spool=ctx["spool"], ssh=ctx["ssh"])
+    where = deliver_park(record, spool=ctx["spool"], ssh=ctx["ssh"],
+                         owner=ctx.get("spool_owner"))
 
     for line in (
         f"# parked for station {ctx['station']!r}, claimable at {ctx['edge']}",

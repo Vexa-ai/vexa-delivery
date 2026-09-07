@@ -6,9 +6,14 @@ credential once, and the code dies.
 
 **Deployed 2026-09-06** on the live channel edge, and the six-digit path ran end
 to end against it with a throwaway subscriber before any real code was parked:
-[receipt](/receipts/2026-09-06-edge-claim-and-channel-page). [§ Deploy](#deploy)
-is what was done, with four corrections marked **⚠** where the note as written
-would have failed.
+[receipt](/receipts/2026-09-06-edge-claim-and-channel-page). That deploy found
+four things the note as written got wrong, every one of them failing as the
+uniform `403` during the call. Three are now closed in code — the publisher
+hands each park to the spool's owner, the service proves its own public route
+with `--probe`, and the containerised-Caddy shape ships as a compose override —
+and proven against a throwaway rig shaped like the live host:
+[receipt](/receipts/2026-09-07-edge-deploy-defects-rig). [§ Deploy](#deploy) is
+the corrected note.
 
 | | |
 |---|---|
@@ -177,6 +182,12 @@ mkdir -m 700 $CHANNEL_ROOT/claims
 chown 65532:65532 $CHANNEL_ROOT/claims $CHANNEL_ROOT/claim-edge.key
 ```
 
+The `chown` of the spool is load-bearing twice over: the service runs as
+`65532` and must write there, and **the publisher reads this directory's owner
+before every mint and hands each park it delivers to that owner** (step 5). A
+spool left owned by root is refused by the publisher with this line as the fix,
+before anything is rotated.
+
 **2 · Build the image, digest-pinned.** Never on a laptop. The image is two
 Python files and `age`; the build context is this directory only.
 
@@ -201,35 +212,85 @@ docker build -t <registry>/vexa/claim-edge:<tag> edge/claim
 > `CLAIM_EDGE_IMAGE` to the id **on the host that runs it**: an image id does not
 > survive `save`/`load`, so the build host's id is not the one to write down.
 
-**3 · Start it.** `CLAIM_EDGE_IMAGE` must be the digest, not the tag.
+**3 · Start it, in the shape Caddy has.** `CLAIM_EDGE_IMAGE` must be the
+digest, not the tag. **Which shape is decided by where Caddy runs, and the two
+look identical until a claim fails:**
 
 ```bash
+# Caddy is a CONTAINER in the registry stack's compose project — the live edge.
+# The override joins that project's network under the alias `claim-edge`.
+CLAIM_EDGE_IMAGE=<ref>@sha256:… docker compose \
+  -f edge/claim/compose.yaml -f edge/claim/compose.caddy-container.yaml up -d
+
+# Caddy runs ON THE HOST: the base file alone; Caddy reaches 127.0.0.1:8088.
 CLAIM_EDGE_IMAGE=<ref>@sha256:… docker compose -f edge/claim/compose.yaml up -d
+
+# Either way:
 docker compose -f edge/claim/compose.yaml exec claim-edge \
   python3 /app/claim_edge.py --check
 ```
 
-**4 · Route `/claim` through Caddy**, so TLS and the single-host rule hold. It
-goes beside the existing signature-read and registry stanzas (RUNBOOK § 5.2):
+[`compose.caddy-container.yaml`](compose.caddy-container.yaml) attaches the
+service to the stack's network and changes nothing else; the network name
+defaults to `channel_default` and is set with `CHANNEL_STACK_NETWORK` when the
+live one differs — a wrong name fails loudly at `up`. It exists because on
+2026-09-06 the note said `reverse_proxy 127.0.0.1:8088` and Caddy was a
+container: that loopback is the **Caddy container's own**, the publish on the
+host's is unreachable from it, the config validates, Caddy starts, and only a
+claim fails. `--check` refuses an unwritable spool and names any park this uid
+cannot read.
+
+**4 · Route `/claim` through Caddy, ABOVE the write gate.** The Caddyfile has
+`@write method PUT POST PATCH DELETE`, gated on the publisher credential, and it
+matches **POST on every path**. `handle` blocks are evaluated in order and the
+first match wins, so a `/claim` stanza placed *after* that gate is never
+reached: every claim is answered `401` by the publisher gate, and `caddy
+validate` is happy. The stanza goes **between the station-write block and the
+write gate**, like this:
 
 ```caddyfile
+handle @stationwrite {
+    …                                  # unchanged
+}
+
+# The claim edge. ABOVE @write, which would otherwise take every POST.
 handle /claim {
-    reverse_proxy 127.0.0.1:8088
+    reverse_proxy claim-edge:8088      # Caddy in a container: the compose alias
+    # reverse_proxy 127.0.0.1:8088     # Caddy on the host: the loopback publish
+}
+
+@write method PUT POST PATCH DELETE
+handle @write {
+    basic_auth {
+        publisher {env.PUBLISHER_BCRYPT}
+    }
+    …
 }
 ```
 
-> **⚠ ABOVE THE WRITE GATE.** The Caddyfile's `@write method PUT POST PATCH
-> DELETE` gate matches **POST on every path**, and `handle` blocks are mutually
-> exclusive and evaluated in order. This stanza placed after it is shadowed and
-> every claim answers `401` from the publisher gate — indistinguishable, on the
-> wire, from a wrong code, during the call where somebody is reading six digits
-> aloud.
->
-> **⚠ `127.0.0.1` only if Caddy runs on the host.** Where Caddy is itself a
-> container — as it is on the live edge — that loopback is the Caddy container's
-> own and the publish below is unreachable from it. Attach this service to the
-> registry stack's network and proxy to its alias (`reverse_proxy
-> claim-edge:8088`). The wrong shape validates and starts; only a claim fails.
+**Then prove it from inside the service**, which is the only vantage point
+that can tell the three wrong shapes apart:
+
+```bash
+docker compose -f edge/claim/compose.yaml exec claim-edge \
+  python3 /app/claim_edge.py --probe https://<channel host>/claim
+```
+
+The probe posts one claim with a station and **no code** to the public URL —
+`malformed` to this service: `403`, nothing read from disk, no attempt counted
+against anything — and then looks for its own row in the attempts log, under a
+station name no real station has. What it says:
+
+| Answer | Verdict |
+|---|---|
+| `403` with this service's body, **and** the row is in this spool | **OK** — the route reaches this service, and the row's `source` is what Caddy forwards |
+| `401` | the stanza is below the write gate |
+| `502` / `503` / `504` | the stanza points at a loopback that is not this host's — Caddy is a container |
+| `404` | no route to `/claim` at that URL |
+| `403` with this service's body, but no row here | a claim service answered, and it was not this one |
+
+`compose.yaml` passes `$CHANNEL_CLAIM_EDGE` in as `CLAIM_PUBLIC_URL`, so
+`--probe` with no argument uses the same address the publisher parks against.
 
 `X-Forwarded-For` is set by Caddy, and `CLAIM_TRUST_FORWARDED_FOR=1` is correct
 **only** behind it. Reached directly, that header is whatever the caller typed,
@@ -239,12 +300,18 @@ and trusting it would hand every guesser a fresh rate-limit bucket per request.
 and set `$CHANNEL_CLAIM_EDGE` and `$CHANNEL_CLAIM_SPOOL_SSH` — see
 [`config/channel.example.env`](../../config/channel.example.env).
 
-> **⚠ Chown each park after it lands.** `deliver_park` scps as the SSH user
-> (root), so a park arrives `root:root 0600` inside a spool owned by `65532` and
-> the service — correctly not root — cannot open it. Step 1 chowns the
-> directory, which is not enough. Until the publisher does it, follow every park
-> with `chown 65532:65532 $CHANNEL_ROOT/claims/<station>.park.json`. The symptom
-> is the uniform `403`, on the call, and it says nothing.
+**Each park is handed to the spool's owner by the publisher, before the code is
+printed.** `scp` writes as the SSH user — root, on the standalone host — so a
+park used to arrive `root:root 0600` inside a spool owned by `65532`, and the
+service, correctly not root, could not open it. The 2026-09-06 deploy fixed both
+parks by hand. Now `add --park` reads the spool directory's `uid:gid` over SSH
+**before the mint** — refusing a spool that is missing, unreachable, or still
+owned by root, with nothing rotated — and follows the copy with `chown <that
+owner>` and `chmod 600` over the same login. The receipt line reads `park
+<target> (owner 65532:65532, the spool's)`. Should a park ever land wrong
+anyway, the service answers that claim `503` with an `error:` row naming the
+file and the fix, spends no attempt, and `--check` names the file; it is never
+the uniform `403`.
 
 **6 · Copy the attempts log back** after a delivery, so the return leg closes:
 
@@ -266,6 +333,7 @@ python3 publisher/vexa_stations.py record-credential \
 | `CLAIM_RATE_COOLDOWN` | `900` | seconds a source is refused after tripping the limit — one code's whole life |
 | `CLAIM_PARK_RATE_LIMIT` | `20` | requests per park per window, across every source |
 | `CLAIM_TRUST_FORWARDED_FOR` | off | `1` **only** behind a proxy that sets it |
+| `CLAIM_PUBLIC_URL` | — | the public claim URL, for `--probe` with no argument; `compose.yaml` takes it from `$CHANNEL_CLAIM_EDGE` |
 
 ## Limits, stated
 
@@ -303,3 +371,10 @@ that run was behind real TLS and real Caddy:
   `CLAIM_TRUST_FORWARDED_FOR=1` behind Caddy, every row in `attempts.ndjson`
   carried the caller's real public address rather than the proxy's, which is
   what the per-source limit is worth exactly as much as.
+
+**And what the live deploy found, the rig of 2026-09-07 reproduced and then
+proved fixed**
+([receipt](/receipts/2026-09-07-edge-deploy-defects-rig)): a containerised
+Caddy with the real write gate, the service behind it, and `scp` as root into a
+`65532`-owned spool. Each of the three defects was observed on the wire in its
+original shape first, then closed by the change that added this paragraph.

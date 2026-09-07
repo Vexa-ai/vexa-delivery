@@ -961,6 +961,17 @@ in the ledger at `channels/<channel>/stations/<station>/credential-events.yaml`
 — station, when, by whom, code hash, expiry, and every attempt the edge saw.
 Never the value.
 
+`add --park` checks the edge host **before** the mint — the spool exists, is
+reachable over `$CHANNEL_CLAIM_SPOOL_SSH`, and is not owned by root — and hands
+each park to the spool's owner after the copy, so the service can read what
+`scp` wrote as root. **After any change to the Caddyfile**, prove the route
+from inside each edge service rather than from a browser: `claim_edge.py
+--probe` and `page_edge.py --probe` tell a stanza shadowed by the write gate
+(`401`) from one pointing at a container's own loopback (`502`) from no route
+(`404`), all of which `caddy validate` passes
+([edge/claim/README.md § Deploy](edge/claim/README.md),
+[edge/page/README.md § Deploy](edge/page/README.md)).
+
 **Six digits is one of a million, and the counting is what makes that enough.**
 Five failed attempts burn the park, from all sources together: 5 in 1,000,000,
 once. The edge adds ten attempts per minute per source with a fifteen-minute

@@ -31,8 +31,12 @@ under the channel named in the URL: the manifest at `current`, and the
 matched against the entry schema's own pattern before it is interpolated, so
 there is no path a caller can write that reaches another repository.
 
-DEPLOYMENT: see README.md in this directory. This service has NOT been deployed
-by the change that introduced it — the live edge is founder-owned.
+DEPLOYMENT: see README.md in this directory. Live on the channel host since
+2026-09-06. `--probe` fetches the channel-page route through the PUBLIC edge
+from inside this service and says whether it arrived here: a `404` is the
+registry's own "page not found" (no route), a `502` is a route to a loopback
+that is not this host's (Caddy in a container), a `401` on the bare path is a
+`basic_auth` this route must not carry. `caddy validate` passes all three.
 """
 
 from __future__ import annotations
@@ -289,6 +293,114 @@ class Handler(BaseHTTPRequestHandler):
             f"{self.address_string()} {self.command} {self.path.split('?')[0]}\n")
 
 
+# --------------------------------------------------------------------------
+# --probe: the route, proven from inside the service.
+#
+# Two anonymous GETs against the public edge, for a channel name that need not
+# exist — an anonymous request makes no upstream call, so the probe costs the
+# registry nothing and needs no credential. What each answer means:
+#
+#   200 + the one line          the route reaches this service
+#   401 on `?signin=1`          ...and the sign-in branch is this service's too
+#   404                         the registry's "page not found": no route
+#   502 / 503 / 504             a route to a loopback that is not this host's
+#   401 on the BARE path        a `basic_auth` on the route; the split lives here
+# --------------------------------------------------------------------------
+
+PROBE_CHANNEL = "probe"
+PROBE_TIMEOUT = 10
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _probe_get(url: str, host: "str | None", timeout: float):
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Accept", "text/html")
+    if host:
+        req.add_header("Host", host)
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            return resp.status, resp.headers, resp.read(MAX_BLOB)
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.headers, (exc.read(MAX_BLOB) if exc.fp else b"")
+
+
+def probe(config: Config, base: "str | None" = None, *,
+          timeout: float = PROBE_TIMEOUT) -> "tuple[bool, list[str]]":
+    """The channel-page route through the public edge; the verdict as lines.
+
+    `(ok, lines)`. `base` defaults to `PAGE_UPSTREAM`, which IS the edge's own
+    origin — the same address a subscriber is handed — so no second variable is
+    needed to say where the public route lives.
+    """
+    base = (base or config.upstream).rstrip("/")
+    path = f"/vexa/channel/{PROBE_CHANNEL}"
+    line = vexa_page.ANONYMOUS_LINE.split("{", 1)[0].strip().encode()
+    try:
+        status, headers, body = _probe_get(base + path, config.upstream_host, timeout)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return False, [
+            f"probe FAILED: nothing answered at {base}{path} ({exc}).",
+            "  The service cannot reach the edge's public address from inside the "
+            "container — DNS, egress, or a name that does not resolve to this host "
+            "(set PAGE_UPSTREAM_HOST and dial the address; README.md § Deploy).",
+        ]
+    if status == HTTPStatus.OK and line in body:
+        status2, headers2, _ = _probe_get(base + path + "?signin=1",
+                                          config.upstream_host, timeout)
+        realm = headers2.get("WWW-Authenticate", "")
+        if status2 == HTTPStatus.UNAUTHORIZED and "Vexa Delivery channel" in realm:
+            return True, [
+                f"probe OK: {base}{path} reaches this service — anonymous answered "
+                "with the one line (200), and ?signin=1 is this service's 401.",
+            ]
+        return False, [
+            f"probe FAILED: {base}{path} answered 200 with this service's line, "
+            f"but ?signin=1 answered {status2} without this service's realm.",
+            "  Something between Caddy and this service rewrites the query or the "
+            "WWW-Authenticate header.",
+        ]
+    if status == HTTPStatus.NOT_FOUND:
+        return False, [
+            f"probe FAILED: {base}{path} answered 404 — the registry's own "
+            "\"page not found\". No route to /vexa/channel/<name> reaches this "
+            "service (README.md § Deploy, step 3).",
+        ]
+    if status in (HTTPStatus.BAD_GATEWAY, HTTPStatus.SERVICE_UNAVAILABLE,
+                  HTTPStatus.GATEWAY_TIMEOUT):
+        return False, [
+            f"probe FAILED: {base}{path} answered {status} — the edge has a route "
+            "but cannot reach this service.",
+            "  If Caddy is a container, `reverse_proxy 127.0.0.1:8089` is Caddy's "
+            "OWN loopback: proxy to the compose alias (`page-edge:8089`) and start "
+            "this service with compose.caddy-container.yaml (README.md § Deploy, "
+            "steps 2-3).",
+        ]
+    if status == HTTPStatus.UNAUTHORIZED:
+        return False, [
+            f"probe FAILED: {base}{path} answered 401 to an ANONYMOUS request.",
+            "  The route carries a `basic_auth` of its own. It must not: anonymous "
+            "is answered with one line, not refused, and the split lives in this "
+            "service (README.md § Deploy, step 3).",
+        ]
+    if 300 <= status < 400:
+        return False, [
+            f"probe FAILED: {base}{path} redirected ({status}) to "
+            f"{headers.get('Location', '?')} — that is not this service.",
+        ]
+    if status == HTTPStatus.OK:
+        return False, [
+            f"probe FAILED: {base}{path} answered 200 without this service's line "
+            "— something else is answering on that route.",
+        ]
+    return False, [f"probe FAILED: {base}{path} answered {status}, which this "
+                   "service never sends on this route."]
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="page_edge",
@@ -299,6 +411,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "TLS is Caddy's, upstream of this process)")
     p.add_argument("--check", action="store_true",
                    help="validate configuration and exit, serving nothing")
+    p.add_argument("--probe", nargs="?", const="", metavar="URL",
+                   help="fetch /vexa/channel/<name> anonymously through the PUBLIC "
+                        "edge (default: $PAGE_UPSTREAM, the edge's own origin) and "
+                        "say whether the route reaches this service — 404 is no "
+                        "route, 502 is a loopback that is not this host's, 401 is a "
+                        "basic_auth this route must not carry. Serves nothing.")
     return p
 
 
@@ -313,6 +431,11 @@ def main(argv=None) -> int:
         print(f"page-edge: config OK (upstream {config.upstream}, "
               f"cache {config.cache.ttl:g}s)")
         return 0
+    if args.probe is not None:
+        ok, lines = probe(config, args.probe or None)
+        for line in lines:
+            print(f"page-edge: {line}", file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
 
     host, _, port = args.listen.rpartition(":")
     Handler.config = config

@@ -14,13 +14,18 @@ an anonymous request must cost the registry nothing at all.
 """
 
 import base64
+import contextlib
 import hashlib
 import inspect
+import io
 import json
+import os
 import pathlib
+import socket
 import sys
 import threading
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -312,6 +317,95 @@ class EdgeCase(unittest.TestCase):
         src = inspect.getsource(REAL_LOG_MESSAGE)
         self.assertIn("self.path.split('?')[0]", src)
         self.assertNotIn("self.headers", src)
+
+
+def stub_server(status, body=b"", headers=None):
+    """Something that is NOT the channel page, on a real socket: the registry's
+    404, a Caddy with a dead upstream, a `basic_auth` that should not be there."""
+
+    class Stub(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(status)
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.02}, daemon=True).start()
+    return server
+
+
+class ProbeCase(EdgeCase):
+    """`--probe`: the route through the public edge, judged from inside."""
+
+    def stub(self, status, body=b"", headers=None) -> str:
+        server = stub_server(status, body, headers)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}"
+
+    def test_probe_ok_against_this_service_and_costs_the_registry_nothing(self):
+        ok, lines = pe.probe(pe.Handler.config, self.base)
+        self.assertTrue(ok, lines)
+        self.assertIn("probe OK", lines[0])
+        # Two anonymous requests, zero upstream calls: the probe needs no
+        # credential and cannot be used to generate load against the registry.
+        self.assertEqual(FixtureRegistry.calls, [])
+
+    def test_probe_defaults_to_the_upstream_which_is_the_edges_own_origin(self):
+        # PAGE_UPSTREAM is the edge's own origin — the address a subscriber is
+        # handed — so the probe needs no second variable to know where the
+        # public route is. Pointing it at this server proves the default path.
+        ok, lines = pe.probe(pe.Config(upstream=self.base))
+        self.assertTrue(ok, lines)
+
+    def test_probe_names_a_missing_route(self):
+        # The symptom that started the whole service: the registry's own text.
+        ok, lines = pe.probe(pe.Handler.config, self.stub(404, b"page not found\n"))
+        self.assertFalse(ok)
+        self.assertIn("page not found", lines[0])
+        self.assertIn("No route", lines[0])
+
+    def test_probe_names_a_loopback_that_is_not_this_hosts(self):
+        ok, lines = pe.probe(pe.Handler.config, self.stub(502))
+        self.assertFalse(ok)
+        self.assertIn("cannot reach this service", lines[0])
+        self.assertIn("127.0.0.1:8089", lines[1])
+        self.assertIn("compose.caddy-container.yaml", lines[1])
+
+    def test_probe_names_a_basic_auth_the_route_must_not_carry(self):
+        url = self.stub(401, b"", {"WWW-Authenticate": 'Basic realm="registry"'})
+        ok, lines = pe.probe(pe.Handler.config, url)
+        self.assertFalse(ok)
+        self.assertIn("ANONYMOUS", lines[0])
+        self.assertIn("basic_auth", lines[1])
+
+    def test_probe_refuses_a_200_that_is_not_this_service(self):
+        ok, lines = pe.probe(pe.Handler.config, self.stub(200, b"<html>welcome</html>"))
+        self.assertFalse(ok)
+        self.assertIn("without this service's line", lines[0])
+
+    def test_probe_reports_nothing_answering(self):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        ok, lines = pe.probe(pe.Handler.config, f"http://127.0.0.1:{port}", timeout=2)
+        self.assertFalse(ok)
+        self.assertIn("nothing answered", lines[0])
+
+    def test_the_probe_verb_through_main(self):
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.dict(os.environ, {"PAGE_UPSTREAM": self.base}), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = pe.main(["--probe"])
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn("probe OK", out.getvalue())
 
 
 class ConfigCase(unittest.TestCase):

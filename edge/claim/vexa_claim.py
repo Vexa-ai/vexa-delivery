@@ -368,12 +368,44 @@ def write_park(spool: pathlib.Path, record: dict) -> pathlib.Path:
 
 
 def read_json(path: pathlib.Path) -> "dict | None":
+    """A record in the spool, None if there is none — and a ClaimError, never a
+    bare exception, if there is one this process cannot open.
+
+    A park that exists but cannot be read is OUR misconfiguration, not the
+    caller's, so it must take the same path as a park sealed to a rotated key:
+    `503`, an `error:` row in the attempts log, and no attempt spent. Before this
+    was caught, a `PermissionError` escaped the handler and the connection was
+    dropped without an answer — which, through Caddy, reached the subscriber as
+    a `502`, and reached nobody's log at all. The way it happens in practice is
+    a park delivered by `scp` as root into a spool owned by 65532 (2026-09-06
+    receipt, finding 4); the message says so and names the fix.
+    """
     if not path.is_file():
         return None
     try:
-        return json.loads(path.read_text())
+        text = path.read_text()
+    except PermissionError:
+        raise ClaimError(
+            f"{path.name} exists but uid {os.getuid()} cannot read it: it was "
+            "delivered with the wrong owner — on the edge host, chown it to the "
+            "spool's owner (edge/claim/README.md § Deploy)"
+        ) from None
+    try:
+        return json.loads(text)
     except json.JSONDecodeError as exc:
         raise ClaimError(f"{path} is not readable JSON: {exc}") from None
+
+
+def unreadable_parks(spool: pathlib.Path) -> "list[pathlib.Path]":
+    """Every park in the spool this process cannot open. Deploy-time check."""
+    found = []
+    for park in sorted(spool.glob("*.park.json")):
+        try:
+            with open(park, "rb"):
+                pass
+        except PermissionError:
+            found.append(park)
+    return found
 
 
 def write_state(spool: pathlib.Path, state: dict) -> pathlib.Path:
