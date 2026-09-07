@@ -836,11 +836,15 @@ The edge presents a dedicated pull-only account, `edge-signature-reader`,
 upstream on the anonymous paths, reading its Basic credential from the
 `EDGE_READER_BASIC` key of `$CHANNEL_ROOT/env` on the standalone host.
 
-`vexa_subscriber.py add edge-signature-reader` now rotates **both halves in
-one step** — the bcrypt line in `$CHANNEL_ROOT/htpasswd` AND the base64
+`vexa_subscriber.py add edge-signature-reader` rotates **both halves in one
+step** — the bcrypt line in `$CHANNEL_ROOT/htpasswd` AND the base64
 `EDGE_READER_BASIC` in `$CHANNEL_ROOT/env` — then recreates the stack, so the
 manual step that [vexa-delivery-internal#35](https://github.com/Vexa-ai/vexa-delivery-internal/issues/35)
-tracked no longer exists on the live path. (The old in-cluster procedure in
+tracked no longer exists on the live path. *Rung: in this tree since
+[#42](https://github.com/Vexa-ai/vexa-delivery/pull/42) (2026-09-07), proven
+against a throwaway host of the live shape —
+[receipt](docs/receipts/2026-09-07-subscriber-standalone-host.md); not yet run
+against the live host.* (The old in-cluster procedure in
 `vexa-platform/cluster/channel-registry-ns/README.md` § Apply now applies only
 to the scaled-to-0 rollback deployment.)
 
@@ -864,30 +868,31 @@ python3 publisher/vexa_subscriber.py add <account>    # mint — also rotates
 python3 publisher/vexa_subscriber.py revoke <account> # remove, stack recreated
 ```
 
-> **⚠ THIS SECTION AND § 5.3 DESCRIBE A TOOL THAT IS NOT MERGED (found
-> 2026-09-06).** The three commands above, and the whole standalone-host
-> paragraph below, are true only of
-> [vexa-delivery-internal#46](https://github.com/Vexa-ai/vexa-delivery-internal/pull/46),
-> **open since 2026-08-25**. The `vexa_subscriber.py` in this tree still writes
-> the **in-cluster** path — namespace `channel-registry`, Secret
-> `registry-htpasswd`, `kubectl rollout restart` on two Deployments that have
-> been **scaled to 0 since the channel moved off the cluster on that same day**.
-> Run as written today it edits the rollback path, prints a credential that
-> authenticates nowhere, and reports success. Until that PR merges, `add` and
-> `revoke` against the live host are hand operations on `$CHANNEL_ROOT/htpasswd`
-> and `$CHANNEL_ROOT/env` followed by the recreate. The `--park` half is
-> unaffected and was used unmodified against the live edge on 2026-09-06.
+*Rung: **in this tree** — merged 2026-09-07 as
+[#42](https://github.com/Vexa-ai/vexa-delivery/pull/42), the port of
+[vexa-delivery-internal#46](https://github.com/Vexa-ai/vexa-delivery-internal/pull/46)
+onto the `--park` code. Before it merged, the whole lifecycle below — `list`,
+`add` on every kind of account, `revoke`, the refusals, and `add --park` on top
+— ran against a throwaway `registry:3` + Caddy stack of the live host's shape:
+[receipt](docs/receipts/2026-09-07-subscriber-standalone-host.md). **It has not
+been run against the live channel host**; the first live `add` is the next
+rung. The ⚠ that stood here from 2026-09-06, saying the tree wrote the dark
+in-cluster path, is gone because the tree no longer does.*
 
 The tool operates the **standalone host** (`$CHANNEL_REGISTRY_SSH`,
-`$CHANNEL_ROOT/` — site values in
-[`config/channel.example.env`](config/channel.example.env)) over SSH — since
-the 2026-08-25 move off the cluster there is
+`$CHANNEL_ROOT/`, proving against `$CHANNEL_EDGE_URL` — site values in
+[`config/channel.example.env`](config/channel.example.env); all three demanded
+before the mint) over SSH — since the 2026-08-25 move off the cluster there is
 no Secret and no Deployment on this path. A rotation touches **two files**:
 `htpasswd` (raw bcrypt, the registry's read path) and `env` (Caddy's
 `{env.*}` gates — `PUBLISHER_BCRYPT`, `SUB_<NAME>_BCRYPT`,
 `EDGE_READER_BASIC`), then runs `docker compose up -d --force-recreate` —
-a plain `docker restart` does **not** re-read `env_file`. After the recreate
-the tool proves the new credential against the live `/v2/` before printing it.
+a plain `docker restart` does **not** re-read `env_file` (measured, receipt
+§ 3). After the recreate the tool proves the new credential against the live
+`/v2/` — 200 with it, 401 without it — before printing it. **If that proof
+fails, the rotation has already happened and nothing was printed:** the
+account has no working credential until `add` runs again once the edge
+answers. The tool says so rather than hand out a value it could not verify.
 
 Pull-only per subscriber; no GitHub accounts, no per-customer ceremony. **The
 password is never written anywhere** — not to a file, not to a log, not to the
