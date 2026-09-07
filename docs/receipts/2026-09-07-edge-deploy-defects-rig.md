@@ -13,6 +13,18 @@ on it. **Nothing on any live host.** The live channel edge was not touched,
 read, or reached; it is running the 2026-09-06 deploy exactly as
 [that receipt](/receipts/2026-09-06-edge-claim-and-channel-page) left it.
 
+**Provenance, because `main` moved while the rig ran.**
+[#42](https://github.com/Vexa-ai/vexa-delivery/pull/42) merged meanwhile and
+rewrote the publisher's *mint* path for the standalone host, so the PR's
+commits are the rig's tree rebased onto `9c3e69c` and signed. `edge/` is
+byte-identical to `eda7269`. Of the park leg — `split_scp_target`,
+`remote_spool_owner`, `adopt_spool_owner`, `deliver_park`, `park_preflight`,
+`park_credential` — every function is identical too; the one change is the
+SSH helper, renamed `spool_ssh_run` beside #42's `ssh_run` and given the same
+`-o BatchMode=yes`. The stub `kubectl` below stood in for the mint path *as it
+was at `eda7269`*; after #42 the mint is an SSH write to the host, which this
+rig did not exercise and #42's own receipt does.
+
 **Nothing real was minted.** The publisher ran against a stub `kubectl` that
 answers its three registry calls with a fixture and refuses everything else;
 the age key pair was minted for this run and its private half was owned by
