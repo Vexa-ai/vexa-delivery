@@ -2455,6 +2455,174 @@ def prune_stale_subcharts(chart_dir):
 
 
 
+# ------------------------------------------------------------------ S1: secret material
+#
+# A published chart is readable by every account that can pull the channel, so
+# it never carries a credential. platform-chart refuses to package one whose
+# values (the operator's overlay, the chart's own values.yaml after the merge,
+# and every values file the package ships) carry secret material. Credentials
+# live in a Secret created out of band and are referenced by name.
+#
+# A refusal names the file, the key path and the rule, NEVER the value, so the
+# refusal text is safe to paste into an issue.
+
+S1_PEM_PRIVATE_RE = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+S1_TOKEN_PATTERNS = (
+    ("OpenAI-style key", re.compile(r"\bsk-[A-Za-z0-9]{20,}")),
+    ("Anthropic key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}")),
+    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}")),
+    ("AWS access key id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_-]{30,}")),
+    ("Slack token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}")),
+    ("Stripe secret key", re.compile(r"\b[rs]k_live_[A-Za-z0-9]{16,}")),
+    ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
+    ("kubeconfig client key", re.compile(r"client-key-data\s*:\s*\S")),
+)
+# Values paths that hold a credential by contract: non-empty is a refusal.
+S1_CREDENTIAL_PATHS = (
+    "core0134.runtimeApiToken",
+    "core0134.identitySigningKeyPem",
+)
+# A key whose name says it holds a credential...
+S1_SECRET_NAME_RE = re.compile(
+    r"(secret|token|password|passwd|api[_-]?key|access[_-]?key|credential|"
+    r"private[_-]?key|signing[_-]?key|passphrase|htpasswd)", re.I)
+# ...unless the name says it only names, locates or describes one.
+S1_REFERENCE_NAME_RE = re.compile(
+    r"(name|names|ref|path|file|enabled|repository|namespace|id|sha256|hash|header|"
+    r"mode|url|ttl|seconds|key_?name|secret_?key_?ref|existing_?secret|"
+    r"token_?key|token_?secret|secret_?ref)$", re.I)
+# A value that names or stands in for a credential rather than being one: empty,
+# a placeholder, an env var or Secret key name (RUNTIME_API_TOKEN), a k8s object
+# name with words in it (vexa-platform-vexa-secrets), a path, a URL, a digest.
+S1_PLACEHOLDER_RE = re.compile(
+    r"^\s*(|~|-|null|none|redacted|<[^>]*>|\*{2,}|x{3,}|change[_-]?me.*|todo.*|"
+    r"set[_-]?in[_-]?cluster|from[_-]?vault.*|sha256:[0-9a-f]{64})\s*$", re.I)
+S1_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+S1_K8S_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$")
+
+
+def _s1_is_reference_value(v):
+    if not isinstance(v, str):
+        return not isinstance(v, (bytes,))          # bools, numbers: not credentials
+    s = v.strip()
+    if S1_PLACEHOLDER_RE.match(s) or S1_ENV_NAME_RE.match(s):
+        return True
+    if s.startswith(("/", "http://", "https://", "file://", "oci://")):
+        return True
+    if len(s) <= 63 and S1_K8S_NAME_RE.match(s) and "-" in s:
+        # a Secret/object name: dash-separated words, at least one of 3+ letters,
+        # and no segment that is a long random-looking run
+        segs = re.split(r"[-.]", s)
+        if any(re.fullmatch(r"[a-z]{3,}", g) for g in segs) and not any(len(g) >= 16 for g in segs):
+            return True
+    return False
+
+
+def _s1_get(d, dotted):
+    cur = d
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def scan_values_for_secrets(values, where):
+    """Findings (strings, never values) for secret material in a parsed values tree."""
+    findings = []
+    for p in S1_CREDENTIAL_PATHS:
+        v = _s1_get(values, p)
+        if v not in (None, "", False):
+            findings.append(f"{where}: '{p}' is set (len {len(str(v))}); this credential lives "
+                            f"in a Secret created out of band, never in chart values")
+
+    def walk(obj, trail):
+        if isinstance(obj, dict):
+            # an env entry {name: SOMETHING_TOKEN, value: <literal>}
+            n, val = obj.get("name"), obj.get("value")
+            if (isinstance(n, str) and isinstance(val, str) and S1_SECRET_NAME_RE.search(n)
+                    and not S1_REFERENCE_NAME_RE.search(n) and not _s1_is_reference_value(val)
+                    and len(val.strip()) >= 8):
+                findings.append(f"{where}: env '{n}' at '{'.'.join(trail)}' carries a literal "
+                                f"value (len {len(val)}); use valueFrom.secretKeyRef")
+            for k, v in obj.items():
+                path = trail + (str(k),)
+                if isinstance(v, (dict, list)):
+                    walk(v, path)
+                    continue
+                if isinstance(v, str):
+                    check_string(v, path)
+                    if (S1_SECRET_NAME_RE.search(str(k)) and not S1_REFERENCE_NAME_RE.search(str(k))
+                            and not _s1_is_reference_value(v) and len(v.strip()) >= 8):
+                        findings.append(f"{where}: key '{'.'.join(path)}' carries a plaintext "
+                                        f"value (len {len(v)})")
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                if isinstance(v, str):
+                    check_string(v, trail + (str(i),))
+                else:
+                    walk(v, trail + (str(i),))
+
+    def check_string(s, path):
+        if S1_PEM_PRIVATE_RE.search(s):
+            findings.append(f"{where}: '{'.'.join(path)}' holds a PEM private key")
+        for label, pat in S1_TOKEN_PATTERNS:
+            if pat.search(s):
+                findings.append(f"{where}: '{'.'.join(path)}' looks like a {label}")
+
+    walk(values, ())
+    return sorted(set(findings))
+
+
+def scan_text_for_private_keys(text, where):
+    """A PEM private key anywhere in a file the chart ships, values or not."""
+    return [f"{where}:{n}: PEM private key block"
+            for n, line in enumerate(text.splitlines(), 1) if S1_PEM_PRIVATE_RE.search(line)]
+
+
+def _refuse_secret_material(workdir, chart_dir, trees):
+    """S1 at a packaging site: on refusal the temp copy (which may now hold the material) is removed."""
+    try:
+        check_no_secret_material(chart_dir, trees)
+    except CheckFailure:
+        shutil.rmtree(workdir, ignore_errors=True)
+        raise
+
+
+def check_no_secret_material(chart_dir, trees):
+    """S1. Refuse to package a chart that carries secret material.
+
+    trees: [(label, parsed values)] — the overlay and the merged values.
+    Also reads every values*.yaml the package ships, and every text file for a
+    PEM private key. Raises CheckFailure naming paths and rules only."""
+    import yaml
+    findings = []
+    for label, tree in trees:
+        findings += scan_values_for_secrets(tree or {}, label)
+    chart_dir = pathlib.Path(chart_dir)
+    for f in sorted(chart_dir.rglob("*")):
+        if not f.is_file() or f.suffix in (".tgz", ".png", ".jpg", ".gz"):
+            continue
+        try:
+            text = f.read_text()
+        except (UnicodeDecodeError, OSError):
+            continue
+        rel = f.relative_to(chart_dir)
+        findings += scan_text_for_private_keys(text, str(rel))
+        if f.parent == chart_dir and f.name.startswith("values") and f.suffix in (".yaml", ".yml"):
+            try:
+                findings += scan_values_for_secrets(yaml.safe_load(text) or {}, str(rel))
+            except yaml.YAMLError:
+                pass
+    if findings:
+        raise CheckFailure("S1", "refusing to package secret material into a published chart "
+                           "(values are readable by every channel subscriber); move it to a "
+                           "Secret created out of band and reference it by name:\n  "
+                           + "\n  ".join(sorted(set(findings))))
+    return 0
+
+
 def _platform_chart_from_overlay(args, src_chart, unpinnable):
     """Package the chart with an operator-supplied values overlay baked in.
 
@@ -2486,6 +2654,9 @@ def _platform_chart_from_overlay(args, src_chart, unpinnable):
     values_path = chart_dir / "values.yaml"
     values = yaml.safe_load(values_path.read_text()) or {}
     deep_merge(values, overlay)
+    # S1: a published chart is readable by every subscriber; credentials never ride in it.
+    _refuse_secret_material(workdir, chart_dir, [("pins-values overlay", overlay),
+                                                 ("merged values.yaml", values)])
     values_path.write_text(yaml.safe_dump(values, sort_keys=False))
     pins_file = chart_dir / "values-pins.yaml"
     pins_file.write_text(
@@ -2634,6 +2805,8 @@ def cmd_platform_chart(args):
     values_path = chart_dir / "values.yaml"
     values = yaml.safe_load(values_path.read_text()) or {}
     deep_merge(values, overlay)
+    _refuse_secret_material(workdir, chart_dir, [("pin overlay", overlay),
+                                                 ("merged values.yaml", values)])  # S1
     values_path.write_text(yaml.safe_dump(values, sort_keys=False))
     pins_file = chart_dir / "values-pins.yaml"
     pins_file.write_text(
