@@ -29,6 +29,7 @@ push path so they cannot be skipped:
       verifies against the channel key. A pin is a promise; T2 is the proof.
 """
 import argparse
+import atexit
 import datetime
 import hashlib
 import json
@@ -36,9 +37,11 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 
 SCHEMA_ID = "https://vexa.ai/schemas/ee/channel-entry.v1.json"
 ENTRY_MEDIA_TYPE = "application/vnd.vexa.channel-entry.v1+json"
@@ -70,6 +73,65 @@ def sha256_bytes(data):
 
 def run(cmd, **kw):
     return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw)
+
+
+# ------------------------------------------------------ the run's temp dir
+#
+# WHY THIS EXISTS (2026-11-04). Every chart command copied the chart into its
+# own mkdtemp dir and never removed it, and cosign_env() wrote the registry
+# auths to $TMPDIR/vexa-channel-dockercfg for good. A chart copy carries every
+# values layer the operator merged in, secrets included, so each run left
+# those secrets at rest on the operator's host after it ended.
+#
+# Now everything temporary lives under ONE dir per process, removed when the
+# process ends: normal exit, an exception, Ctrl-C, SIGTERM or SIGHUP. SIGKILL
+# cannot be caught; for that case the dir holds this process's PID in
+# .in-use.pid, so a residue check can tell a live run from a dead one.
+#
+# A caller-given TMPDIR is where that dir goes, exactly. A TMPDIR that is not
+# a directory is refused: tempfile would otherwise fall back to /tmp in
+# silence and put the secrets where the caller is not looking.
+
+_RUN_TMP = None
+
+
+def run_tmp():
+    """This process's own temp dir, created on first use, removed at exit."""
+    global _RUN_TMP
+    if _RUN_TMP is None:
+        base = os.environ.get("TMPDIR")
+        if base and not os.path.isdir(base):
+            print(f"TMPDIR={base} is not a directory; refusing to put this run's temp files anywhere else",
+                  file=sys.stderr)
+            raise SystemExit(2)
+        path = pathlib.Path(tempfile.mkdtemp(prefix="vexa-channel-run-", dir=base or None))
+        (path / ".in-use.pid").write_text(f"{os.getpid()}\n")
+        atexit.register(_remove_run_tmp, path, os.getpid())
+        _exit_on_signals()
+        _RUN_TMP = path
+    return _RUN_TMP
+
+
+def run_mkdtemp(prefix):
+    return pathlib.Path(tempfile.mkdtemp(prefix=prefix, dir=run_tmp()))
+
+
+def _remove_run_tmp(path, owner):
+    if os.getpid() == owner:                    # never from a forked child
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _exit_on_signal(signum, frame):
+    # SystemExit unwinds: subprocess.run kills its child, atexit removes the dir
+    raise SystemExit(128 + signum)
+
+
+def _exit_on_signals():
+    if threading.current_thread() is not threading.main_thread():
+        return
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        if signal.getsignal(sig) in (signal.SIG_DFL, None):   # leave a host program's handler alone
+            signal.signal(sig, _exit_on_signal)
 
 
 def utcnow():
@@ -248,7 +310,7 @@ def derive_public_key(private_key_path, env):
     import tempfile
 
     out = run([cosign_bin(), "public-key", "--key", str(private_key_path)], env=env)
-    fd = tempfile.NamedTemporaryFile("w", suffix=".pub", delete=False)
+    fd = tempfile.NamedTemporaryFile("w", suffix=".pub", delete=False, dir=run_tmp())
     fd.write(out.stdout)
     fd.close()
     return fd.name
@@ -1309,7 +1371,7 @@ def pull_revocations(base, workdir, plain):
 
 def cmd_revoke(args):
     plain = ["--plain-http"] if args.plain_http else (["--insecure"] if args.insecure else [])
-    work = pathlib.Path(tempfile.mkdtemp(prefix="vexa-revoke-"))
+    work = run_mkdtemp("vexa-revoke-")
     try:
         doc = pull_revocations(args.ref, work, plain)
         if doc is None:
@@ -1392,7 +1454,7 @@ def cosign_env():
     # lookup (observed: cosign blocked in wait4 on docker-credential-desktop).
     # Anonymous auth is correct here - public pulls, unauthenticated test
     # registries; real registry auth is passed explicitly when needed.
-    iso = pathlib.Path(tempfile.gettempdir()) / "vexa-channel-dockercfg"
+    iso = run_tmp() / "dockercfg"           # leaves with the run: it carries the registry auths
     iso.mkdir(exist_ok=True)
 
     # The hazard is the credential HELPER, not the credentials. Blanking auths
@@ -1853,7 +1915,7 @@ def cmd_station_chart(args):
         raise SystemExit(f"--chart-dir {src_chart} has no Chart.yaml")
     contracts = parse_station_contracts(args.contract)
 
-    workdir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-station-chart-"))
+    workdir = run_mkdtemp("vexa-station-chart-")
     chart_dir = workdir / src_chart.name
     # Copy before edit: the source tree is the repository, and a command that
     # packages must never leave an instance behind in it.
@@ -1912,7 +1974,7 @@ def cmd_chart(args):
     check_map_identity(version, candidate_map)
     pins = build_pins(version, candidate_map)
 
-    workdir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-chart-"))
+    workdir = run_mkdtemp("vexa-chart-")
     subprocess.run(
         f"git -C {args.vexa_repo} archive {version} deploy/helm/charts/vexa | tar -x -C {workdir}",
         shell=True, check=True,
@@ -2465,7 +2527,7 @@ def _platform_chart_from_overlay(args, src_chart, unpinnable):
     import tempfile
     import yaml
 
-    workdir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-platform-chart-"))
+    workdir = run_mkdtemp("vexa-platform-chart-")
     chart_dir = workdir / src_chart.name
     shutil.copytree(src_chart, chart_dir)
     pruned = prune_stale_subcharts(chart_dir)
@@ -2600,7 +2662,7 @@ def cmd_platform_chart(args):
 
     auto, explicit = parse_pin_set(pathlib.Path(args.pin_set).read_text())
 
-    workdir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-platform-chart-"))
+    workdir = run_mkdtemp("vexa-platform-chart-")
     chart_dir = workdir / src_chart.name
     shutil.copytree(src_chart, chart_dir)                     # source chart stays read-only
     pruned = prune_stale_subcharts(chart_dir)
@@ -2716,7 +2778,7 @@ def _subchart_defaults(chart_dir):
     tgz = chart_dir / "charts" / f"vexa-{want}.tgz"
     if not tgz.is_file():
         return None
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(dir=run_tmp()) as td:
         with tarfile.open(tgz) as tf:
             member = next((m for m in tf.getmembers() if m.name.endswith("vexa/values.yaml")), None)
             if not member:
