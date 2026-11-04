@@ -278,7 +278,17 @@ def record_publish(root: pathlib.Path, entry: dict, *, entry_digest: "str | None
     if note:
         row["note"] = note
 
-    entries = [e for e in (doc.get("entries") or []) if e.get("entry_seq") != seq]
+    # A sequence already in the ledger is REFUSED, never replaced. Replacing it
+    # let a second publisher of the same entry_seq overwrite the first one's row,
+    # so the authority for entry_seq named whichever entry was recorded last.
+    same = [e for e in (doc.get("entries") or []) if e.get("entry_seq") == seq]
+    if same:
+        raise LedgerError(
+            f"entry_seq {seq} is already recorded for channel '{channel}' "
+            f"({same[0].get('release')}, digest {same[0].get('entry_digest') or 'unrecorded'}). "
+            "A sequence names one entry; publish this one at the next sequence."
+        )
+    entries = list(doc.get("entries") or [])
     entries.append(row)
     entries.sort(key=lambda e: e.get("entry_seq") or 0)
 

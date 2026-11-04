@@ -105,6 +105,16 @@ class PublishReducer(unittest.TestCase):
         # The refusal must name the consequence, not merely the mismatch.
         self.assertIn("does not advance", str(cm.exception))
 
+    def test_a_sequence_already_recorded_is_refused_not_replaced(self):
+        """Two publishers of one entry_seq: the second row used to REPLACE the
+        first, so the ledger silently named whichever entry was recorded last."""
+        vs.record_publish(self.root, entry(seq=3), entry_digest="sha256:" + "a" * 64)
+        with self.assertRaises(vs.LedgerError) as cm:
+            vs.record_publish(self.root, entry(seq=3), entry_digest="sha256:" + "b" * 64)
+        self.assertIn("already recorded", str(cm.exception))
+        doc = vs.load_yaml(vs.channel_file(self.root, "pilot-stable"))
+        self.assertEqual([e["entry_digest"] for e in doc["entries"]], ["sha256:" + "a" * 64])
+
     def test_expiry_index_lists_only_entries_that_declare_one(self):
         vs.record_publish(self.root, entry(seq=1))
         vs.record_publish(self.root, entry(seq=2, expires="2026-09-24T00:00:00Z"))

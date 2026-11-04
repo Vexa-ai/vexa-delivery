@@ -120,19 +120,22 @@ GOLDEN = pathlib.Path(__file__).resolve().parents[2] / "spec" / "goldens" / "v0.
 OSS = "v0.12.23"
 
 
-def make_entry(root, seq, release=DAY, channel="fixture-estate"):
-    """An ESTATE entry: it carries the `estate` block `platform-entry` writes,
-    which is what makes it one (docs/verify.mdx)."""
-    d = pathlib.Path(root) / f"entry-seq{seq}"
+ESTATE_FIXTURE = (pathlib.Path(__file__).resolve().parents[2]
+                  / "kit" / "verify" / "tests" / "fixtures" / "estate-entry" / "entry.json")
+
+
+def make_entry(root, seq, release=DAY, channel="fixture-estate", edit=None):
+    """An ESTATE entry: the schema-valid estate fixture, re-stamped. It carries
+    the `estate` block `platform-entry` writes, which is what makes it one
+    (docs/verify.mdx), and an `<X.Y.Z>-estate-<YYYYMMDD>` release."""
+    d = pathlib.Path(root) / f"entry-seq{seq}-{release}"
     d.mkdir()
-    (d / "entry.json").write_text(json.dumps({
-        "schema_version": 1,
-        "channel": {"name": channel, "entry_seq": seq, "supersedes": None},
-        "release": {"version": release, "source_sha": "c" * 40},
-        "publication": {"mode": "candidate", "published_at": "2026-11-04T16:00:00Z"},
-        "evidence": [],
-        "estate": {"kind": "platform_estate", "release_name": "vexa"},
-    }))
+    e = json.loads(ESTATE_FIXTURE.read_text())
+    e["channel"].update({"name": channel, "entry_seq": seq})
+    e["release"]["version"] = release
+    if edit:
+        edit(e)
+    (d / "entry.json").write_text(json.dumps(e))
     (d / "VERIFY.md").write_text("fixture\n")
     return d
 
@@ -359,6 +362,132 @@ class OssReleaseTagIsUnchanged(Base):
         rc, out = push(self.reg, self.refresh(src), "--channel-tag", f"{OSS}-seq1")
         self.assertEqual(rc, 3, out)
         self.assertEqual(self.reg.moves, [])
+
+
+class ChannelTagCannotNameAnyReleaseOrSeqTag(Base):
+    """Review finding 1: the guard refused only THIS entry's day tag, so
+    `--channel-tag 0.1.0-estate-20261103` on a 20261104 entry moved yesterday's
+    day tag. The floating pointer may not be spelled like any permanent tag."""
+
+    YESTERDAY = "0.1.0-estate-20261103"
+
+    def test_another_days_day_tag_is_refused_and_not_moved(self):
+        self.assertEqual(push(self.reg, make_entry(self.tmp, 1, release=self.YESTERDAY),
+                              "--release-tag")[0], 0)
+        held = self.reg.tags[f"{REF}:{self.YESTERDAY}"]
+        writes_before = len(self.reg.writes())
+        rc, out = push(self.reg, make_entry(self.tmp, 2), "--channel-tag", self.YESTERDAY)
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(self.reg.tags[f"{REF}:{self.YESTERDAY}"], held)
+        self.assertEqual(len(self.reg.writes()), writes_before)
+        self.assertEqual(self.reg.moves, [])
+
+    def test_any_seq_tag_is_refused_the_entrys_own_included(self):
+        for seq, name in ((1, f"{DAY}-seq1"), (2, "anything-seq7")):
+            rc, out = push(self.reg, make_entry(self.tmp, seq), "--channel-tag", name)
+            self.assertEqual(rc, 3, f"{name}: {out}")
+        self.assertEqual(self.reg.writes(), [])
+
+    def test_an_oss_release_tag_is_refused_too(self):
+        """Moving `v0.12.22` onto another entry re-points the PreSync gate of every
+        subscriber whose chart derives `:v0.12.22`."""
+        rc, out = push(self.reg, oss_entry(self.tmp), "--channel-tag", "v0.12.22")
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(self.reg.writes(), [])
+
+
+class EstateDetectionCannotBeFooled(Base):
+    """Review finding 2: `estate` being a dict was the whole test, and push
+    signed a local entry.json without re-validating it. The block and the
+    release name must agree, and the schema runs again before signing."""
+
+    def assert_refused_untouched(self, entry_dir, needle):
+        rc, out = push(self.reg, entry_dir)
+        self.assertEqual(rc, 3, out)
+        self.assertIn(needle, out)
+        self.assertEqual(self.reg.writes(), [], "something was written")
+
+    def test_an_oss_version_with_an_estate_block_is_refused(self):
+        estate = json.loads(ESTATE_FIXTURE.read_text())["estate"]
+        d = oss_entry(self.tmp)
+        e = json.loads((d / "entry.json").read_text())
+        e["estate"] = estate
+        (d / "entry.json").write_text(json.dumps(e))
+        self.assert_refused_untouched(d, "estate")
+
+    def test_an_estate_release_without_a_block_is_refused(self):
+        self.assert_refused_untouched(
+            make_entry(self.tmp, 1, edit=lambda e: e.pop("estate")), "estate")
+
+    def test_an_empty_estate_block_is_refused(self):
+        self.assert_refused_untouched(
+            make_entry(self.tmp, 1, edit=lambda e: e.__setitem__("estate", {})), "estate")
+
+    def test_an_entry_that_no_longer_validates_is_refused_before_signing(self):
+        self.assert_refused_untouched(
+            make_entry(self.tmp, 1, edit=lambda e: e.pop("expires")), "C9")
+
+
+class ConcurrentWriterOfTheSameSeq(Base):
+    """Review finding 3: the seq tag was checked once, before signing, and not
+    again before the write — so a second publisher that wrote it in between was
+    silently overwritten. It is checked again immediately before each write."""
+
+    def test_estate_a_seq_tag_written_after_the_check_is_not_overwritten(self):
+        foreign = "sha256:" + "f" * 64
+        real = self.reg.__call__
+
+        def another_publisher(cmd, **kw):
+            try:
+                return real(cmd, **kw)
+            finally:   # after our first look finds it free, the other one lands
+                if cmd[1] == "resolve" and cmd[-1] == f"{REF}:{DAY}-seq1":
+                    self.reg.tags.setdefault(f"{REF}:{DAY}-seq1", foreign)
+
+        rc, out = push(another_publisher, make_entry(self.tmp, 1))
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(self.reg.tags[f"{REF}:{DAY}-seq1"], foreign)
+        self.assertEqual([c for c in self.reg.calls if c[1] in ("push", "tag")], [])
+        self.assertEqual(self.reg.moves, [])
+
+    def test_oss_a_seq_tag_written_during_the_push_is_not_overwritten(self):
+        foreign = "sha256:" + "f" * 64
+        real = self.reg.__call__
+
+        def another_publisher(cmd, **kw):
+            res = real(cmd, **kw)
+            if cmd[1] == "push":
+                self.reg.tags[f"{REF}:{OSS}-seq1"] = foreign
+            return res
+
+        rc, out = push(another_publisher, oss_entry(self.tmp))
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(self.reg.tags[f"{REF}:{OSS}-seq1"], foreign)
+        self.assertEqual(self.reg.moves, [], "the other publisher's seq tag was moved")
+
+
+class TheLedgerRefusesASecondPublisherOfOneSeq(Base):
+    """What is left of the race once the re-checks are in: two uploads that
+    overlap in time (OCI has no conditional tag write). The ledger is then the
+    one that refuses, and push must say so as a refusal naming both digests —
+    not a traceback, and not a silent replacement of the first row."""
+
+    def test_refused_by_name_with_both_digests(self):
+        ledger = pathlib.Path(self.tmp) / "ledger"
+        ledger.mkdir()
+        for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@vexa.invalid"],
+                     ["config", "user.name", "t"], ["commit", "-q", "--allow-empty", "-m", "i"]):
+            subprocess.run(["git", "-C", str(ledger), *args], check=True, capture_output=True)
+        other = "sha256:" + "e" * 64
+        vs.record_publish(ledger, json.loads((make_entry(self.tmp, 1, channel="race")
+                                              / "entry.json").read_text()), entry_digest=other)
+        rc, out = push(self.reg, make_entry(self.tmp, 1, release="0.1.0-estate-20261105",
+                                            channel="race"), "--ledger", str(ledger))
+        self.assertEqual(rc, 3, out)
+        self.assertIn("REFUSED", out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn(other, out)
+        self.assertIn(self.reg.tags[f"{REF}:0.1.0-estate-20261105-seq1"], out)
 
 
 class TheLedgerShowsTheSecondEntry(Base):

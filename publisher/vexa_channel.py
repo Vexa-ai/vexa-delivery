@@ -15,7 +15,7 @@ holds no production credentials. Subcommands:
           and its image digests with cosign, and move the channel tag. An OSS
           entry lands at its release tag and <release>-seq<N>; an estate entry
           at <release>-seq<N> only, its day tag created on request and never
-          moved. Every tag written is read back
+          moved. Every tag written is read back.
 
 Every cross-check is named C1..C9; a failed check refuses the entry (there is
 no silent path — an incomplete chain needs an explicit --break-glass record,
@@ -1115,7 +1115,9 @@ def cmd_verify(args):
 #   <release>-seq<N>   permanent; refused if it already exists (entry_seq N is
 #                      published — build at the next sequence)
 #   --channel-tag      the one FLOATING tag (spec/channel.md: `current`). It
-#                      moves when named, and may not name a permanent tag
+#                      moves when named, and may not be spelled like any seq,
+#                      day or release tag
+#   the seq tag is checked before anything runs AND again right before its write
 #   every refusal comes BEFORE anything is signed or pushed, and every tag
 #   written is printed and read back; a tag that reads back as another digest is
 #   a refusal, and the ledger is not written.
@@ -1125,17 +1127,38 @@ def cmd_verify(args):
 # Anything else — refused credentials, no route, a timeout — is NOT an absence.
 _ORAS_ABSENT = ("MANIFEST_UNKNOWN", "NAME_UNKNOWN")
 
+# The two release-name shapes, as spec/channel-entry.schema.json states them
+# (release.version anyOf), and the shape of every permanent per-entry tag.
+_OSS_RELEASE_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
+_ESTATE_RELEASE_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+-estate-[0-9]{8}$")
+_ESTATE_DAY_RE = re.compile(r"-estate-[0-9]{8}")
+_SEQ_TAG_RE = re.compile(r"-seq[0-9]+$")
+
 
 def is_estate_entry(entry):
-    """An estate entry carries the `estate` block `platform-entry` writes —
-    the definition docs/verify.mdx gives a subscriber, and a signed fact rather
-    than a reading of the release name."""
-    return isinstance(entry.get("estate"), dict)
+    """True for an estate entry, False for an OSS one, and a refusal when the
+    two signals disagree.
 
-# What `oras resolve` says when the tag (or the whole repository) is not there.
-# Measured against oras 1.3.0 and registry:2: `…: <ref>: not found` for both.
-# Anything else — refused credentials, no route, a timeout — is NOT an absence.
-_ORAS_ABSENT = ("MANIFEST_UNKNOWN", "NAME_UNKNOWN")
+    An estate entry carries the `estate` block `platform-entry` writes — the
+    definition docs/verify.mdx gives a subscriber — AND an
+    `<X.Y.Z>-estate-<YYYYMMDD>` release. The answer decides which tag contract
+    push follows, so neither signal alone is trusted: a block on a `v<X.Y.Z>`
+    release, an estate name with no block, and an empty block are each refused.
+    """
+    version = str((entry.get("release") or {}).get("version") or "")
+    block = entry.get("estate")
+    if block is not None and not isinstance(block, dict):
+        raise CheckFailure("C11", f"the entry's `estate` is {type(block).__name__}, not a block")
+    if block == {}:
+        raise CheckFailure("C11", "the entry carries an empty `estate` block: it is neither an "
+                                  "estate entry nor an OSS one")
+    if block and not _ESTATE_RELEASE_RE.match(version):
+        raise CheckFailure("C11", f"the entry carries an `estate` block but its release {version!r} "
+                                  f"is not an estate name (<X.Y.Z>-estate-<YYYYMMDD>)")
+    if not block and "-estate-" in version:
+        raise CheckFailure("C11", f"release {version!r} is named as an estate but the entry carries "
+                                  f"no `estate` block")
+    return bool(block)
 
 
 def channel_tag_name(spec):
@@ -1179,20 +1202,28 @@ def cmd_push(args):
     # written, with or without the flag — that is its documented contract.
     estate_day_tag = estate and args.release_tag
 
-    # C11, before anything is signed or pushed. The floating tag first: it may
-    # not be used to move a tag that is permanent by construction.
-    if estate and channel_tag and channel_tag == version:
-        raise CheckFailure("C11", f"--channel-tag {channel_tag} is this estate entry's day tag, which is "
-                                  f"written once and never moved. Ask for it with --release-tag.")
-    if channel_tag and re.search(r"-seq[0-9]+$", channel_tag) and channel_tag != seq_tag:
-        raise CheckFailure("C11", f"--channel-tag {channel_tag} is another entry's permanent tag. "
-                                  f"A published tag never moves; this entry's own is {seq_tag}.")
-    held = resolve_tag(args.ref, seq_tag, plain)
-    if held is not None:
-        raise CheckFailure("C11", f"{args.ref}:{seq_tag} already exists at {held}: entry_seq "
-                                  f"{entry['channel']['entry_seq']} is published on this channel, and a "
-                                  f"published tag is never moved. Build the entry at the next sequence "
-                                  f"(`refresh` re-stamps one). Nothing was signed or pushed.")
+    # C11, before anything is signed or pushed. The floating tag first: it is
+    # the one pointer that moves, so it may not be spelled like any tag that
+    # does not — any entry's seq tag, any day's estate tag, any OSS release tag
+    # (which only a refresh of its own release moves).
+    if channel_tag and (_SEQ_TAG_RE.search(channel_tag) or _ESTATE_DAY_RE.search(channel_tag)
+                        or _OSS_RELEASE_RE.match(channel_tag)):
+        raise CheckFailure("C11", f"--channel-tag {channel_tag} has the shape of a release or "
+                                  f"<release>-seq<N> tag, not of the floating pointer, and push would "
+                                  f"move it. An estate's day tag is asked for with --release-tag.")
+
+    def refuse_if_seq_held(when):
+        # Asked before anything runs AND immediately before each write of the
+        # seq tag: a second publisher of the same entry_seq that wrote it in
+        # between must find its tag where it put it.
+        held = resolve_tag(args.ref, seq_tag, plain)
+        if held is not None:
+            raise CheckFailure("C11", f"{args.ref}:{seq_tag} already exists at {held}: entry_seq "
+                                      f"{entry['channel']['entry_seq']} is published on this channel, "
+                                      f"and a permanent tag is never moved. Build the entry at the next "
+                                      f"sequence (`refresh` re-stamps one). {when}")
+
+    refuse_if_seq_held("Nothing was signed or pushed.")
     if estate_day_tag:
         held = resolve_tag(args.ref, version, plain)
         if held is not None:
@@ -1200,6 +1231,10 @@ def cmd_push(args):
                                       f"tag names the first entry published that day and is never moved. "
                                       f"Push without --release-tag: this entry is published at {seq_tag}. "
                                       f"Nothing was signed or pushed.")
+
+    # C9 again, on the bytes about to be signed: `build` validated the entry it
+    # wrote, but push signs whatever entry.json is on disk now.
+    schema_validate(entry)
 
     env = cosign_env()
     run_record = None
@@ -1236,6 +1271,8 @@ def cmd_push(args):
     # entry's own permanent tag, and nothing else unless asked.
     first = seq_tag if estate else version
     ref = f"{args.ref}:{first}"
+    if estate:
+        refuse_if_seq_held("The entry was signed locally; nothing was pushed.")
     out = run(
         ["oras", "push", *plain, "--artifact-type", ENTRY_MEDIA_TYPE, ref, *files],
         cwd=str(entry_dir),
@@ -1272,6 +1309,7 @@ def cmd_push(args):
         # <version>-seq<N> tag here, and its digest was never mutable. Rollback
         # protection is entry_seq monotonicity, which is inside the signature; tag
         # immutability never was.
+        refuse_if_seq_held(f"This entry is at {args.ref}:{version}; the ledger is not written.")
         run(["oras", "tag", *plain, f"{args.ref}@{digest}", seq_tag])
         print(f"permanent tag {args.ref}:{seq_tag} -> {digest}")
         written.append(seq_tag)
@@ -1315,11 +1353,19 @@ def cmd_push(args):
     # published, so it must not run before the push that published it. `push`
     # is the sole writer of channel.yaml — see publisher/vexa_stations.py.
     if getattr(args, "ledger", None) or os.environ.get("VEXA_STATIONS_DIR"):
-        out = vexa_stations.record_publish(
-            vexa_stations.resolve_root(getattr(args, "ledger", None)),
-            entry, entry_digest=digest, registry_ref=args.ref,
-            channel_tag=channel_tag,
-        )
+        try:
+            out = vexa_stations.record_publish(
+                vexa_stations.resolve_root(getattr(args, "ledger", None)),
+                entry, entry_digest=digest, registry_ref=args.ref,
+                channel_tag=channel_tag,
+            )
+        except vexa_stations.LedgerError as e:
+            # The one race no check-then-write closes: two uploads of the same
+            # entry_seq that overlap in time (OCI has no conditional tag write).
+            # The ledger refuses the second row; say what the registry now holds.
+            raise CheckFailure("C11", f"the ledger refused this entry: {e} This push wrote "
+                                      f"{', '.join(f'{args.ref}:{t}' for t in written)} -> {digest}; "
+                                      f"reconcile the registry with the ledger before publishing again.")
         print(f"ledger: {out['channel']} entry_seq {out['entry_seq']} recorded "
               f"({out['commit'][:12] if out['commit'] else 'no change'})")
     return 0
@@ -3474,7 +3520,8 @@ def main(argv=None):
     u.add_argument("--ref", required=True, help="repository ref without tag, e.g. host/base/channel/acme-stable")
     u.add_argument("--channel-tag", help="floating tag to move, e.g. `current`. A full ref "
                    "(host/base/channel/x:current) is accepted and normalised to its tag. It may "
-                   "not name another entry's <release>-seq<N>, nor an estate entry's day tag.")
+                   "not have the shape of a permanent or release tag: any <release>-seq<N>, any "
+                   "estate day tag, any vX.Y.Z.")
     u.add_argument("--release-tag", action="store_true",
                    help="ESTATE entries only: also create the day tag <release> on this entry, "
                         "only if it does not exist yet. An existing day tag is never moved: the "

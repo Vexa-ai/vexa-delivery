@@ -32,9 +32,7 @@ vexa-channel verify: >-
 
 vexa-channel push: >-
   Publish the built entry: push it to the registry with `oras`, sign it and
-  every image digest with cosign, and move the channel tag. An estate entry
-  lands at `<release>-seq<N>` only; its day tag is created with
-  `--release-tag` and never moved. The signing
+  every image digest with cosign, and move the channel tag. The signing
   toolchain checks T1/T2 run inside this path so they cannot be skipped —
   T2 proves the signature is discoverable in the exact shape the customer's
   Kyverno will ask for.
