@@ -15,6 +15,9 @@ it is actually built — is [`docs/evidence-model.mdx`](../docs/evidence-model.m
 <registry>/<base>/
 ├── channel/<channel-name>          OCI artifact per entry
 │     tags:  v0.12.23               immutable, one per release — never moved
+│            v0.12.23-seq4          permanent, one per entry
+│            0.12.23-estate-20260825
+│                                   an estate entry's day tag — created on request, never moved
 │            current                the channel pointer — moved same-byte between entries
 ├── charts/vexa                     Helm chart as OCI (digest named in entry.json.chart)
 └── images/...                      optional mirror; images may equally stay at their
@@ -121,6 +124,12 @@ channel*, and from the inside a supply chain that has stopped looks exactly like
   artifact.** Rollback protection is `entry_seq` monotonicity, which lives inside the signature;
   tag immutability never carried it. The PreSync hook asks for the entry at the release tag, so
   the alternative — a new tag per refresh — would have quietly kept every cluster on the stale one.
+- **An estate entry is the exception.** Its release name is a day tag
+  (`<X.Y.Z>-estate-<YYYYMMDD>`), and its chart names the entry it verifies in `verify.entryTag`
+  (stamped by `platform-chart --entry-seq`), so its PreSync hook does not ask for the day tag.
+  `push` publishes an estate entry at `<version>-seq<N>` only. The day tag is created with
+  `push --release-tag`, only while it does not exist, and is never moved: a refreshed or second
+  same-day estate entry is reached at its own `-seq<N>`.
 - A customer may tighten this from their side with `max_entry_age_days` in their contract: refuse
   anything published more than N days ago regardless of the horizon we stamped.
 

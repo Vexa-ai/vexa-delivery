@@ -593,7 +593,7 @@
     },
     "expires": {
       "$ref": "#/$defs/timestamp",
-      "description": "Freshness horizon. After this instant the entry is STALE and every verifier in the chain refuses it \u2014 a distinct refusal from an invalid signature, because it means the customer is looking at a channel nobody has published to, not at a forgery. Set by the publisher at build time (default now+30d, --expires-days). Republishing the same release with a fresh expiry is a normal act and needs no version bump: `vexa_channel.py refresh` re-stamps expires, increments channel.entry_seq, re-signs, and pushes; the release tag moves to the new entry while the superseded one stays addressable at <version>-seq<N> and by digest. Rollback protection is entry_seq monotonicity, not tag immutability."
+      "description": "Freshness horizon. After this instant the entry is STALE and every verifier in the chain refuses it \u2014 a distinct refusal from an invalid signature, because it means the customer is looking at a channel nobody has published to, not at a forgery. Set by the publisher at build time (default now+30d, --expires-days). Republishing the same release with a fresh expiry is a normal act and needs no version bump: `vexa_channel.py refresh` re-stamps expires, increments channel.entry_seq, re-signs, and pushes; the release tag moves to the new entry while the superseded one stays addressable at <version>-seq<N> and by digest. Rollback protection is entry_seq monotonicity, not tag immutability. An estate entry (one carrying an `estate` block) is the exception: it is published at <version>-seq<N> only, and its day tag is created on request and never moved."
     },
     "estate": {
       "type": [
