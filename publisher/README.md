@@ -17,10 +17,18 @@ python3 publisher/vexa_channel.py push   --entry work/entry --ref <host>/vexa/ch
     --channel-tag <host>/vexa/channel/acme-stable:current --sign-key <key>
 ```
 
+An OSS entry lands at its release tag (which a refresh moves, `spec/channel.md`
+§ Freshness) and at its permanent `<release>-seq<N>`. An estate entry lands at
+`<release>-seq<N>` only; `--release-tag` also creates its day tag, once, only
+while it does not exist, and it is never moved. For both, an existing
+`<release>-seq<N>` is refused (C11) before anything is signed or pushed,
+`--channel-tag` moves only the floating tag, and every tag written is read back.
+
 Named cross-checks C1–C9 (tag identity, map identity, map↔receipt pin, receipt identity,
 image consistency, provenance verification, bundle digesting, completeness-or-break-glass,
 schema): any failure refuses the entry with exit 3. `build` needs the `jsonschema` package and,
-unless `--skip-cosign-verify`, the `cosign` binary; `push` needs `oras` + `cosign`.
+unless `--skip-cosign-verify`, the `cosign` binary; `push` needs `oras` + `cosign`, and PyYAML
+(the `<release>-seq<N>` name and the ledger both come from `vexa_stations.py`).
 
 ## P5 rollout-safety — the check that protects a LIVE estate
 

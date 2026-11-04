@@ -202,5 +202,64 @@ class CacheCase(unittest.TestCase):
         self.assertLessEqual(len(c._store), 8)
 
 
+class NewestEntryCase(unittest.TestCase):
+    """Which tag names the newest entry. Not `current` — a pointer the publisher
+    moves only when it is asked to — and not the release (day) tag, which is
+    written once, for the first publish of a day, and never moves. The newest
+    entry is the one with the highest `<release>-seq<N>`: entry_seq advances
+    on every publish, the seq tag is written for every entry, and it never
+    moves either."""
+
+    DAY = "0.1.0-estate-20261104"
+
+    def test_the_highest_seq_tag_wins_over_current_and_the_day_tag(self):
+        tags = ["current", "latest", "v0.12.23", "v0.12.23-seq1", self.DAY,
+                f"{self.DAY}-seq2", f"{self.DAY}-seq3", "sha256-" + "ab" * 32 + ".sig"]
+        self.assertEqual(vp.newest_entry_tag(tags), (f"{self.DAY}-seq3", 3))
+
+    def test_the_sequence_is_compared_as_a_number(self):
+        self.assertEqual(vp.newest_entry_tag(["r-seq9", "r-seq10", "r-seq2"]), ("r-seq10", 10))
+
+    def test_a_channel_with_no_seq_tag_has_no_newest_entry(self):
+        self.assertIsNone(vp.newest_entry_tag(["current", "v0.12.23"]))
+        self.assertIsNone(vp.newest_entry_tag([]))
+        self.assertIsNone(vp.newest_entry_tag(None))
+
+    def test_a_tag_that_is_not_a_tag_is_never_a_candidate(self):
+        # Interpolated into /v2/<repo>/manifests/<tag>: nothing with a slash, a
+        # dot-dot or a non-tag character may get that far.
+        for bad in ("../kit-seq99", "a/b-seq99", "x y-seq99", "-seq99", ".hidden-seq99",
+                    "x" * 129 + "-seq99", 99, None, {"t": "x-seq99"}):
+            self.assertIsNone(vp.newest_entry_tag([bad]), bad)
+        self.assertEqual(vp.newest_entry_tag(["../kit-seq99", "r-seq4"]), ("r-seq4", 4))
+
+    def test_two_tags_claiming_the_newest_seq_is_refused_not_chosen(self):
+        with self.assertRaises(vp.PageError):
+            vp.newest_entry_tag(["a-seq5", "b-seq5", "a-seq4"])
+
+    def test_the_next_page_is_followed_only_inside_the_same_listing(self):
+        prefix = "/v2/vexa/channel/pilot/tags/list"
+        self.assertEqual(
+            vp.next_tags_page(f'<{prefix}?n=2&last=b>; rel="next"', prefix),
+            f"{prefix}?n=2&last=b")
+        self.assertIsNone(vp.next_tags_page("", prefix))
+        self.assertIsNone(vp.next_tags_page(None, prefix))
+        for elsewhere in ('</v2/vexa/channel/other/tags/list?last=b>; rel="next"',
+                          '<https://evil.invalid/v2/vexa/channel/pilot/tags/list>; rel="next"',
+                          f'<{prefix}/../../other/tags/list>; rel="next"'):
+            with self.assertRaises(vp.PageError, msg=elsewhere):
+                vp.next_tags_page(elsewhere, prefix)
+
+    def test_the_facts_name_the_tag_they_were_read_at_and_the_mode(self):
+        entry = json.loads(GOLDEN.read_text())
+        facts = vp.entry_facts(entry, "sha256:" + "ab" * 32, tag="v0.12.23-seq1")
+        self.assertEqual(facts["entry_tag"], "v0.12.23-seq1")
+        self.assertEqual(facts["publication_mode"], entry["publication"]["mode"])
+        html = vp.render_channel(facts, None)
+        self.assertIn("v0.12.23-seq1", html)
+        self.assertIn("newest entry", html)
+        self.assertNotIn("current entry", html)
+
+
 if __name__ == "__main__":
     unittest.main()

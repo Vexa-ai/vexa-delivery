@@ -244,8 +244,22 @@ python3 publisher/vexa_channel.py push --entry work/entry \
   --ledger <stations-ledger>
 ```
 
-Immutable tag only; the chart's semver is the pointer. Two toolchain checks run
-**inside** this path so they cannot be skipped:
+Immutable tag only; the chart's semver is the pointer. **What `push` writes
+(C11)** depends on the kind of entry:
+
+| Tag | OSS entry (`build`) | Estate entry (`platform-entry`, carries `estate`) |
+|---|---|---|
+| `<release>` | always; the entry is pushed here and a refresh moves it (`spec/channel.md` § Freshness) | the **day tag**: only with `--release-tag`, only while it does not exist, never moved |
+| `<release>-seq<N>` | always | always — the entry is pushed straight to it |
+| `--channel-tag` | the floating tag (`current`), moved when named | same; it may not name the day tag |
+
+For both, an existing `<release>-seq<N>` is refused (build at the next
+sequence), `--channel-tag` may not name another entry's `-seq<N>`, every refusal
+comes before anything is signed or pushed, and every tag written is read back
+from the registry before the ledger is written. So a second estate publish on
+the same day is refused **with** `--release-tag` and published at its own
+`-seq<N>` **without** it. Two toolchain checks run **inside** this path so they
+cannot be skipped:
 
 | | |
 |---|---|
@@ -278,8 +292,10 @@ path, after the push it records, and it is one commit by pathspec.
 python3 publisher/vexa_stations.py --ledger <stations-ledger> show
 ```
 
-reads the whole ledger: every channel's sequence and current entry, every
-station's pin, observed position, last verdict and flags. Push the ledger after
+reads the whole ledger: every channel's sequence, its newest entry and the
+`<release>-seq<N>` tag to pull it at, where the floating tag stands when that is
+not the newest entry, and every station's pin, observed position, last verdict
+and flags. Push the ledger after
 a crank — its git history is the audit trail, and there is no second log to
 keep in step with it.
 

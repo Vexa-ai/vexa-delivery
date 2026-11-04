@@ -23,14 +23,17 @@ CLI into a directory build assemble and cross-check a channel entry from a relea
 candidate map at that tag, the internal delivery receipt, and the fetched inputs; write entry.json
 + evidence/ + VERIFY.md verify re-run every offline check against a built entry directory push
 push a built entry to an OCI registry (or layout) via oras, sign it and its image digests with
-cosign, and move the channel tag Every cross-check is named C1..C9; a failed check refuses the
-entry (there is no silent path — an incomplete chain needs an explicit --break-glass record, which
-becomes visible data in the signed entry). Two further checks guard the signing toolchain itself,
-and they run inside the push path so they cannot be skipped: T1 the cosign that signs is inside
-the pinned series. The signature LAYOUT is not stable across cosign majors, and the customer's
-admission controller reads exactly one layout. T2 after signing, the signature is discoverable in
-the shape Kyverno 1.19 will ask for — sha256-<digest>.sig in the signature repository — and
-verifies against the channel key. A pin is a promise; T2 is the proof.
+cosign, and move the channel tag. An OSS entry lands at its release tag and <release>-seq<N>; an
+estate entry at <release>-seq<N> only, its day tag created on request and never moved. Every tag
+written is read back Every cross-check is named C1..C9; a failed check refuses the entry (there is
+no silent path — an incomplete chain needs an explicit --break-glass record, which becomes visible
+data in the signed entry). `push` adds C11: a permanent tag is never moved, and every tag it
+writes is read back. Two further checks guard the signing toolchain itself, and they run inside
+the push path so they cannot be skipped: T1 the cosign that signs is inside the pinned series. The
+signature LAYOUT is not stable across cosign majors, and the customer's admission controller reads
+exactly one layout. T2 after signing, the signature is discoverable in the shape Kyverno 1.19 will
+ask for — sha256-<digest>.sig in the signature repository — and verifies against the channel key.
+A pin is a promise; T2 is the proof.
 
 positional arguments:
   {fetch,build,verify,push,chart,station-chart,refresh,revoke,platform-chart,platform-entry,sign-images,attest}
@@ -141,10 +144,10 @@ options:
 
 ## `push`
 
-Publish the built entry: push it to the registry with `oras`, sign it and every image digest with cosign, and move the channel tag. The signing toolchain checks T1/T2 run inside this path so they cannot be skipped — T2 proves the signature is discoverable in the exact shape the customer's Kyverno will ask for.
+Publish the built entry: push it to the registry with `oras`, sign it and every image digest with cosign, and move the channel tag. An estate entry lands at `<release>-seq<N>` only; its day tag is created with `--release-tag` and never moved. The signing toolchain checks T1/T2 run inside this path so they cannot be skipped — T2 proves the signature is discoverable in the exact shape the customer's Kyverno will ask for.
 
 ```text
-usage: vexa-channel push [-h] --entry ENTRY --ref REF [--channel-tag CHANNEL_TAG]
+usage: vexa-channel push [-h] --entry ENTRY --ref REF [--channel-tag CHANNEL_TAG] [--release-tag]
                          [--sign-key SIGN_KEY] [--skip-sign-artifact] [--plain-http] [--insecure]
                          [--signing-receipt SIGNING_RECEIPT] [--ledger LEDGER]
 
@@ -154,7 +157,15 @@ options:
   --ref REF             repository ref without tag, e.g. host/base/channel/acme-stable
   --channel-tag CHANNEL_TAG
                         floating tag to move, e.g. `current`. A full ref
-                        (host/base/channel/x:current) is accepted and normalised to its tag.
+                        (host/base/channel/x:current) is accepted and normalised to its tag. It
+                        may not name another entry's <release>-seq<N>, nor an estate entry's day
+                        tag.
+  --release-tag         ESTATE entries only: also create the day tag <release> on this entry, only
+                        if it does not exist yet. An existing day tag is never moved: the push
+                        refuses before anything is signed or pushed. Without it an estate entry is
+                        published at <release>-seq<N> only. An OSS entry always lands at its
+                        release tag, which a refresh moves (spec/channel.md § Freshness); the flag
+                        changes nothing for it.
   --sign-key SIGN_KEY
   --skip-sign-artifact
   --plain-http

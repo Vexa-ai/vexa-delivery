@@ -22,6 +22,7 @@ import sys
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -47,9 +48,22 @@ GOOD = "Basic " + base64.b64encode(f"pilot:{PASSWORD}".encode()).decode()
 BAD = "Basic " + base64.b64encode(b"pilot:wrong").decode()
 
 
-def build_fixture():
-    """One channel on a fixture registry: `current`, its entry blob, its kit."""
-    entry = GOLDEN.read_bytes()
+DAY = "0.1.0-estate-20261104"
+NEWEST_TAG = f"{DAY}-seq3"
+
+
+def entry_variant(seq, release, published_at, mode):
+    """The golden entry, re-stamped as a later entry on the same channel."""
+    e = json.loads(GOLDEN.read_text())
+    e["channel"]["entry_seq"] = seq
+    e["release"]["version"] = release
+    e["release"]["release_url"] = "https://github.com/Vexa-ai/vexa"
+    e["publication"]["published_at"] = published_at
+    e["publication"]["mode"] = mode
+    return json.dumps(e, indent=1).encode()
+
+
+def entry_manifest(entry):
     blob = "sha256:" + hashlib.sha256(entry).hexdigest()
     manifest = json.dumps({
         "schemaVersion": 2,
@@ -62,28 +76,58 @@ def build_fixture():
              "annotations": {vp.OCI_TITLE: "VERIFY.md"}},
         ],
     }).encode()
+    return blob, manifest
+
+
+def build_fixture():
+    """One channel, in the shape two publishes on one UTC day leave behind:
+
+        v0.12.23-seq1     seq 1   also `current` — the pointer, moved once, long ago
+        <day>-seq2        seq 2   also the day tag — the first publish of the day
+        <day>-seq3        seq 3   the NEWEST, on its seq tag and nothing else
+
+    plus the image-signature tag a cosign-signed entry leaves in the same
+    repository, and the kit beside it. The page must show seq 3.
+    """
+    base = f"/v2/vexa/channel/{CHANNEL}"
+    routes, tags, manifests = {}, [], {}
+    for seq, body, names in (
+        (1, GOLDEN.read_bytes(), ["v0.12.23-seq1", "v0.12.23", "current"]),
+        (2, entry_variant(2, DAY, "2026-11-04T09:00:00Z", "candidate"), [f"{DAY}-seq2", DAY]),
+        (3, entry_variant(3, DAY, "2026-11-04T15:30:00Z", "candidate"), [NEWEST_TAG]),
+    ):
+        blob, manifest = entry_manifest(body)
+        manifests[seq] = manifest
+        routes[f"{base}/blobs/{blob}"] = body
+        for name in names:
+            routes[f"{base}/manifests/{name}"] = manifest
+            tags.append(name)
+    tags.append("sha256-" + "ab" * 32 + ".sig")
     kit = json.dumps({
         "schemaVersion": 2,
         "mediaType": "application/vnd.oci.image.manifest.v1+json",
         "layers": [{"mediaType": "application/gzip", "digest": "sha256:" + "ef" * 32,
                     "size": 1, "annotations": {vp.OCI_TITLE: "kit-v1.0.6.tgz"}}],
     }).encode()
-    base = f"/v2/vexa/channel/{CHANNEL}"
-    return manifest, {
-        f"{base}/manifests/current": manifest,
-        f"{base}/blobs/{blob}": entry,
-        f"{base}/kit/manifests/latest": kit,
-    }
+    routes[f"{base}/kit/manifests/latest"] = kit
+    return manifests, routes, {f"/v2/vexa/channel/{CHANNEL}": sorted(tags)}
 
 
-MANIFEST, ROUTES = build_fixture()
+MANIFESTS, ROUTES, TAGS = build_fixture()
+MANIFEST = MANIFESTS[3]   # the newest entry's manifest: the one the page must show
 
 
 class FixtureRegistry(BaseHTTPRequestHandler):
-    """The edge as this service sees it: everything under /v2/ wants a credential."""
+    """The edge as this service sees it: everything under /v2/ wants a credential.
+
+    `tags/list` pages the way the distribution registry does when asked to
+    (`?n=` and `&last=`, a `Link: <…>; rel="next"` header while more remain);
+    PAGE_SIZE None answers in one page.
+    """
 
     protocol_version = "HTTP/1.1"
     calls: list = []
+    PAGE_SIZE = None
 
     def do_GET(self):  # noqa: N802
         self.calls.append({
@@ -95,10 +139,26 @@ class FixtureRegistry(BaseHTTPRequestHandler):
         if auth != GOOD:
             return self._send(401, b'{"errors":[{"code":"UNAUTHORIZED"}]}',
                               {"WWW-Authenticate": 'Basic realm="registry"'})
+        path, _, query = self.path.partition("?")
+        if path.endswith("/tags/list"):
+            return self._tags(path[: -len("/tags/list")], urllib.parse.parse_qs(query))
         body = ROUTES.get(self.path)
         if body is None:
             return self._send(404, b'{"errors":[{"code":"MANIFEST_UNKNOWN"}]}')
         self._send(200, body)
+
+    def _tags(self, repo, query):
+        names = TAGS.get(repo)
+        if names is None:
+            return self._send(404, b'{"errors":[{"code":"NAME_UNKNOWN"}]}')
+        after = (query.get("last") or [""])[0]
+        n = int((query.get("n") or [self.PAGE_SIZE or 0])[0]) or len(names)
+        rest = [t for t in names if t > after]
+        page, more = rest[:n], rest[n:]
+        headers = {}
+        if more:
+            headers["Link"] = f'<{repo}/tags/list?n={n}&last={page[-1]}>; rel="next"'
+        self._send(200, json.dumps({"name": repo[4:], "tags": page}).encode(), headers)
 
     def _send(self, status, body, headers=None):
         self.send_response(status)
@@ -116,6 +176,7 @@ class FixtureRegistry(BaseHTTPRequestHandler):
 class EdgeCase(unittest.TestCase):
     def setUp(self):
         FixtureRegistry.calls = []
+        FixtureRegistry.PAGE_SIZE = None
         self.registry = ThreadingHTTPServer(("127.0.0.1", 0), FixtureRegistry)
         threading.Thread(target=self.registry.serve_forever,
                          kwargs={"poll_interval": 0.02}, daemon=True).start()
@@ -159,7 +220,7 @@ class EdgeCase(unittest.TestCase):
 
     def test_anonymous_learns_nothing_about_the_channel(self):
         _, _, body = self.get(f"/vexa/channel/{CHANNEL}")
-        for secret in ("v0.12.23", "Entry digest", "Channel key fingerprint",
+        for secret in ("v0.12.23", DAY, "Entry digest", "Channel key fingerprint",
                        vp.manifest_digest(MANIFEST)):
             self.assertNotIn(secret, body)
 
@@ -178,6 +239,7 @@ class EdgeCase(unittest.TestCase):
         self.assertIn("Basic realm=", headers["WWW-Authenticate"])
         self.assertIn("This is a Vexa Delivery channel.", body)
         self.assertNotIn("v0.12.23", body)
+        self.assertNotIn(DAY, body)
         self.assertNotIn(PASSWORD, body)
 
     def test_the_credential_is_the_callers_and_the_registry_decides(self):
@@ -189,14 +251,93 @@ class EdgeCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(headers["Content-Type"].startswith("text/html"))
         self.assertIn(CHANNEL, body)
-        self.assertIn("v0.12.23", body)                       # release
-        self.assertIn(">1<", body)                            # entry sequence
-        self.assertIn("2026-08-21T11:03:01Z", body)           # published at
+        self.assertIn(DAY, body)                              # release
+        self.assertIn(">3<", body)                            # entry sequence
+        self.assertIn(NEWEST_TAG, body)                       # the tag it was read at
+        self.assertIn("candidate", body)                      # publication mode
+        self.assertIn("2026-11-04T15:30:00Z", body)           # published at
         self.assertIn(vp.manifest_digest(MANIFEST), body)     # entry digest
         self.assertIn(json.loads(GOLDEN.read_text())["signing"]["identity"], body)
         self.assertIn("v1.0.6", body)                         # kit version
         self.assertIn("https://delivery.vexa.ai/install", body)
         self.assertIn("Nothing is required to leave your cluster", body)
+
+    # ------------------------------------------------------- the newest entry
+
+    def test_the_page_shows_the_newest_entry_not_current_nor_the_day_tag(self):
+        """Two publishes on one day: `current` still names seq 1 and the day tag
+        names seq 2, the first of the day. Neither is the newest entry."""
+        status, _, body = self.get(f"/vexa/channel/{CHANNEL}", GOOD)
+        self.assertEqual(status, 200, body)
+        self.assertIn(vp.manifest_digest(MANIFESTS[3]), body)
+        self.assertNotIn(vp.manifest_digest(MANIFESTS[1]), body)
+        self.assertNotIn(vp.manifest_digest(MANIFESTS[2]), body)
+        self.assertNotIn("2026-08-21T11:03:01Z", body)
+        self.assertNotIn("2026-11-04T09:00:00Z", body)
+
+    def test_it_reads_neither_current_nor_the_day_tag(self):
+        self.get(f"/vexa/channel/{CHANNEL}", GOOD)
+        manifests = [c["path"] for c in FixtureRegistry.calls if "/manifests/" in c["path"]]
+        base = f"/v2/vexa/channel/{CHANNEL}/manifests/"
+        self.assertIn(base + NEWEST_TAG, manifests)
+        self.assertNotIn(base + "current", manifests)
+        self.assertNotIn(base + DAY, manifests)
+
+    def test_a_tag_list_on_more_than_one_page_is_read_to_the_end(self):
+        FixtureRegistry.PAGE_SIZE = 2
+        status, _, body = self.get(f"/vexa/channel/{CHANNEL}", GOOD)
+        self.assertEqual(status, 200, body)
+        self.assertIn(NEWEST_TAG, body)
+        pages = [c for c in FixtureRegistry.calls if "/tags/list" in c["path"]]
+        self.assertGreater(len(pages), 1)
+        for call in pages:
+            self.assertEqual(call["authorization"], GOOD)
+
+    def test_a_channel_with_no_seq_tag_has_no_entry_to_show(self):
+        """Only the pointer and nothing the publisher has written since seq tags
+        exist. The page says there is no entry; it does not fall back to a tag
+        that is not the newest entry by construction."""
+        repo = "/v2/vexa/channel/pointer-only"
+        TAGS[repo] = ["current"]
+        ROUTES[f"{repo}/manifests/current"] = MANIFESTS[1]
+        try:
+            status, headers, body = self.get("/vexa/channel/pointer-only", GOOD)
+            self.assertEqual(status, 404)
+            self.assertTrue(headers["Content-Type"].startswith("text/html"))
+            self.assertIn("has no entry", body)
+            self.assertNotIn(f"{repo}/manifests/current",
+                             [c["path"] for c in FixtureRegistry.calls])
+        finally:
+            del TAGS[repo]
+            del ROUTES[f"{repo}/manifests/current"]
+
+    def test_a_seq_tag_on_an_entry_with_another_seq_is_said_out_loud(self):
+        """The tag says seq 9; the signed entry it points at says seq 1. The
+        page would otherwise print a sequence the tag implied and the entry
+        never claimed."""
+        repo = f"/v2/vexa/channel/{CHANNEL}"
+        TAGS[repo].append("v0.12.23-seq9")
+        ROUTES[f"{repo}/manifests/v0.12.23-seq9"] = MANIFESTS[1]
+        try:
+            status, _, body = self.get(f"/vexa/channel/{CHANNEL}", GOOD)
+            self.assertEqual(status, 502)
+            self.assertIn("Entry mismatch", body)
+            self.assertIn("v0.12.23-seq9", body)
+        finally:
+            TAGS[repo].remove("v0.12.23-seq9")
+            del ROUTES[f"{repo}/manifests/v0.12.23-seq9"]
+
+    def test_a_listed_name_that_is_not_a_tag_is_never_requested(self):
+        repo = f"/v2/vexa/channel/{CHANNEL}"
+        TAGS[repo].append("../../stations/x/bundles/y-seq99")
+        try:
+            status, _, body = self.get(f"/vexa/channel/{CHANNEL}", GOOD)
+            self.assertEqual(status, 200, body)
+            self.assertIn(NEWEST_TAG, body)
+            for call in FixtureRegistry.calls:
+                self.assertNotIn("..", call["path"])
+        finally:
+            TAGS[repo].remove("../../stations/x/bundles/y-seq99")
 
     def test_the_page_is_not_a_shared_caches_to_keep(self):
         _, headers, _ = self.get(f"/vexa/channel/{CHANNEL}", GOOD)
@@ -209,7 +350,7 @@ class EdgeCase(unittest.TestCase):
         status, headers, body = self.get("/vexa/channel/no-such-channel", GOOD)
         self.assertEqual(status, 404)
         self.assertTrue(headers["Content-Type"].startswith("text/html"))
-        self.assertIn("no entry at its current tag", body)
+        self.assertIn("has no entry", body)
         self.assertIn("https://delivery.vexa.ai/install", body)
 
     def test_a_mistyped_address_is_a_page_with_a_sentence(self):
@@ -232,7 +373,8 @@ class EdgeCase(unittest.TestCase):
     def test_a_tag_moved_onto_another_channels_entry_is_said_out_loud(self):
         # The one thing on this page a subscriber could not check for themselves.
         blob = "sha256:" + hashlib.sha256(GOLDEN.read_bytes()).hexdigest()
-        ROUTES["/v2/vexa/channel/other-channel/manifests/current"] = MANIFEST
+        TAGS["/v2/vexa/channel/other-channel"] = ["v0.12.23-seq1"]
+        ROUTES["/v2/vexa/channel/other-channel/manifests/v0.12.23-seq1"] = MANIFESTS[1]
         ROUTES["/v2/vexa/channel/other-channel/blobs/" + blob] = GOLDEN.read_bytes()
         try:
             status, _, body = self.get("/vexa/channel/other-channel", GOOD)
@@ -240,6 +382,7 @@ class EdgeCase(unittest.TestCase):
             self.assertIn("Channel mismatch", body)
             self.assertIn(CHANNEL, body)
         finally:
+            del TAGS["/v2/vexa/channel/other-channel"]
             for k in list(ROUTES):
                 if "other-channel" in k:
                     del ROUTES[k]
@@ -250,8 +393,8 @@ class EdgeCase(unittest.TestCase):
         # RUNBOOK § 5.2: without one, a manifest GET returns MANIFEST_UNKNOWN by
         # content negotiation, which reads exactly like "this tag does not exist".
         self.get(f"/vexa/channel/{CHANNEL}", GOOD)
-        manifest_call = FixtureRegistry.calls[0]
-        self.assertIn("manifests/current", manifest_call["path"])
+        manifest_call = next(c for c in FixtureRegistry.calls
+                             if f"manifests/{NEWEST_TAG}" in c["path"])
         self.assertIn("application/vnd.oci.image.manifest.v1+json",
                       manifest_call["accept"])
 

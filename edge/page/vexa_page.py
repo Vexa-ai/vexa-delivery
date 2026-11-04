@@ -16,7 +16,8 @@ therefore a statement about the bytes this service read, which is what a
 subscriber comparing it against their own `oras resolve` wants it to be.
 
 **Nothing on the page is composed from a second source.** Every value comes out
-of the channel's own `current` entry, or out of the kit artifact's manifest.
+of the channel's own newest entry — the one at the highest `<release>-seq<N>`
+tag — or out of the kit artifact's manifest.
 Where a fact is not on the channel at all — the report tier, which lives in the
 subscriber's `contract.yaml` inside their cluster — the page says so rather than
 guessing a default. A page that invents a tier is worse than a page that omits
@@ -52,6 +53,17 @@ ROUTE_RE = re.compile(r"^/vexa/channel/(?P<name>[^/]+)/?$")
 ENTRY_FILE = "entry.json"
 KIT_TARBALL_RE = re.compile(r"^kit-(?P<version>v[0-9]+\.[0-9]+\.[0-9]+)\.tgz$")
 OCI_TITLE = "org.opencontainers.image.title"
+
+# An OCI tag, by the distribution spec's own grammar. A name off `tags/list`
+# is interpolated into `/v2/<repo>/manifests/<tag>`, so anything else — a
+# slash, a dot-dot, a leading dot — is never a candidate, whatever it ends in.
+OCI_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
+# The permanent tag every entry is pushed to: `<release>-seq<N>`
+# (publisher/vexa_stations.py `entry_tag`). It never moves, and entry_seq
+# advances on every publish — so the highest one is the newest entry.
+SEQ_TAG_RE = re.compile(r"^(?P<release>.+)-seq(?P<seq>[0-9]+)$")
+# A tag listing longer than this many pages is not a channel; it is a loop.
+MAX_TAG_PAGES = 64
 
 DOCS_BASE = "https://delivery.vexa.ai"
 
@@ -90,6 +102,59 @@ def manifest_digest(raw: bytes) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
+def newest_entry_tag(tags) -> "tuple[str, int] | None":
+    """(tag, seq) of the newest entry on a channel, from its tag listing.
+
+    Not `current`: that is a pointer the publisher moves only when asked, and
+    it stops wherever it was last moved. Not a release tag either: it names one
+    release's entry, not the channel's newest — and for an estate it is a DAY
+    tag, written once on request and never moved. Every entry is tagged
+    `<release>-seq<N>`, so the highest N is the newest. None when the listing
+    holds no such tag.
+
+    Two tags claiming the highest N is refused rather than resolved: entry_seq
+    names one entry per channel, and picking either would be guessing.
+    """
+    best: "list[str]" = []
+    top = -1
+    for tag in tags or []:
+        if not isinstance(tag, str) or not OCI_TAG_RE.match(tag):
+            continue
+        m = SEQ_TAG_RE.match(tag)
+        if not m:
+            continue
+        seq = int(m.group("seq"))
+        if seq > top:
+            top, best = seq, [tag]
+        elif seq == top:
+            best.append(tag)
+    if not best:
+        return None
+    if len(best) > 1:
+        raise PageError(f"two tags claim entry sequence {top} on this channel: "
+                        f"{', '.join(sorted(best))}")
+    return best[0], top
+
+
+_LINK_NEXT_RE = re.compile(r'<(?P<url>[^>]*)>\s*;\s*rel="?next"?')
+
+
+def next_tags_page(link: "str | None", prefix: str) -> "str | None":
+    """The next page of a `tags/list` answer, from its `Link` header, or None.
+
+    The header comes from upstream and the path is about to carry a subscriber's
+    credential, so it is followed only when it stays inside the listing it
+    continues: same path, its own query, nothing else.
+    """
+    m = _LINK_NEXT_RE.search(link or "")
+    if not m:
+        return None
+    url = m.group("url")
+    if url.split("?", 1)[0] != prefix:
+        raise PageError(f"the registry's next-page link leaves this channel's tag list: {url}")
+    return url
+
+
 def layer_by_title(manifest: dict, title: str) -> "dict | None":
     """The layer `oras push` gave this filename, by its OCI title annotation."""
     for layer in manifest.get("layers") or []:
@@ -108,7 +173,7 @@ def entry_blob_digest(manifest: dict) -> str:
     layer = layer_by_title(manifest, ENTRY_FILE)
     if layer is None or not layer.get("digest"):
         raise PageError(
-            f"the artifact at this channel's `current` tag carries no {ENTRY_FILE} "
+            f"the artifact at this channel's newest entry tag carries no {ENTRY_FILE} "
             f"layer (media type {manifest.get('mediaType') or 'unstated'})"
         )
     return layer["digest"]
@@ -129,8 +194,9 @@ def kit_version(manifest: dict) -> "str | None":
     return None
 
 
-def entry_facts(entry: dict, digest: str) -> dict:
-    """The six facts the page states, out of the signed entry and its digest.
+def entry_facts(entry: dict, digest: str, tag: "str | None" = None) -> dict:
+    """The facts the page states, out of the signed entry, its digest, and the
+    tag it was read at.
 
     Missing keys become None rather than raising: an entry from a future schema
     that dropped a field should cost that ROW, not the page. The absence shows
@@ -145,6 +211,8 @@ def entry_facts(entry: dict, digest: str) -> dict:
         "release": release.get("version"),
         "release_url": release.get("release_url"),
         "entry_seq": channel.get("entry_seq"),
+        "entry_tag": tag,
+        "publication_mode": publication.get("mode"),
         "published_at": publication.get("published_at"),
         "entry_digest": digest,
         "key_fingerprint": signing.get("identity"),
@@ -249,10 +317,12 @@ def render_channel(facts: dict, kit: "str | None", docs_base: str = DOCS_BASE) -
         release_cell = _row("Release", release)
     body = (
         f"<h1>{html.escape(str(name))}</h1>"
-        '<p class="kind">Vexa Delivery channel &middot; current entry</p>'
+        '<p class="kind">Vexa Delivery channel &middot; newest entry</p>'
         "<table>"
         + release_cell
         + _row("Entry sequence", facts.get("entry_seq"))
+        + _row("Entry tag", facts.get("entry_tag"))
+        + _row("Publication", facts.get("publication_mode"))
         + _row("Published at", facts.get("published_at"))
         + _row("Entry digest", facts.get("entry_digest"))
         + _row("Channel key fingerprint", facts.get("key_fingerprint"))

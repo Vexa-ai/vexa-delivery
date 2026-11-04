@@ -15,21 +15,27 @@ would have failed.
 | Without one | `200` · one line, and a link that fetches the prompt |
 | `?signin=1`, no credential | `401` + `WWW-Authenticate: Basic` — what makes a browser ask |
 | A credential the registry refuses | `401` + `WWW-Authenticate: Basic`, and the same one line |
-| No such channel, no `current`, a bad address, a registry that will not answer | `404`/`502` **as an HTML page with a sentence** — never plain text |
+| No such channel, no `<release>-seq<N>` tag on it, a bad address, a registry that will not answer | `404`/`502` **as an HTML page with a sentence** — never plain text |
 | Health | `GET /healthz` · `{"ok": true}` |
 | Cache | one minute, per channel **and per credential** |
 | Secrets held | none |
 
 ## What the page says
 
-Six facts, and every one of them comes out of the channel's own `current` entry
-or the kit artifact beside it:
+Every fact comes out of the channel's **newest entry** or the kit artifact
+beside it. The newest entry is the one at the highest `<release>-seq<N>` tag:
+the publisher writes that tag for every entry, it never moves, and `entry_seq`
+advances on every publish. It is **not** `current`, which moves only when a
+publisher names it, and **not** a release tag, which names one release's entry
+rather than the channel's newest (for an estate, a day tag that never moves).
 
 | | Read from |
 |---|---|
 | Channel name | `channel.name` in the entry, cross-checked against the URL |
 | Release | `release.version`, linked to `release.release_url` |
-| Entry sequence | `channel.entry_seq` |
+| Entry sequence | `channel.entry_seq`, cross-checked against the tag |
+| Entry tag | the `<release>-seq<N>` tag the entry was read at |
+| Publication | `publication.mode` — `candidate` or `published` |
 | Published at | `publication.published_at` |
 | Entry digest | the sha256 of the manifest bytes this service read |
 | Channel key fingerprint | `signing.identity` |
@@ -54,10 +60,11 @@ sha256 of the manifest bytes, so there is nothing to trust. The number on the
 page is a statement about the bytes this service read, which is what a
 subscriber comparing it against their own `oras resolve` needs it to be.
 
-**A `current` tag pointing at another channel's entry is said out loud.** The
-URL names a channel and the signed entry names one; if they disagree the page
-refuses to render and says so, because that is the single fact here a subscriber
-could not check for themselves.
+**A tag pointing at another channel's entry, or at another entry, is said out
+loud.** The URL names a channel and the signed entry names one; the tag names a
+release and a sequence and the signed entry names both. If either pair
+disagrees the page refuses to render and says so, because those are the facts
+here a subscriber could not check for themselves.
 
 ## The auth split, and who decides it
 
@@ -98,14 +105,18 @@ browser needs in order to prompt.
 
 ## What it reads, and all it reads
 
-Three upstream `GET`s per uncached render, all under the channel named in the
-URL: the manifest at `current`, the `entry.json` blob it points at, and the kit
-tag. The channel name is matched against **the entry schema's own pattern**
-(`spec/channel-entry.schema.json`, `channel.name`) before it is interpolated
-into a registry path, so there is no name a caller can write that reaches
-another repository. The pattern is copied into `vexa_page.py` because the build
-context is this directory; `tests/test_page.py` reads the schema and fails if
-the copy drifts.
+Four upstream `GET`s per uncached render, all under the channel named in the
+URL: the tag list (`tags/list`, one `GET` per page — a `Link: <…>; rel="next"`
+is followed only while it stays on this channel's own listing), the manifest at
+the newest `<release>-seq<N>`, the `entry.json` blob it points at, and the kit
+tag. The edge already lets a subscriber read its own channel's `tags/list`
+(RUNBOOK § 5.2). The channel name is matched against **the entry schema's own
+pattern** (`spec/channel-entry.schema.json`, `channel.name`) before it is
+interpolated into a registry path, and every listed tag against the OCI tag
+grammar before it is a candidate, so there is no name a caller or a listing can
+write that reaches another repository. The pattern is copied into
+`vexa_page.py` because the build context is this directory;
+`tests/test_page.py` reads the schema and fails if the copy drifts.
 
 The manifest `GET` carries an explicit `Accept`. RUNBOOK § 5.2 records why: a
 manifest request without one returns `MANIFEST_UNKNOWN` by content negotiation,

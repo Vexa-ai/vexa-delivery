@@ -154,6 +154,25 @@ def resolve_root(ledger: "str | pathlib.Path | None") -> pathlib.Path:
     return root
 
 
+def entry_tag(release: str, entry_seq: int) -> str:
+    """The permanent tag an entry is pushed to: `<release>-seq<N>`.
+
+    ONE DERIVATION for the writer (`vexa_channel.py push`) and every reader
+    (`show` below). The release is used verbatim — an OSS release keeps its
+    `v`, so its tags are `v<X.Y.Z>-seq<N>`, and an estate's are
+    `<X.Y.Z>-estate-<YYYYMMDD>-seq<N>`. The tag never moves: `entry_seq`
+    advances on every publish, so every entry has a tag of its own.
+    """
+    return f"{release}-seq{int(entry_seq)}"
+
+
+def newest_entry(doc: dict) -> "dict | None":
+    """The row with the highest entry_seq: the newest entry on the channel,
+    wherever the floating tag stands. None for a channel with no rows."""
+    rows = [e for e in (doc.get("entries") or []) if isinstance(e.get("entry_seq"), int)]
+    return max(rows, key=lambda e: e["entry_seq"]) if rows else None
+
+
 def channel_file(root: pathlib.Path, channel: str) -> pathlib.Path:
     return root / "channels" / safe_name("channel", channel) / "channel.yaml"
 
@@ -665,9 +684,21 @@ def cmd_show(args) -> int:
     root = resolve_root(args.ledger)
     for cpath in sorted((root / "channels").glob("*/channel.yaml")):
         doc = load_yaml(cpath)
-        cur = doc.get("current") or {}
+        # THE NEWEST ROW, NOT `current`. `current` mirrors the floating tag and
+        # stops wherever that tag was last moved — on an estate channel, the
+        # first publish of a day, or never. The question this line answers is
+        # "what is newest here, and at which tag do I pull it".
+        new = newest_entry(doc) or {}
+        tag = entry_tag(new["release"], new["entry_seq"]) if new.get("release") else "-"
         print(f"\n{doc.get('channel')}  seq {doc.get('last_entry_seq')}  "
-              f"current {cur.get('release')} ({cur.get('publication_mode')})")
+              f"newest {new.get('release')} seq {new.get('entry_seq')} tag {tag} "
+              f"({new.get('publication_mode')})")
+        # Where the floating tag stands is a different fact. It is kept, under
+        # that tag's own name, and printed only when it is not the newest entry.
+        cur = doc.get("current") or {}
+        if cur and cur.get("entry_seq") != new.get("entry_seq"):
+            print(f"  {doc.get('channel_tag') or 'current'} -> seq {cur.get('entry_seq')} "
+                  f"{cur.get('release')} ({cur.get('publication_mode')})")
         pins = doc.get("pins") or {}
         seen = set()
         for spath in sorted(cpath.parent.glob("stations/*/state.yaml")):

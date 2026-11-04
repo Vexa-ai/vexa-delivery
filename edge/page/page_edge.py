@@ -25,11 +25,13 @@ page can therefore never show a subscriber anything they could not have pulled
 themselves, and the day per-channel scoping is tightened at the edge, it tightens
 here for free because this service asks rather than knows.
 
-WHAT IT READS, AND ALL IT READS. Two upstream GETs per uncached render, both
-under the channel named in the URL: the manifest at `current`, and the
+WHAT IT READS, AND ALL IT READS. Under the channel named in the URL only: the
+tag list (one GET per page), the manifest at the NEWEST ENTRY'S SEQ TAG — the
+highest `<release>-seq<N>`, never `current` and never the release tag — and the
 `entry.json` blob it points at; plus one for the kit tag. The channel name is
-matched against the entry schema's own pattern before it is interpolated, so
-there is no path a caller can write that reaches another repository.
+matched against the entry schema's own pattern before it is interpolated, and a
+listed tag against the OCI tag grammar, so there is no path a caller or a
+listing can write that reaches another repository.
 
 DEPLOYMENT: see README.md in this directory. This service has NOT been deployed
 by the change that introduced it — the live edge is founder-owned.
@@ -111,6 +113,12 @@ class Config:
         Returns (status, body). A refusal is a status, not an exception, because
         401 and 404 are ordinary answers on this path and each has its own page.
         """
+        status, _, body = self.fetch_with_headers(path, authorization, accept)
+        return status, body
+
+    def fetch_with_headers(self, path: str, authorization: str,
+                           accept: str) -> "tuple[int, dict, bytes]":
+        """`fetch`, plus the response headers — `tags/list` pages by `Link`."""
         req = urllib.request.Request(self.upstream + path, method="GET")
         req.add_header("Accept", accept)
         req.add_header("Authorization", authorization)
@@ -121,15 +129,44 @@ class Config:
             req.add_header("Host", self.upstream_host)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                status, body = resp.status, resp.read(MAX_BLOB + 1)
+                status, headers, body = resp.status, resp.headers, resp.read(MAX_BLOB + 1)
         except urllib.error.HTTPError as e:
-            return e.code, e.read(MAX_BLOB + 1) if e.fp else b""
+            return e.code, e.headers or {}, e.read(MAX_BLOB + 1) if e.fp else b""
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise vexa_page.PageError(f"the channel registry did not answer: {e}") from None
         if len(body) > MAX_BLOB:
             raise vexa_page.PageError(
                 f"the registry returned more than {MAX_BLOB} bytes for {path}")
-        return status, body
+        return status, headers, body
+
+
+def read_newest_tag(config: Config, repo: str,
+                    authorization: str) -> "tuple[int, tuple[str, int] | None]":
+    """(status, (tag, seq) | None): the channel's newest entry tag, by listing.
+
+    The whole listing is read, page by page as the registry hands it out,
+    before anything is chosen: the newest tag is wherever it sorts, and a
+    registry sorts tags as strings. A non-200 on any page is returned as the
+    answer, the same way a refused manifest GET is.
+    """
+    prefix = f"/v2/{repo}/tags/list"
+    path, tags = prefix, []
+    for _ in range(vexa_page.MAX_TAG_PAGES):
+        status, headers, body = config.fetch_with_headers(path, authorization, "application/json")
+        if status != HTTPStatus.OK:
+            return status, None
+        try:
+            doc = json.loads(body)
+        except ValueError:
+            doc = None
+        if not isinstance(doc, dict):
+            raise vexa_page.PageError("this channel's tag list is not a tag list")
+        tags.extend(doc.get("tags") or [])
+        path = vexa_page.next_tags_page(headers.get("Link"), prefix)
+        if path is None:
+            return HTTPStatus.OK, vexa_page.newest_entry_tag(tags)
+    raise vexa_page.PageError(
+        f"this channel's tag list did not end after {vexa_page.MAX_TAG_PAGES} pages")
 
 
 def _answer(status, body: str, headers=None):
@@ -169,23 +206,33 @@ def serve(config: Config, path: str, authorization: str) -> "tuple[int, dict, by
 
     repo = CHANNEL_REPO.format(name=name)
     try:
-        status, raw = config.fetch(
-            f"/v2/{repo}/manifests/current", authorization, MANIFEST_ACCEPT)
+        # THE NEWEST ENTRY, BY ITS SEQ TAG. Not `current`, which moves only
+        # when a publisher names it and stops wherever it was last moved, and
+        # not a release tag, which names one release's entry rather than the
+        # channel's newest — for an estate, a day tag that is never moved.
+        status, newest = read_newest_tag(config, repo, authorization)
         if status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
             # The registry refused this credential. Ask again rather than
             # explaining: a wrong password in a browser is fixed by the prompt.
             return _answer(HTTPStatus.UNAUTHORIZED,
                            vexa_page.render_anonymous(config.docs_base),
                            {"WWW-Authenticate": REALM})
-        if status == HTTPStatus.NOT_FOUND:
+        if status == HTTPStatus.NOT_FOUND or (status == HTTPStatus.OK and newest is None):
             return _answer(HTTPStatus.NOT_FOUND, vexa_page.render_notice(
-                "No current entry",
-                f"The channel {name} has no entry at its current tag. If you were "
-                f"given this address, tell us — it means nothing has been published "
-                f"to it yet.", config.docs_base))
+                "No entry",
+                f"The channel {name} has no entry published to it yet. If you were "
+                f"given this address, tell us.", config.docs_base))
         if status != HTTPStatus.OK:
             raise vexa_page.PageError(
-                f"the channel registry answered {status} for this channel's current tag")
+                f"the channel registry answered {status} for this channel's tag list")
+
+        tag, seq = newest
+        status, raw = config.fetch(
+            f"/v2/{repo}/manifests/{tag}", authorization, MANIFEST_ACCEPT)
+        if status != HTTPStatus.OK:
+            raise vexa_page.PageError(
+                f"the channel registry answered {status} for {tag}, this channel's "
+                f"newest entry tag")
 
         manifest = json.loads(raw)
         blob = vexa_page.entry_blob_digest(manifest)
@@ -193,7 +240,7 @@ def serve(config: Config, path: str, authorization: str) -> "tuple[int, dict, by
             f"/v2/{repo}/blobs/{blob}", authorization, "application/json")
         if status != HTTPStatus.OK:
             raise vexa_page.PageError(
-                f"this channel's current entry names a blob the registry answered "
+                f"this channel's newest entry names a blob the registry answered "
                 f"{status} for")
         entry = json.loads(entry_raw)
 
@@ -215,10 +262,10 @@ def serve(config: Config, path: str, authorization: str) -> "tuple[int, dict, by
     except ValueError as exc:
         return _answer(HTTPStatus.BAD_GATEWAY, vexa_page.render_notice(
             "The channel did not answer",
-            f"this channel's current entry is not readable JSON ({exc})",
+            f"this channel's newest entry is not readable JSON ({exc})",
             config.docs_base))
 
-    facts = vexa_page.entry_facts(entry, vexa_page.manifest_digest(raw))
+    facts = vexa_page.entry_facts(entry, vexa_page.manifest_digest(raw), tag=tag)
     # The URL names the channel; the signed entry names it too. If they disagree,
     # the tag was moved onto another channel's entry — which is the one thing on
     # this page a subscriber could not detect for themselves, so it is said out
@@ -226,8 +273,18 @@ def serve(config: Config, path: str, authorization: str) -> "tuple[int, dict, by
     if facts.get("channel") and facts["channel"] != name:
         return _answer(HTTPStatus.BAD_GATEWAY, vexa_page.render_notice(
             "Channel mismatch",
-            f"the entry published at {name}'s current tag declares itself to be "
-            f"channel {facts['channel']}. Do not act on it; tell us.",
+            f"the entry published at {name}'s newest entry tag {tag} declares itself "
+            f"to be channel {facts['channel']}. Do not act on it; tell us.",
+            config.docs_base))
+    # The tag names a release and a sequence; the signed entry names both too.
+    # The page chose this entry BECAUSE of the number in its tag, so a tag whose
+    # entry claims another one is said out loud, never rendered as the newest.
+    claimed = f"{facts.get('release')}-seq{facts.get('entry_seq')}"
+    if facts.get("entry_seq") != seq or claimed != tag:
+        return _answer(HTTPStatus.BAD_GATEWAY, vexa_page.render_notice(
+            "Entry mismatch",
+            f"the tag {tag} names entry sequence {seq}, and the signed entry it points "
+            f"at declares itself to be {claimed}. Do not act on it; tell us.",
             config.docs_base))
 
     body = vexa_page.render_channel(facts, kit, config.docs_base).encode()

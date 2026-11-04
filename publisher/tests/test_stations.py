@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """The ledger reducer: what it writes, what it refuses, and what it must not
 sweep into a commit that is not its own."""
+import contextlib
 import datetime
+import io
 import json
 import pathlib
 import subprocess
@@ -477,6 +479,51 @@ class Guards(unittest.TestCase):
         old = {"last_receipt": {"ts": "2026-01-01T00:00:00Z", "verdict": "PASS"}}
         self.assertEqual(vs.derive_flags(fresh, {}, now=now), [])
         self.assertEqual(vs.derive_flags(old, {}, now=now), ["stale"])
+
+
+class ShowNamesTheNewestEntry(unittest.TestCase):
+    """`show` answers "what is the newest entry on this channel, and at which
+    tag do I pull it". It used to print `current`, which mirrors the floating
+    tag and stops wherever that tag was last moved — on an estate channel that
+    is the first publish of a day, or months ago."""
+
+    DAY = "0.1.0-estate-20261104"
+
+    def setUp(self):
+        self.root = new_ledger()
+
+    def show(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(vs.main(["--ledger", str(self.root), "show"]), 0)
+        return out.getvalue()
+
+    def test_the_second_publish_of_a_day_is_the_one_shown(self):
+        vs.record_publish(self.root, entry(seq=1, release=self.DAY), channel_tag="current")
+        vs.record_publish(self.root, entry(seq=2, release=self.DAY))
+        head = next(ln for ln in self.show().splitlines() if ln.startswith("pilot-stable"))
+        self.assertIn(f"{self.DAY}-seq2", head)
+        self.assertNotIn(f"{self.DAY}-seq1", head)
+
+    def test_where_the_pointer_stands_is_still_said_and_named(self):
+        vs.record_publish(self.root, entry(seq=1, release=self.DAY), channel_tag="current")
+        vs.record_publish(self.root, entry(seq=2, release=self.DAY))
+        pointer = [ln for ln in self.show().splitlines() if "current" in ln]
+        self.assertEqual(len(pointer), 1, pointer)
+        self.assertIn("seq 1", pointer[0])
+
+    def test_no_pointer_line_when_the_pointer_is_the_newest_or_was_never_moved(self):
+        vs.record_publish(self.root, entry(seq=1), channel_tag="current")
+        self.assertNotIn("->", self.show())
+        root2 = self.root = new_ledger()
+        vs.record_publish(root2, entry(seq=1))
+        self.assertNotIn("->", self.show())
+
+    def test_the_seq_tag_is_the_one_push_writes(self):
+        """One derivation, used by the writer and by every reader. An OSS
+        release keeps its `v`: the live tags are `v<X.Y.Z>-seq<N>`."""
+        self.assertEqual(vs.entry_tag("v0.12.24", 5), "v0.12.24-seq5")
+        self.assertEqual(vs.entry_tag(self.DAY, 12), f"{self.DAY}-seq12")
 
 
 if __name__ == "__main__":
