@@ -68,12 +68,13 @@ PLAIN=()
 COSIGN_INSECURE=()
 { [ "$PLAIN_HTTP" = true ] || [ "$INSECURE" = true ]; } && COSIGN_INSECURE=(--allow-insecure-registry)
 
-ISO_DOCKER_CONFIG="${TMPDIR:-/tmp}/vexa-channel-dockercfg"
-mkdir -p "$ISO_DOCKER_CONFIG"
+# This run's own dir (mode 0700), removed on exit: the file carries the login.
+ISO_DOCKER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/vexa-channel-dockercfg.XXXXXX")"
+trap 'rm -rf "$ISO_DOCKER_CONFIG"' EXIT
 # Carry the credentials `oras login` already stored, minus the helper keys:
 # blanking auths outright makes cosign UNAUTHORIZED against an authenticated
 # channel registry, which is the common shape (rehearsal 2026-08-24).
-python3 - "$HOME/.docker/config.json" > "$ISO_DOCKER_CONFIG/config.json" <<'PYCFG'
+(umask 077; python3 - "$HOME/.docker/config.json" > "$ISO_DOCKER_CONFIG/config.json") <<'PYCFG'
 import base64, json, os, sys
 try:
     auths = json.load(open(sys.argv[1])).get("auths") or {}
@@ -92,7 +93,8 @@ export COSIGN_PASSWORD="${COSIGN_PASSWORD-}"
 REF="${REGISTRY}/vexa/channel/${CHANNEL}/kit"
 CURRENT_VERSION="$(sed -n 's/^version=//p' "$HERE/VERSION" 2>/dev/null || echo unknown)"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# bash runs the EXIT trap on SIGTERM and SIGHUP too (kit/tests/test_dockercfg_residue.sh)
+trap 'rm -rf "$WORK" "$ISO_DOCKER_CONFIG"' EXIT
 
 echo "== current: ${CURRENT_VERSION} (${CURRENT_DIGEST})"
 echo "== resolving ${REF}:${VERSION}"

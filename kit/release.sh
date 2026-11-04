@@ -74,12 +74,13 @@ COSIGN_INSECURE=()
 # Neutralize docker credential helpers exactly as publisher/vexa_channel.py's
 # cosign_env() does: with Docker Desktop absent the configured credsStore hangs
 # forever inside cosign's keychain lookup. Anonymous auth is correct here.
-ISO_DOCKER_CONFIG="${TMPDIR:-/tmp}/vexa-channel-dockercfg"
-mkdir -p "$ISO_DOCKER_CONFIG"
+# This run's own dir (mode 0700), removed on exit: the file carries the login.
+ISO_DOCKER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/vexa-channel-dockercfg.XXXXXX")"
+trap 'rm -rf "$ISO_DOCKER_CONFIG"' EXIT
 # Carry the credentials `oras login` already stored, minus the helper keys:
 # blanking auths outright makes cosign UNAUTHORIZED against an authenticated
 # channel registry, which is the common shape (rehearsal 2026-08-24).
-python3 - "$HOME/.docker/config.json" > "$ISO_DOCKER_CONFIG/config.json" <<'PYCFG'
+(umask 077; python3 - "$HOME/.docker/config.json" > "$ISO_DOCKER_CONFIG/config.json") <<'PYCFG'
 import base64, json, os, sys
 try:
     auths = json.load(open(sys.argv[1])).get("auths") or {}
@@ -97,7 +98,8 @@ export COSIGN_PASSWORD="${COSIGN_PASSWORD-}"
 
 REF="${REGISTRY}/vexa/channel/${CHANNEL}/kit"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# bash runs the EXIT trap on SIGTERM and SIGHUP too (kit/tests/test_dockercfg_residue.sh)
+trap 'rm -rf "$WORK" "$ISO_DOCKER_CONFIG"' EXIT
 STAGE="$WORK/kit"
 mkdir -p "$STAGE"
 

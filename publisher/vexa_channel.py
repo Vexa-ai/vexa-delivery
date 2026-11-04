@@ -105,11 +105,49 @@ def run_tmp():
                   file=sys.stderr)
             raise SystemExit(2)
         path = pathlib.Path(tempfile.mkdtemp(prefix="vexa-channel-run-", dir=base or None))
-        (path / ".in-use.pid").write_text(f"{os.getpid()}\n")
+        (path / ".in-use.pid").write_text(_lock_line(os.getpid()))
         atexit.register(_remove_run_tmp, path, os.getpid())
         _exit_on_signals()
         _RUN_TMP = path
     return _RUN_TMP
+
+
+def _lock_line(pid):
+    """`<pid> <start time>`: a residue check can tell this live run from a dead one whose PID was reused."""
+    try:
+        r = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5,
+                           env=dict(os.environ, LC_ALL="C", TZ="UTC"))
+        start = " ".join(r.stdout.split())
+    except (OSError, subprocess.SubprocessError):
+        start = ""
+    return f"{pid} {start}\n" if start else f"{pid}\n"
+
+
+def git_archive_into(repo, ref, path, dest):
+    """`git archive REF PATH | tar -x -C DEST` with no shell and no tar process: the repo path is never split or
+    expanded, and when this process is stopped its one child, git, is killed with it."""
+    import tarfile
+
+    p = subprocess.Popen(["git", "-C", str(repo), "archive", "--format=tar", ref, path],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        with tarfile.open(fileobj=p.stdout, mode="r|") as tf:
+            tf.extractall(dest, filter="data")
+        err = p.stderr.read()
+        if p.wait() != 0:
+            raise subprocess.CalledProcessError(p.returncode, p.args, stderr=err.decode(errors="replace"))
+    except tarfile.TarError:                     # git failed (bad ref) or wrote something that is not a tar
+        if p.poll() is None:
+            p.kill()
+        rc = p.wait()
+        err = p.stderr.read()
+        raise subprocess.CalledProcessError(rc or 1, p.args, stderr=err.decode(errors="replace")) from None
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+        p.stdout.close()
+        p.stderr.close()
 
 
 def run_mkdtemp(prefix):
@@ -117,8 +155,13 @@ def run_mkdtemp(prefix):
 
 
 def _remove_run_tmp(path, owner):
-    if os.getpid() == owner:                    # never from a forked child
-        shutil.rmtree(path, ignore_errors=True)
+    if os.getpid() != owner:                    # never from a forked child
+        return
+    # A signal now would raise inside rmtree and leave half the dir: hold them
+    # until the process is gone (a pending one dies with it).
+    if hasattr(signal, "pthread_sigmask") and threading.current_thread() is threading.main_thread():
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGHUP, signal.SIGINT})
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def _exit_on_signal(signum, frame):
@@ -1975,10 +2018,7 @@ def cmd_chart(args):
     pins = build_pins(version, candidate_map)
 
     workdir = run_mkdtemp("vexa-chart-")
-    subprocess.run(
-        f"git -C {args.vexa_repo} archive {version} deploy/helm/charts/vexa | tar -x -C {workdir}",
-        shell=True, check=True,
-    )
+    git_archive_into(args.vexa_repo, version, "deploy/helm/charts/vexa", workdir)
     chart_dir = workdir / "deploy/helm/charts/vexa"
 
     values_path = chart_dir / "values.yaml"

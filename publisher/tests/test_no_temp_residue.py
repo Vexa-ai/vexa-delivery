@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 
 import yaml
@@ -84,6 +85,9 @@ class TempResidue(unittest.TestCase):
         self.assertNothingLeft()
 
     def test_sigterm_mid_run_leaves_nothing(self):
+        self._signal_mid_run(signal.SIGTERM)
+
+    def _signal_mid_run(self, sig):
         chart, overlay = _chart(self.work)
         bin_dir = self.work / "bin"
         bin_dir.mkdir()
@@ -93,8 +97,11 @@ class TempResidue(unittest.TestCase):
         helm.write_text(f"#!/bin/sh\necho $$ > {ready}\nexec sleep 60\n")
         helm.chmod(0o755)
         env = dict(self.env, PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+        # under nohup the test runner ignores SIGHUP, and a child inherits that (rightly: nohup
+        # means it); give the CLI the default disposition a terminal session would
         p = subprocess.Popen(_argv(chart, overlay, self.work / "out"), env=env,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                             preexec_fn=lambda: signal.signal(sig, signal.SIG_DFL))
         try:
             deadline = time.monotonic() + 30
             while not (ready.exists() and ready.read_text().strip()):
@@ -102,7 +109,7 @@ class TempResidue(unittest.TestCase):
                 self.assertLess(time.monotonic(), deadline, "helm was never called")
                 time.sleep(0.05)
             self.assertTrue(any(self.tmp.rglob("vexa-platform-chart-*")), "no chart copy while running")
-            p.send_signal(signal.SIGTERM)
+            p.send_signal(sig)
             p.wait(timeout=30)
         finally:
             if p.poll() is None:
@@ -114,8 +121,64 @@ class TempResidue(unittest.TestCase):
                 except (ProcessLookupError, ValueError):
                     pass
             p.stderr.close()
-        self.assertEqual(p.returncode, 128 + signal.SIGTERM)
+        self.assertEqual(p.returncode, 128 + sig)
         self.assertNothingLeft()
+
+    def test_sighup_mid_run_leaves_nothing(self):
+        self._signal_mid_run(signal.SIGHUP)
+
+    def test_a_signal_during_the_final_removal_does_not_cut_it_short(self):
+        # SIGTERM arrives while atexit is removing the run dir: the removal must still finish
+        code = (
+            "import os, shutil, signal, sys; sys.path.insert(0, sys.argv[1]); import vexa_channel as vc\n"
+            "d = vc.run_tmp()\n"
+            "for i in range(50): (d / f'f{i}').write_text('x')\n"
+            "real = shutil.rmtree\n"
+            "def slow(path, *a, **k):\n"
+            "    os.kill(os.getpid(), signal.SIGTERM)\n"
+            "    return real(path, *a, **k)\n"
+            "shutil.rmtree = slow\n")
+        subprocess.run([sys.executable, "-c", code, str(PUBLISHER)], env=self.env,
+                       capture_output=True, text=True, timeout=60)
+        self.assertNothingLeft()
+
+    def test_chart_extracts_the_archive_without_a_shell(self):
+        # a repo path a shell would split and expand: through sh -c it ran $(touch PWNED)
+        sys.path.insert(0, str(PUBLISHER))
+        import vexa_channel as vc
+        repo = self.work / "repo $(touch PWNED)"
+        chart = repo / "deploy/helm/charts/vexa"
+        (chart / "templates").mkdir(parents=True)
+        (chart / "Chart.yaml").write_text("apiVersion: v2\nname: vexa\nversion: 0.0.0\n")
+        (chart / "values.yaml").write_text("image: {}\n")
+        git = ["git", "-C", str(repo), "-c", "user.email=t@vexa.invalid", "-c", "user.name=t"]
+        subprocess.run(git[:3] + ["init", "-q"], check=True)
+        subprocess.run(git + ["add", "-A"], check=True)
+        subprocess.run(git + ["commit", "-qm", "fixture"], check=True)
+        subprocess.run(git + ["tag", "v0.0.1"], check=True)
+
+        class Extracted(Exception):
+            pass
+
+        def stop(chart_dir, values):
+            raise Extracted(str(chart_dir))
+
+        saved = (vc.read_tag, vc.check_map_identity, vc.build_pins, vc.inject_channel_verify)
+        vc.read_tag = lambda repo_, version: ("t", "s", b"{}")
+        vc.check_map_identity = lambda version, m: None
+        vc.build_pins = lambda version, m: {}
+        vc.inject_channel_verify = stop
+        cwd = os.getcwd()
+        os.chdir(self.work)
+        try:
+            args = types.SimpleNamespace(release="v0.0.1", vexa_repo=str(repo), baseline=None, chart_version=None)
+            with self.assertRaises(Extracted) as cm:
+                vc.cmd_chart(args)
+        finally:
+            os.chdir(cwd)
+            vc.read_tag, vc.check_map_identity, vc.build_pins, vc.inject_channel_verify = saved
+        self.assertTrue((pathlib.Path(str(cm.exception)) / "values.yaml").is_file())
+        self.assertFalse((self.work / "PWNED").exists(), "the repo path went through a shell")
 
     def test_the_registry_auths_leave_with_the_run(self):
         home = self.work / "home"
