@@ -12,6 +12,7 @@ written somewhere it was never supposed to exist.
 import argparse
 import contextlib
 import io
+import shutil
 import json
 import os
 import pathlib
@@ -30,8 +31,10 @@ ARMOR_HEAD = "-----BEGIN AGE ENCRYPTED FILE-----"
 PASSWORD = "not-a-real-password"
 
 
-def new_ledger():
+def new_ledger(case):
+    """A throwaway git ledger, removed when `case` ends."""
     root = pathlib.Path(tempfile.mkdtemp(prefix="vexa-ledger-"))
+    case.addCleanup(shutil.rmtree, root, True)
     for cmd in (["init", "-q", "-b", "main"],
                 ["config", "user.email", "test@vexa.invalid"],
                 ["config", "user.name", "test"]):
@@ -61,7 +64,8 @@ class Preflight(unittest.TestCase):
 
     def setUp(self):
         self.dir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-preflight-"))
-        self.ledger = new_ledger()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.ledger = new_ledger(self)
         self.recipients = self.dir / "edge.recipients"
         self.recipients.write_text(
             "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p\n")
@@ -155,8 +159,9 @@ class ParkEndToEnd(unittest.TestCase):
 
     def setUp(self):
         self.dir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-park-e2e-"))
+        self.addCleanup(shutil.rmtree, self.dir, True)
         self.spool = self.dir / "spool"
-        self.ledger = new_ledger()
+        self.ledger = new_ledger(self)
         subprocess.run(["age-keygen", "-o", str(self.dir / "edge.key")],
                        capture_output=True, check=True)
         public = [ln.split(": ", 1)[1]
@@ -264,7 +269,8 @@ class AttemptsIngest(unittest.TestCase):
 
     def setUp(self):
         self.dir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-ingest-"))
-        self.ledger = new_ledger()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.ledger = new_ledger(self)
         # A station only has a directory once it has been parked to, which is
         # necessarily before anyone can claim against it.
         vst.record_credential_events(

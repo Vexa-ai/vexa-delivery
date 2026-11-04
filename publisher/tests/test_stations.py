@@ -2,6 +2,7 @@
 """The ledger reducer: what it writes, what it refuses, and what it must not
 sweep into a commit that is not its own."""
 import datetime
+import shutil
 import json
 import pathlib
 import subprocess
@@ -19,8 +20,10 @@ def git(root, *args):
                           capture_output=True, text=True, check=True)
 
 
-def new_ledger():
+def new_ledger(case):
+    """A throwaway git ledger, removed when `case` ends."""
     root = pathlib.Path(tempfile.mkdtemp(prefix="vexa-ledger-"))
+    case.addCleanup(shutil.rmtree, root, True)
     git(root, "init", "-q", "-b", "main")
     git(root, "config", "user.email", "test@vexa.invalid")
     git(root, "config", "user.name", "test")
@@ -45,7 +48,7 @@ def entry(seq=1, channel="pilot-stable", release="v0.12.23", expires=None):
 
 class PublishReducer(unittest.TestCase):
     def setUp(self):
-        self.root = new_ledger()
+        self.root = new_ledger(self)
 
     def test_writes_channel_yaml_and_commits(self):
         out = vs.record_publish(self.root, entry(seq=4), entry_digest="sha256:" + "a" * 64,
@@ -134,7 +137,7 @@ class CommitByPathspec(unittest.TestCase):
     be running twice at once, so this is a test, not a comment."""
 
     def test_does_not_sweep_another_writers_staged_file(self):
-        root = new_ledger()
+        root = new_ledger(self)
         stowaway = root / "someone-elses-work.txt"
         stowaway.write_text("a concurrent agent staged this\n")
         git(root, "add", "someone-elses-work.txt")
@@ -147,7 +150,7 @@ class CommitByPathspec(unittest.TestCase):
         self.assertIn("someone-elses-work.txt", still_staged)
 
     def test_a_no_op_reduction_makes_no_commit(self):
-        root = new_ledger()
+        root = new_ledger(self)
         vs.record_publish(root, entry(seq=1))
         before = git(root, "rev-parse", "HEAD").stdout.strip()
         # Same entry again: the only field that moves is recorded_at, so this
@@ -181,7 +184,7 @@ def receipt(station="pilot", ts="2026-08-25T17:36:09Z", **kw):
 
 class IngestReducer(unittest.TestCase):
     def setUp(self):
-        self.root = new_ledger()
+        self.root = new_ledger(self)
         vs.record_publish(self.root, entry(seq=4))
 
     def test_writes_state_and_stores_the_receipt(self):
@@ -199,6 +202,7 @@ class IngestReducer(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as fh:
             fh.write(b"not really a tarball, but byte-identical is the point")
             bundle = pathlib.Path(fh.name)
+        self.addCleanup(lambda: bundle.unlink(missing_ok=True))
         out = vs.record_ingest(self.root, channel="pilot-stable", station="pilot",
                                receipt=receipt(), manifest=manifest(), bundle=bundle)
         copied = pathlib.Path(out["receipts"]) / bundle.name
@@ -310,7 +314,7 @@ class IngestReducer(unittest.TestCase):
 
 class PinMoves(unittest.TestCase):
     def setUp(self):
-        self.root = new_ledger()
+        self.root = new_ledger(self)
         vs.record_publish(self.root, entry(seq=4))
 
     def test_a_pin_move_records_the_justification_in_history(self):
@@ -355,7 +359,7 @@ class CredentialEvents(unittest.TestCase):
     unrecoverable if it ever recorded a value: git history does not forget."""
 
     def setUp(self):
-        self.root = new_ledger()
+        self.root = new_ledger(self)
 
     def events_file(self, station="pilot"):
         return (vs.station_dir(self.root, "pilot-stable", station)
@@ -464,6 +468,7 @@ class CredentialEvents(unittest.TestCase):
 class Guards(unittest.TestCase):
     def test_a_directory_that_is_not_a_git_checkout_is_refused(self):
         tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         with self.assertRaises(vs.LedgerError) as cm:
             vs.resolve_root(tmp)
         self.assertIn("audit trail", str(cm.exception))

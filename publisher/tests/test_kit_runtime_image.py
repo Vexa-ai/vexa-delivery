@@ -12,6 +12,7 @@ Through station chart 1.0.5 there was no image at all: the channel carried the
 kit as a TARBALL and `receiptSender.image` had nothing to point at, so the
 sender was publishable, renderable and unrunnable.
 """
+import shutil
 import pathlib
 import re
 import unittest
@@ -116,6 +117,7 @@ class KitRevisionStamp(unittest.TestCase):
         import pathlib as pl
         import tempfile
         tmp = pl.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         (tmp / "KIT_REVISION").write_text("commit=0beb1cf\ndescribe=v0.1.6-3-g0beb1cf\n")
         self.vv.REPO, old = tmp, self.vv.REPO
         try:
@@ -134,6 +136,7 @@ class KitRevisionStamp(unittest.TestCase):
         import pathlib as pl
         import tempfile
         tmp = pl.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         (tmp / "KIT_REVISION").write_text("commit=unknown\ndescribe=unknown\n")
         self.vv.REPO, old = tmp, self.vv.REPO
         try:

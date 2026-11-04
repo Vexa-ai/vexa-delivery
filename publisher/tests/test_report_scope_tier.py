@@ -18,6 +18,7 @@ contract does not permit at all), plus the compatibility case that must NOT
 break: a pre-ladder contract with no `tier` at all.
 """
 import hashlib
+import shutil
 import json
 import pathlib
 import sys
@@ -77,6 +78,7 @@ class LadderIngest(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ladder-ingest-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def ingest(self, bundle, station="vexa-prod"):
         return vs.main(["--stations-dir", str(self.tmp / "stations"),

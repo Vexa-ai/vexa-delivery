@@ -50,6 +50,7 @@ fi
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+export TMPDIR="$TMP"   # the verifier job script's own mktemp -d lands here, not in /tmp
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
 # ------------------------------------------------------------------- render

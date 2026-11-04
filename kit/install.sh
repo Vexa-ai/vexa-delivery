@@ -11,6 +11,11 @@
 # configuration; nothing phones home; the cluster pulls, verifies, applies.
 set -euo pipefail
 
+# This run's temp files (a rendered chart carries the values it was rendered with): removed
+# on exit, which bash also runs on SIGTERM and SIGHUP.
+RENDER_DIR="" TMP_BUNDLE="" CONTRACT_WORK=""
+trap 'rm -rf ${RENDER_DIR:+"$RENDER_DIR"} ${TMP_BUNDLE:+"$TMP_BUNDLE"} ${CONTRACT_WORK:+"$CONTRACT_WORK"}' EXIT
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {

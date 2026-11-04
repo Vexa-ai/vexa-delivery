@@ -7,6 +7,7 @@ refusals are the load-bearing tests: a station gate that passes something its
 contract did not cover is worse than no gate.
 """
 import hashlib
+import shutil
 import json
 import pathlib
 import sys
@@ -262,6 +263,7 @@ COMPLETE = {
 class Ingest(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ingest-test-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def ingest(self, report, station="rehearsal"):
         return vs.main(["--stations-dir", str(self.tmp / "stations"),
@@ -360,6 +362,7 @@ class ReportShape(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="shape-test-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def load(self, text, name="r.yaml"):
         p = self.tmp / name
@@ -394,6 +397,7 @@ class ReportShape(unittest.TestCase):
 class GateReport(unittest.TestCase):
     def test_waivers_are_written_loudly(self):
         out = pathlib.Path(tempfile.mkdtemp()) / "report.md"
+        self.addCleanup(shutil.rmtree, out.parent, True)
         vs.write_gate_report(out, {
             "station": "rehearsal", "date": "2026-08-24", "at": "2026-08-24T00:00:00Z",
             "verdict": "PASS", "chart_name": "vexa-0.12.26.tgz", "chart_sha256": "a" * 64,

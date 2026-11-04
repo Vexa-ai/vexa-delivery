@@ -45,6 +45,7 @@ class GateHarness(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(body)
         listing = root.parent / f"{root.name}.sha256"
+        stack.callback(listing.unlink, missing_ok=True)   # it sits beside the temp dir, not in it
         listing.write_text("\n".join(sorted(digest(t) for t in tokens)) + "\n")
         return root, listing
 

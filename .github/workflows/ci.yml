@@ -56,3 +56,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: make check-secret-argv
         run: make check-secret-argv
+  # The test suite leaves nothing in TMPDIR or /tmp (2026-11-04: it left ~175
+  # entries a run). Same dependencies as `test`, since it runs the test targets.
+  temp-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install test dependencies
+        run: pip install --quiet jsonschema pyyaml
+      - name: make check-temp-hygiene
+        run: make check-temp-hygiene

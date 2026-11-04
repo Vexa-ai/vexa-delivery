@@ -4,7 +4,7 @@
 # release crank, it reads the operator's own environment, and `DRY_RUN=1` is the
 # form of it that touches nothing.
 
-.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-platform test-verify test-edge test-gates validate-goldens docs-reference check-docs check-private-tokens check-secret-argv lint
+.PHONY: publish test test-publisher test-publish test-preflight test-smoke test-validate test-report test-kit test-platform test-verify test-edge test-gates validate-goldens docs-reference check-docs check-private-tokens check-secret-argv check-temp-hygiene lint
 
 # RUNBOOK § 1 as one command: fetch -> build -> sign-images -> push.
 #
@@ -65,6 +65,7 @@ test-report:
 # `./kit/claim.sh` needs to be a command at all.
 test-kit:
 	bash kit/tests/test_script_modes.sh
+	bash kit/tests/test_dockercfg_residue.sh
 	bash kit/tests/test_install_dry_run.sh
 	bash kit/tests/test_install_adopt.sh
 	bash kit/tests/test_install_manifests.sh
@@ -168,3 +169,9 @@ check-private-tokens:
 # tree, prints file:line and the flag. See gates/README.md.
 check-secret-argv:
 	python3 gates/check-secret-argv.py
+
+# Every test cleans up after itself: the test targets again, with TMPDIR set to an
+# empty dir of their own, failing on anything left in it (and, under CI, on a new
+# entry in /tmp). Not part of `test`, which it runs a second time; its own CI job.
+check-temp-hygiene:
+	bash gates/check-temp-hygiene.sh

@@ -5,6 +5,7 @@ DECISION each check makes, not cosign's behaviour — cosign's behaviour was
 measured against live Kyverno 1.19.0 and is recorded in
 docs/receipts/2026-08-25-signature-layout.md.
 """
+import shutil
 import json
 import os
 import pathlib
@@ -169,6 +170,7 @@ class GeneratedVerifyMd(unittest.TestCase):
         import tempfile
 
         out = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, out, True)
         vc.write_verify_md(out, self._entry())
         text = (out / "VERIFY.md").read_text()
         self.assertIn("PROVISIONAL", text)
@@ -177,6 +179,7 @@ class GeneratedVerifyMd(unittest.TestCase):
         import tempfile
 
         out = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, out, True)
         record = vc.signing_run_record("2.6.5", ["--tlog-upload=false", "--new-bundle-format=false"])
         vc.write_verify_md(out, self._entry(), record)
         text = (out / "VERIFY.md").read_text()

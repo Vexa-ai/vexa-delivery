@@ -12,6 +12,7 @@ envelope is proved in test_claim.py.
 """
 
 import datetime
+import shutil
 import json
 import pathlib
 import sys
@@ -55,6 +56,7 @@ class FixtureConfig(ce.Config):
 class EdgeCase(unittest.TestCase):
     def setUp(self):
         self.spool = pathlib.Path(tempfile.mkdtemp(prefix="vexa-edge-"))
+        self.addCleanup(shutil.rmtree, self.spool, True)
         self.config = FixtureConfig(self.spool)
         ce.Handler.config = self.config
         # The access line is real behaviour and stays in the service; here it

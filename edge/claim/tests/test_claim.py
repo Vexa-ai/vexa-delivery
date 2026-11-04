@@ -9,6 +9,7 @@ this repository already skips bcrypt hashing.
 """
 
 import datetime
+import shutil
 import json
 import pathlib
 import sys
@@ -114,6 +115,7 @@ class Alphabet(unittest.TestCase):
 class Park(unittest.TestCase):
     def setUp(self):
         self.spool = pathlib.Path(tempfile.mkdtemp(prefix="vexa-park-"))
+        self.addCleanup(shutil.rmtree, self.spool, True)
 
     def park(self, code, **kw):
         record = vc.build_park(
@@ -364,6 +366,7 @@ class AgeEnvelope(unittest.TestCase):
         import subprocess
 
         self.dir = pathlib.Path(tempfile.mkdtemp(prefix="vexa-age-"))
+        self.addCleanup(shutil.rmtree, self.dir, True)
         self.key = self.dir / "edge.key"
         subprocess.run(["age-keygen", "-o", str(self.key)],
                        capture_output=True, check=True)
