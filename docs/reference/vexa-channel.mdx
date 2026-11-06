@@ -144,14 +144,17 @@ options:
 Publish the built entry: push it to the registry with `oras`, sign it and every image digest with cosign, and move the channel tag. The signing toolchain checks T1/T2 run inside this path so they cannot be skipped — T2 proves the signature is discoverable in the exact shape the customer's Kyverno will ask for.
 
 ```text
-usage: vexa-channel push [-h] --entry ENTRY --ref REF [--channel-tag CHANNEL_TAG]
-                         [--sign-key SIGN_KEY] [--skip-sign-artifact] [--plain-http] [--insecure]
-                         [--signing-receipt SIGNING_RECEIPT] [--ledger LEDGER]
+usage: vexa-channel push [-h] --entry ENTRY --ref REF [--no-release-tag]
+                         [--channel-tag CHANNEL_TAG] [--sign-key SIGN_KEY] [--skip-sign-artifact]
+                         [--plain-http] [--insecure] [--signing-receipt SIGNING_RECEIPT]
+                         [--ledger LEDGER]
 
 options:
   -h, --help            show this help message and exit
   --entry ENTRY
   --ref REF             repository ref without tag, e.g. host/base/channel/acme-stable
+  --no-release-tag      push under the permanent <version>-seq<N> tag only; never write
+                        <ref>:<version>. --channel-tag, if given, is still written.
   --channel-tag CHANNEL_TAG
                         floating tag to move, e.g. `current`. A full ref
                         (host/base/channel/x:current) is accepted and normalised to its tag.
