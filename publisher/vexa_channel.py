@@ -1126,7 +1126,10 @@ def cmd_push(args):
     ) + ["VERIFY.md"] + [f"evidence/{r['name']}" for r in entry["evidence"]]
 
     plain = ["--plain-http"] if args.plain_http else (["--insecure"] if args.insecure else [])
-    ref = f"{args.ref}:{version}"
+    # --no-release-tag: the entry goes up under its permanent <version>-seq<N> tag only, so several
+    # entries can share a release name and none of them moves the release tag.
+    push_tag = f"{version}-seq{entry['channel']['entry_seq']}" if args.no_release_tag else version
+    ref = f"{args.ref}:{push_tag}"
     out = run(
         ["oras", "push", *plain, "--artifact-type", ENTRY_MEDIA_TYPE, ref, *files],
         cwd=str(entry_dir),
@@ -3337,6 +3340,9 @@ def main(argv=None):
     u = sub.add_parser("push", help="push entry to OCI registry, sign, move channel tag")
     u.add_argument("--entry", required=True)
     u.add_argument("--ref", required=True, help="repository ref without tag, e.g. host/base/channel/acme-stable")
+    u.add_argument("--no-release-tag", action="store_true",
+                   help="push under the permanent <version>-seq<N> tag only; never write <ref>:<version>. "
+                        "--channel-tag, if given, is still written.")
     u.add_argument("--channel-tag", help="floating tag to move, e.g. `current`. A full ref "
                    "(host/base/channel/x:current) is accepted and normalised to its tag.")
     u.add_argument("--sign-key")
